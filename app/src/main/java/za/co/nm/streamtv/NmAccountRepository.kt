@@ -118,6 +118,28 @@ class NmAccountRepository(context: Context) {
         status.accountName?.takeIf { it.isNotBlank() }?.let { store.put(ACCOUNT_NAME_KEY, it) }
     }
 
+    suspend fun bootstrap(
+        addonManifests: List<String>,
+        preferences: NmPlaybackPreferences
+    ) {
+        val token = store.get(DEVICE_TOKEN_KEY)?.takeIf { it.isNotBlank() }
+            ?: return
+        val payload = gson.toJson(
+            mapOf(
+                "preferredQuality" to preferences.preferredQuality,
+                "preferHttpDebrid" to preferences.preferHttpDebrid,
+                "subtitleLanguage" to preferences.subtitleLanguage,
+                "addonManifests" to addonManifests
+            )
+        )
+        val response = SimpleHttp.postJson(
+            "$API/device/bootstrap",
+            payload,
+            mapOf("Authorization" to "Bearer $token")
+        )
+        SimpleHttp.requireSuccess(response, "Bootstrapping NM Account")
+    }
+
     suspend fun fetchState(): NmDeviceState {
         val token = store.get(DEVICE_TOKEN_KEY)?.takeIf { it.isNotBlank() }
             ?: error("This TV is not linked to an NM Account")
