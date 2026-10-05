@@ -5,6 +5,8 @@ import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -22,6 +24,7 @@ class TraktRepository(context: Context) {
 
     private val secureStore = SecretStore(context)
     private val gson = Gson()
+    private val authMutex = Mutex()
 
     fun saveCredentials(clientId: String, clientSecret: String) {
         require(clientId.isNotBlank()) { "Enter your Trakt Client ID" }
@@ -279,10 +282,12 @@ class TraktRepository(context: Context) {
         return runCatching { gson.fromJson(json, TraktStoredAuth::class.java) }.getOrNull()
     }
 
-    private suspend fun validAuth(): TraktStoredAuth? {
-        val auth = loadAuth() ?: return null
-        if (auth.expiresAtEpochMs > System.currentTimeMillis() + REFRESH_AHEAD_MS) return auth
-        return refresh(auth)
+    private suspend fun validAuth(): TraktStoredAuth? = authMutex.withLock {
+        val auth = loadAuth() ?: return@withLock null
+        if (auth.expiresAtEpochMs > System.currentTimeMillis() + REFRESH_AHEAD_MS) {
+            return@withLock auth
+        }
+        refresh(auth)
     }
 
     private suspend fun refresh(auth: TraktStoredAuth): TraktStoredAuth? {
