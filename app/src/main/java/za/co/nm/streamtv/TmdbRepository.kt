@@ -37,6 +37,12 @@ class TmdbRepository(context: Context) {
         val release = candidate.get("release_date")?.takeUnless { it.isJsonNull }?.asString
             ?: candidate.get("first_air_date")?.takeUnless { it.isJsonNull }?.asString
         val rating = candidate.get("vote_average")?.takeUnless { it.isJsonNull }?.asDouble
+        val tmdbId = candidate.get("id")?.takeUnless { it.isJsonNull }?.asInt
+        val trailers = if (item.meta.trailers.isNotEmpty()) {
+            item.meta.trailers
+        } else {
+            tmdbId?.let { fetchTrailers(it, item.meta.type, headers) }.orEmpty()
+        }
 
         val merged = item.meta.copy(
             poster = posterPath?.let { "$IMG/w500$it" } ?: item.meta.poster,
@@ -44,7 +50,8 @@ class TmdbRepository(context: Context) {
             description = item.meta.description?.takeIf { it.isNotBlank() } ?: overview,
             releaseInfo = item.meta.releaseInfo?.takeIf { it.isNotBlank() } ?: release?.take(4),
             imdbRating = item.meta.imdbRating?.takeIf { it.isNotBlank() }
-                ?: rating?.takeIf { it > 0.0 }?.let { String.format("%.1f", it) }
+                ?: rating?.takeIf { it > 0.0 }?.let { String.format("%.1f", it) },
+            trailers = trailers
         )
         return item.copy(meta = merged)
     }
@@ -53,6 +60,53 @@ class TmdbRepository(context: Context) {
         val selected = items.take(limit)
         val enriched = selected.map { item -> async { runCatching { enrich(item) }.getOrDefault(item) } }.awaitAll()
         enriched + items.drop(limit)
+    }
+
+    private suspend fun fetchTrailers(
+        tmdbId: Int,
+        type: String,
+        headers: Map<String, String>
+    ): List<TrailerRef> {
+        val endpoint = if (type == "series") "tv" else "movie"
+        val result = SimpleHttp.get("$API/$endpoint/$tmdbId/videos?language=en-US", headers)
+        if (result.code !in 200..299) return emptyList()
+
+        val root = JsonParser.parseString(result.body).asJsonObject
+        return root.getAsJsonArray("results")
+            ?.mapNotNull { element ->
+                val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+                val site = obj.get("site")?.asString ?: return@mapNotNull null
+                if (!site.equals("YouTube", true)) return@mapNotNull null
+                val key = obj.get("key")?.asString?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val typeName = obj.get("type")?.asString ?: "Trailer"
+                if (typeName !in listOf("Trailer", "Teaser", "Clip")) return@mapNotNull null
+
+                TrailerRef(
+                    source = key,
+                    type = typeName,
+                    title = obj.get("name")?.takeUnless { it.isJsonNull }?.asString,
+                    quality = obj.get("size")?.takeUnless { it.isJsonNull }?.asInt,
+                    official = obj.get("official")?.takeUnless { it.isJsonNull }?.asBoolean
+                )
+            }
+            ?.sortedWith(
+                compareBy<TrailerRef>(
+                    { if (it.type.equals("Trailer", true)) 0 else 1 },
+                    { if (it.official == true) 0 else 1 },
+                    {
+                        when (it.quality) {
+                            720 -> 0
+                            1080 -> 1
+                            480 -> 2
+                            2160 -> 3
+                            null -> 5
+                            else -> 4
+                        }
+                    }
+                )
+            )
+            ?.take(6)
+            .orEmpty()
     }
 
     private suspend fun findByImdb(id: String, type: String, headers: Map<String, String>): JsonObject? {
