@@ -33,8 +33,13 @@ data class MainUiState(
     val traktConfigured: Boolean = false,
     val traktConnected: Boolean = false,
     val traktUser: TraktUser? = null,
+    val traktWatchlist: List<AppMedia> = emptyList(),
     val traktDeviceCode: TraktDeviceCode? = null,
     val traktConnecting: Boolean = false,
+    val iptvChannels: List<AppMedia> = emptyList(),
+    val iptvSports: List<AppMedia> = emptyList(),
+    val iptvConfigured: Boolean = false,
+    val iptvStatus: String = "Not configured",
     val message: String? = null
 )
 
@@ -43,6 +48,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val realDebrid = RealDebridRepository(application)
     private val tmdb = TmdbRepository(application)
     private val trakt = TraktRepository(application)
+    private val iptv = IptvRepository(application)
     private val playback = PlaybackStore(application)
 
     private val _uiState = MutableStateFlow(MainUiState())
@@ -66,6 +72,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val homeDeferred = async { runCatching { addons.loadHome(installed) }.getOrDefault(emptyList<AppMedia>() to emptyList()) }
             val rdUserDeferred = async { runCatching { realDebrid.getUser() }.getOrNull() }
             val traktUserDeferred = async { runCatching { trakt.getUser() }.getOrNull() }
+            val traktWatchlistDeferred = async {
+                if (trakt.isConnected()) runCatching { trakt.watchlist() }.getOrDefault(emptyList()) else emptyList()
+            }
+            val iptvDeferred = async {
+                if (iptv.configured()) runCatching { iptv.loadChannels() }.getOrDefault(emptyList()) else emptyList()
+            }
 
             val (rawMovies, rawSeries) = homeDeferred.await()
             val movies = if (tmdb.configured()) runCatching { tmdb.enrichBatch(rawMovies, 24) }.getOrDefault(rawMovies) else rawMovies
@@ -76,6 +88,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 runCatching { realDebrid.recentDownloads() }.getOrDefault(emptyList()).mapNotNull { it.toAppMedia() }
             } else emptyList()
             val traktUser = traktUserDeferred.await()
+            val rawTraktWatchlist = traktWatchlistDeferred.await()
+            val traktWatchlist = if (tmdb.configured()) {
+                runCatching { tmdb.enrichBatch(rawTraktWatchlist, 30) }.getOrDefault(rawTraktWatchlist)
+            } else rawTraktWatchlist
+            val iptvChannels = iptvDeferred.await()
+            val iptvSports = iptv.sportsOnly(iptvChannels)
 
             _uiState.value = _uiState.value.copy(
                 loading = false,
@@ -92,8 +110,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 traktConfigured = trakt.credentialsConfigured(),
                 traktConnected = trakt.isConnected(),
                 traktUser = traktUser,
+                traktWatchlist = traktWatchlist,
                 traktDeviceCode = null,
-                traktConnecting = false
+                traktConnecting = false,
+                iptvChannels = iptvChannels,
+                iptvSports = iptvSports,
+                iptvConfigured = iptv.configured(),
+                iptvStatus = iptv.status()
             )
         }
     }
@@ -193,6 +216,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     traktConfigured = trakt.credentialsConfigured(),
                     traktConnected = false,
                     traktUser = null,
+                    traktWatchlist = emptyList(),
                     traktDeviceCode = null,
                     traktConnecting = false,
                     message = "Trakt credentials saved"
@@ -217,6 +241,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             traktConfigured = false,
             traktConnected = false,
             traktUser = null,
+            traktWatchlist = emptyList(),
             traktDeviceCode = null,
             traktConnecting = false,
             message = "Trakt configuration removed"
@@ -293,6 +318,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         traktUser = user,
                         message = "Trakt connected"
                     )
+                    refreshEverything()
                     return@launch
                 }
                 delay(device.interval.coerceAtLeast(6) * 1000L)
@@ -307,9 +333,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             traktConnected = false,
             traktUser = null,
+            traktWatchlist = emptyList(),
             traktDeviceCode = null,
             traktConnecting = false,
             message = "Trakt disconnected"
+        )
+    }
+
+    fun saveIptvM3u(m3uUrl: String, epgUrl: String) {
+        viewModelScope.launch {
+            runCatching { iptv.saveM3u(m3uUrl, epgUrl) }
+                .onSuccess {
+                    _uiState.value = _uiState.value.copy(message = "IPTV playlist saved")
+                    refreshEverything()
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(message = error.message ?: "Could not save IPTV playlist")
+                }
+        }
+    }
+
+    fun saveIptvXtream(server: String, username: String, password: String) {
+        viewModelScope.launch {
+            runCatching { iptv.saveXtream(server, username, password) }
+                .onSuccess {
+                    _uiState.value = _uiState.value.copy(message = "Xtream IPTV saved")
+                    refreshEverything()
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(message = error.message ?: "Could not save Xtream IPTV")
+                }
+        }
+    }
+
+    fun clearIptv() {
+        iptv.clear()
+        _uiState.value = _uiState.value.copy(
+            iptvChannels = emptyList(),
+            iptvSports = emptyList(),
+            iptvConfigured = false,
+            iptvStatus = "Not configured",
+            message = "IPTV configuration removed"
         )
     }
 
