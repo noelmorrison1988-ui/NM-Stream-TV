@@ -2,6 +2,7 @@ package za.co.nm.streamtv
 
 import android.content.Intent
 import android.net.Uri
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -18,12 +19,15 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.nativeKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -62,7 +66,14 @@ private sealed interface Screen {
     data object Settings : Screen
     data class Details(val item: AppMedia) : Screen
     data class Sources(val item: AppMedia, val videoId: String, val title: String) : Screen
-    data class Player(val item: AppMedia, val videoId: String, val title: String, val source: StreamOption) : Screen
+    data class AutoPlay(val item: AppMedia, val videoId: String, val title: String, val requestKey: String) : Screen
+    data class Player(
+        val item: AppMedia,
+        val videoId: String,
+        val title: String,
+        val source: StreamOption,
+        val returnToSources: Boolean = true
+    ) : Screen
     data class Trailer(val item: AppMedia, val title: String, val source: StreamOption) : Screen
 }
 
@@ -73,7 +84,12 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
 
     BackHandler(screen !is Screen.Home) {
         screen = when (val current = screen) {
-            is Screen.Player -> Screen.Sources(current.item, current.videoId, current.title)
+            is Screen.Player -> if (current.returnToSources) {
+                Screen.Sources(current.item, current.videoId, current.title)
+            } else {
+                Screen.Details(current.item)
+            }
+            is Screen.AutoPlay -> Screen.Details(current.item)
             is Screen.Trailer -> Screen.Details(current.item)
             is Screen.Sources -> Screen.Details(current.item)
             else -> Screen.Home
@@ -97,6 +113,12 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             screen = Screen.Details(it)
                         },
                         onContinue = {
+                            viewModel.loadDetails(it.media)
+                            val key = viewModel.sourceRequestKey(it.media, it.videoId)
+                            viewModel.loadSources(it.media, it.videoId)
+                            screen = Screen.AutoPlay(it.media, it.videoId, it.title, key)
+                        },
+                        onContinueManual = {
                             viewModel.loadDetails(it.media)
                             viewModel.loadSources(it.media, it.videoId)
                             screen = Screen.Sources(it.media, it.videoId, it.title)
@@ -131,7 +153,12 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         inNoel = state.noelList.any { mediaMatches(it, detailItem) },
                         inSarah = state.sarahList.any { mediaMatches(it, detailItem) },
                         trailer = trailer,
-                        choose = { item, id, title ->
+                        play = { item, id, title ->
+                            val key = viewModel.sourceRequestKey(item, id)
+                            viewModel.loadSources(item, id)
+                            screen = Screen.AutoPlay(item, id, title, key)
+                        },
+                        chooseManual = { item, id, title ->
                             viewModel.loadSources(item, id)
                             screen = Screen.Sources(item, id, title)
                         },
@@ -149,6 +176,59 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             }
                         }
                     )
+                }
+                is Screen.AutoPlay -> {
+                    AutoPlayScreen(current.title)
+                    LaunchedEffect(
+                        current.requestKey,
+                        state.sourceRequestKey,
+                        state.streamsLoading,
+                        state.streamOptions
+                    ) {
+                        if (
+                            state.sourceRequestKey == current.requestKey &&
+                            !state.streamsLoading
+                        ) {
+                            val best = state.streamOptions.firstOrNull { option ->
+                                option.playableUrl != null ||
+                                    option.youtubeUrl != null ||
+                                    !option.stream.externalUrl.isNullOrBlank()
+                            }
+
+                            when {
+                                best?.playableUrl != null -> {
+                                    screen = Screen.Player(
+                                        current.item,
+                                        current.videoId,
+                                        current.title,
+                                        best,
+                                        returnToSources = false
+                                    )
+                                }
+                                best?.youtubeUrl != null -> {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(best.youtubeUrl))
+                                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        )
+                                    }
+                                    screen = Screen.Details(current.item)
+                                }
+                                !best?.stream?.externalUrl.isNullOrBlank() -> {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(best?.stream?.externalUrl))
+                                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        )
+                                    }
+                                    screen = Screen.Details(current.item)
+                                }
+                                else -> {
+                                    screen = Screen.Sources(current.item, current.videoId, current.title)
+                                }
+                            }
+                        }
+                    }
                 }
                 is Screen.Sources -> SourcesScreen(current.title, state.streamsLoading, state.streamOptions, state.subtitleOptions.size) { source ->
                     when {
