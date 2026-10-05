@@ -97,6 +97,143 @@ class TraktRepository(context: Context) {
         )
     }
 
+    suspend fun personalList(name: String, limit: Int = 80): List<AppMedia> {
+        val auth = validAuth() ?: return emptyList()
+        val listsResult = SimpleHttp.get("$API/users/me/lists?limit=100", headers(auth))
+        if (listsResult.code !in 200..299) return emptyList()
+
+        val lists = JsonParser.parseString(listsResult.body).asJsonArray
+        val selected = lists.firstOrNull { element ->
+            val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@firstOrNull false
+            obj.get("name")?.asString?.equals(name, ignoreCase = true) == true
+        }?.asJsonObject ?: return emptyList()
+
+        val ids = selected.getAsJsonObject("ids")
+        val listId = ids?.get("trakt")?.takeUnless { it.isJsonNull }?.asInt?.toString()
+            ?: ids?.get("slug")?.takeUnless { it.isJsonNull }?.asString
+            ?: return emptyList()
+
+        val itemsResult = SimpleHttp.get(
+            "$API/users/me/lists/$listId/items?extended=full&limit=$limit",
+            headers(auth)
+        )
+        if (itemsResult.code !in 200..299) return emptyList()
+
+        return JsonParser.parseString(itemsResult.body).asJsonArray
+            .mapNotNull { parsePersonalListItem(it.asJsonObject, name) }
+            .distinctBy { "${it.meta.type}:${it.meta.id}" }
+            .take(limit)
+    }
+
+    suspend fun upNext(limit: Int = 18): List<PlaybackProgress> {
+        val auth = validAuth() ?: return emptyList()
+        val watchedResult = SimpleHttp.get("$API/sync/watched/shows?extended=noseasons", headers(auth))
+        if (watchedResult.code !in 200..299) return emptyList()
+
+        val watched = JsonParser.parseString(watchedResult.body).asJsonArray
+            .mapNotNull { it.takeIf { value -> value.isJsonObject }?.asJsonObject }
+            .sortedByDescending { parseTraktTime(it.get("last_watched_at")?.takeUnless { v -> v.isJsonNull }?.asString, 0L) }
+            .take(limit * 2)
+
+        val out = mutableListOf<PlaybackProgress>()
+        for (entry in watched) {
+            if (out.size >= limit) break
+            val show = entry.getAsJsonObject("show") ?: continue
+            val ids = show.getAsJsonObject("ids")
+            val traktId = ids?.get("trakt")?.takeUnless { it.isJsonNull }?.asInt ?: continue
+            val progressResult = SimpleHttp.get(
+                "$API/shows/$traktId/progress/watched?hidden=false&specials=false&count_specials=false&last_activity=watched",
+                headers(auth)
+            )
+            if (progressResult.code !in 200..299) continue
+            val progress = JsonParser.parseString(progressResult.body).asJsonObject
+            val next = progress.getAsJsonObject("next_episode") ?: continue
+
+            val showTitle = show.get("title")?.asString?.takeIf { it.isNotBlank() } ?: continue
+            val showImdb = ids.get("imdb")?.takeUnless { it.isJsonNull }?.asString
+            val showId = showImdb ?: "trakt:show:$traktId"
+            val season = next.get("season")?.asInt ?: continue
+            val number = next.get("number")?.asInt ?: continue
+            val episodeTitle = next.get("title")?.takeUnless { it.isJsonNull }?.asString.orEmpty()
+            val videoId = if (showImdb != null) "$showImdb:$season:$number" else "$showId:$season:$number"
+            val episodeLabel = "S${season.toString().padStart(2, '0')}E${number.toString().padStart(2, '0')}"
+            val title = if (episodeTitle.isBlank()) "$showTitle · $episodeLabel" else "$showTitle · $episodeLabel · $episodeTitle"
+            val lastWatchedAt = parseTraktTime(
+                entry.get("last_watched_at")?.takeUnless { it.isJsonNull }?.asString,
+                System.currentTimeMillis()
+            )
+            val year = show.get("year")?.takeUnless { it.isJsonNull }?.asInt
+            val overview = show.get("overview")?.takeUnless { it.isJsonNull }?.asString
+
+            out += PlaybackProgress(
+                media = AppMedia(
+                    meta = MetaItem(
+                        id = showId,
+                        type = "series",
+                        name = showTitle,
+                        description = overview,
+                        releaseInfo = year?.toString()
+                    ),
+                    originAddonName = "Trakt Up Next"
+                ),
+                videoId = videoId,
+                title = title,
+                positionMs = 0L,
+                durationMs = 0L,
+                updatedAtMs = lastWatchedAt,
+                cloudPercent = 0.0,
+                source = "Up Next"
+            )
+        }
+        return out
+    }
+
+    private fun parsePersonalListItem(root: JsonObject, listName: String): AppMedia? {
+        root.getAsJsonObject("movie")?.let { movie ->
+            val title = movie.get("title")?.asString?.takeIf { it.isNotBlank() } ?: return null
+            val ids = movie.getAsJsonObject("ids")
+            val imdb = ids?.get("imdb")?.takeUnless { it.isJsonNull }?.asString
+            val traktId = ids?.get("trakt")?.takeUnless { it.isJsonNull }?.asInt
+            val year = movie.get("year")?.takeUnless { it.isJsonNull }?.asInt
+            val overview = movie.get("overview")?.takeUnless { it.isJsonNull }?.asString
+            val rating = movie.get("rating")?.takeUnless { it.isJsonNull }?.asDouble
+            return AppMedia(
+                meta = MetaItem(
+                    id = imdb ?: "trakt:movie:${traktId ?: title.hashCode()}",
+                    type = "movie",
+                    name = title,
+                    description = overview,
+                    releaseInfo = year?.toString(),
+                    imdbRating = rating?.let { String.format("%.1f", it) }
+                ),
+                originAddonName = "Trakt · $listName"
+            )
+        }
+
+        root.getAsJsonObject("show")?.let { show ->
+            val title = show.get("title")?.asString?.takeIf { it.isNotBlank() } ?: return null
+            val ids = show.getAsJsonObject("ids")
+            val imdb = ids?.get("imdb")?.takeUnless { it.isJsonNull }?.asString
+            val traktId = ids?.get("trakt")?.takeUnless { it.isJsonNull }?.asInt
+            val year = show.get("year")?.takeUnless { it.isJsonNull }?.asInt
+            val overview = show.get("overview")?.takeUnless { it.isJsonNull }?.asString
+            val rating = show.get("rating")?.takeUnless { it.isJsonNull }?.asDouble
+            return AppMedia(
+                meta = MetaItem(
+                    id = imdb ?: "trakt:show:${traktId ?: title.hashCode()}",
+                    type = "series",
+                    name = title,
+                    description = overview,
+                    releaseInfo = year?.toString(),
+                    imdbRating = rating?.let { String.format("%.1f", it) }
+                ),
+                originAddonName = "Trakt · $listName"
+            )
+        }
+
+        return null
+    }
+
     suspend fun watchlist(limit: Int = 80): List<AppMedia> {
         val auth = validAuth() ?: return emptyList()
         val movieResult = SimpleHttp.get("$API/sync/watchlist/movies?extended=full&limit=$limit", headers(auth))
