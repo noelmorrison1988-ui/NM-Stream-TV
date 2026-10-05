@@ -49,7 +49,19 @@ data class MetaItem(
     val releaseInfo: String? = null,
     val imdbRating: String? = null,
     val genres: List<String> = emptyList(),
-    val videos: List<VideoItem> = emptyList()
+    val videos: List<VideoItem> = emptyList(),
+    val trailers: List<TrailerRef> = emptyList()
+)
+
+data class TrailerRef(
+    val source: String? = null,
+    val type: String? = null,
+    val url: String? = null,
+    val ytId: String? = null,
+    val title: String? = null,
+    val name: String? = null,
+    val quality: Int? = null,
+    val official: Boolean? = null
 )
 
 data class VideoItem(
@@ -134,18 +146,89 @@ data class StreamOption(
     val playableUrl: String?
         get() = stream.url?.takeIf { it.startsWith("https://", true) || it.startsWith("http://", true) }
 
+    val youtubeUrl: String?
+        get() = stream.ytId?.takeIf { it.isNotBlank() }
+            ?.let { "https://www.youtube.com/watch?v=$it&vq=hd720" }
+
     val requestHeaders: Map<String, String>
         get() = stream.behaviorHints?.proxyHeaders?.request.orEmpty()
+
+    private val searchableText: String
+        get() = listOfNotNull(
+            addonName,
+            stream.name,
+            stream.title,
+            stream.behaviorHints?.filename
+        ).joinToString(" ").lowercase()
+
+    val detectedQuality: Int?
+        get() = when {
+            Regex("""\b2160p?\b|\b4k\b""", RegexOption.IGNORE_CASE).containsMatchIn(searchableText) -> 2160
+            Regex("""\b1440p?\b""", RegexOption.IGNORE_CASE).containsMatchIn(searchableText) -> 1440
+            Regex("""\b1080p?\b""", RegexOption.IGNORE_CASE).containsMatchIn(searchableText) -> 1080
+            Regex("""\b720p?\b""", RegexOption.IGNORE_CASE).containsMatchIn(searchableText) -> 720
+            Regex("""\b576p?\b""", RegexOption.IGNORE_CASE).containsMatchIn(searchableText) -> 576
+            Regex("""\b480p?\b""", RegexOption.IGNORE_CASE).containsMatchIn(searchableText) -> 480
+            Regex("""\b360p?\b""", RegexOption.IGNORE_CASE).containsMatchIn(searchableText) -> 360
+            else -> null
+        }
+
+    val isDebrid: Boolean
+        get() = listOf(
+            "debrid", "real-debrid", "real debrid", "alldebrid", "all-debrid",
+            "premiumize", "torbox", "debrid-link", "stremthru"
+        ).any { searchableText.contains(it) }
+
+    val isP2p: Boolean
+        get() = !stream.infoHash.isNullOrBlank() && playableUrl == null
 
     fun displayTitle(): String = stream.title
         ?: stream.name
         ?: stream.behaviorHints?.filename
         ?: "Stream"
 
+    fun qualityLabel(): String = detectedQuality?.let { "${it}p" } ?: "Quality unknown"
+
+    fun transportLabel(): String = when {
+        playableUrl != null && isDebrid -> "Debrid / HTTP"
+        playableUrl != null -> "HTTP"
+        youtubeUrl != null -> "YouTube"
+        !stream.externalUrl.isNullOrBlank() -> "External"
+        isP2p -> "P2P"
+        else -> "Unavailable"
+    }
+
+    fun preferenceScore(): Int {
+        val transport = when {
+            playableUrl != null && isDebrid -> 0
+            playableUrl != null -> 1
+            youtubeUrl != null -> 2
+            !stream.externalUrl.isNullOrBlank() -> 3
+            isP2p -> 8
+            else -> 9
+        }
+        val quality = when (detectedQuality) {
+            720 -> 0
+            1080 -> 1
+            576 -> 2
+            480 -> 3
+            1440 -> 4
+            2160 -> 5
+            360 -> 6
+            null -> 7
+            else -> 8
+        }
+
+        // User preference: avoid raw P2P first, then favour 720p, then transport.
+        return if (isP2p) 1000 + quality * 10 + transport
+        else quality * 10 + transport
+    }
+
     fun statusText(): String = when {
-        playableUrl != null -> "Ready to play"
-        !stream.externalUrl.isNullOrBlank() -> "Opens externally"
-        !stream.infoHash.isNullOrBlank() -> "Torrent source — configure the add-on to return a playable URL"
+        playableUrl != null -> "${transportLabel()} · ${qualityLabel()}"
+        youtubeUrl != null -> "YouTube · 720p preferred"
+        !stream.externalUrl.isNullOrBlank() -> "External · ${qualityLabel()}"
+        !stream.infoHash.isNullOrBlank() -> "P2P source · deprioritized"
         else -> "No directly playable URL returned"
     }
 }

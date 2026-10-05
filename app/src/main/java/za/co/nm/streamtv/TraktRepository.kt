@@ -100,21 +100,53 @@ class TraktRepository(context: Context) {
         )
     }
 
-    suspend fun personalList(name: String, limit: Int = 80): List<AppMedia> {
-        val auth = validAuth() ?: return emptyList()
-        val listsResult = SimpleHttp.get("$API/users/me/lists?limit=100", headers(auth))
-        if (listsResult.code !in 200..299) return emptyList()
+    suspend fun addToPersonalList(name: String, item: AppMedia) {
+        val auth = validAuth() ?: error("Connect Trakt first")
+        val listId = personalListId(name, auth)
+            ?: error("Create a Trakt personal list named $name first")
 
-        val lists = JsonParser.parseString(listsResult.body).asJsonArray
-        val selected = lists.firstOrNull { element ->
+        val media = JsonObject().apply {
+            addProperty("title", item.meta.name)
+            item.meta.releaseInfo
+                ?.let { Regex("""\b(19|20)\d{2}\b""").find(it)?.value?.toIntOrNull() }
+                ?.let { addProperty("year", it) }
+
+            val imdb = Regex("""tt\d{5,10}""").find(item.meta.id)?.value
+            if (imdb != null) {
+                add("ids", JsonObject().apply { addProperty("imdb", imdb) })
+            }
+        }
+
+        val payload = JsonObject().apply {
+            val array = JsonArray().apply { add(media) }
+            if (item.meta.type == "series") add("shows", array) else add("movies", array)
+        }
+
+        val result = SimpleHttp.postJson(
+            "$API/users/me/lists/$listId/items",
+            gson.toJson(payload),
+            headers(auth)
+        )
+        SimpleHttp.requireSuccess(result, "Adding ${item.meta.name} to $name")
+    }
+
+    private suspend fun personalListId(name: String, auth: TraktStoredAuth): String? {
+        val listsResult = SimpleHttp.get("$API/users/me/lists?limit=100", headers(auth))
+        if (listsResult.code !in 200..299) return null
+
+        val selected = JsonParser.parseString(listsResult.body).asJsonArray.firstOrNull { element ->
             val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@firstOrNull false
             obj.get("name")?.asString?.equals(name, ignoreCase = true) == true
-        }?.asJsonObject ?: return emptyList()
+        }?.asJsonObject ?: return null
 
         val ids = selected.getAsJsonObject("ids")
-        val listId = ids?.get("trakt")?.takeUnless { it.isJsonNull }?.asInt?.toString()
+        return ids?.get("trakt")?.takeUnless { it.isJsonNull }?.asInt?.toString()
             ?: ids?.get("slug")?.takeUnless { it.isJsonNull }?.asString
-            ?: return emptyList()
+    }
+
+    suspend fun personalList(name: String, limit: Int = 80): List<AppMedia> {
+        val auth = validAuth() ?: return emptyList()
+        val listId = personalListId(name, auth) ?: return emptyList()
 
         val itemsResult = SimpleHttp.get(
             "$API/users/me/lists/$listId/items?extended=full&limit=$limit",

@@ -251,13 +251,85 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (item.meta.type == "rd") emptyList()
                 else runCatching { addons.loadSubtitles(_uiState.value.addons, item.meta.type, videoId) }.getOrDefault(emptyList())
             }
+            val sortedStreams = streamsDeferred.await()
+                .sortedWith(
+                    compareBy<StreamOption> { it.preferenceScore() }
+                        .thenBy { it.stream.behaviorHints?.videoSize ?: Long.MAX_VALUE }
+                )
+
             _uiState.value = _uiState.value.copy(
-                streamOptions = streamsDeferred.await(),
+                streamOptions = sortedStreams,
                 subtitleOptions = subtitlesDeferred.await(),
                 streamsLoading = false
             )
         }
     }
+
+    fun addToPersonalList(name: String, item: AppMedia) {
+        viewModelScope.launch {
+            if (!_uiState.value.traktConnected) {
+                _uiState.value = _uiState.value.copy(message = "Connect Trakt first")
+                return@launch
+            }
+
+            _uiState.value = _uiState.value.copy(message = "Adding ${item.meta.name} to $name…")
+            runCatching { trakt.addToPersonalList(name, item) }
+                .onSuccess {
+                    val raw = runCatching { trakt.personalList(name) }.getOrDefault(emptyList())
+                    val refreshed = if (tmdb.configured()) {
+                        runCatching { tmdb.enrichBatch(raw, 40) }.getOrDefault(raw)
+                    } else raw
+
+                    _uiState.value = when (name.lowercase()) {
+                        "noel" -> _uiState.value.copy(
+                            noelList = refreshed,
+                            message = "Added ${item.meta.name} to Noel"
+                        )
+                        "sarah" -> _uiState.value.copy(
+                            sarahList = refreshed,
+                            message = "Added ${item.meta.name} to Sarah"
+                        )
+                        else -> _uiState.value.copy(message = "Added ${item.meta.name} to $name")
+                    }
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(
+                        message = error.message ?: "Could not add item to $name"
+                    )
+                }
+        }
+    }
+
+    fun bestTrailer(item: AppMedia): StreamOption? =
+        item.meta.trailers
+            .mapNotNull { trailer ->
+                val youtubeId = trailer.ytId ?: trailer.source
+                if (trailer.url.isNullOrBlank() && youtubeId.isNullOrBlank()) return@mapNotNull null
+
+                val qualityText = trailer.quality?.let { " · ${it}p" }.orEmpty()
+                StreamOption(
+                    addonName = "Trailer",
+                    stream = AddonStream(
+                        name = trailer.type ?: "Trailer",
+                        title = (trailer.title ?: trailer.name ?: item.meta.name + " Trailer") + qualityText,
+                        url = trailer.url,
+                        ytId = youtubeId
+                    )
+                )
+            }
+            .sortedWith(
+                compareBy<StreamOption> {
+                    when (it.detectedQuality) {
+                        720 -> 0
+                        1080 -> 1
+                        480 -> 2
+                        2160 -> 3
+                        null -> 5
+                        else -> 4
+                    }
+                }.thenBy { it.preferenceScore() }
+            )
+            .firstOrNull()
 
     fun saveTmdbToken(token: String) {
         tmdb.saveToken(token)
