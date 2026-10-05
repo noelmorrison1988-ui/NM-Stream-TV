@@ -241,14 +241,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveTraktCredentials(clientId: String, clientSecret: String) {
         traktAuthJob?.cancel()
-        traktCloudPlayback = emptyList()
         runCatching { trakt.saveCredentials(clientId, clientSecret) }
             .onSuccess {
+                traktCloudPlayback = emptyList()
                 _uiState.value = _uiState.value.copy(
                     traktConfigured = trakt.credentialsConfigured(),
                     traktConnected = false,
                     traktUser = null,
                     traktWatchlist = emptyList(),
+                    continueWatching = playback.load(),
                     traktDeviceCode = null,
                     traktConnecting = false,
                     message = "Trakt credentials saved"
