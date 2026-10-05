@@ -2,7 +2,7 @@
 
 **NM Stream TV** is an Android TV / Android-box media front end branded as an **NM Digital** product. It provides a cinematic, remote-friendly interface for user-configured media sources without bundling third-party scraping providers.
 
-## v0.6.0 features
+## v0.7.0 features
 
 - Cinematic Netflix-inspired (but original) Android TV interface
 - Home hero banner, horizontal media rails and D-pad focus animations
@@ -25,6 +25,8 @@
 - Curated Add-on Manager containing the requested core integrations plus **Sports Streams (SportStream)**, **StremVerse** and IPTV setup options
 - Manifest installer accepts both `https://` and copied `stremio://` links, shows install status/errors, and preserves configured query parameters
 - **Smart stream ranking:** 720p is the preferred default quality, direct/debrid HTTP is favoured over raw P2P, and the top result is marked DEFAULT
+- **One-press auto-play:** a normal OK/Play press resolves sources and immediately starts the best ranked playable stream
+- **Hold for manual sources:** holding OK/Play on a movie, episode or Continue Watching item opens the full source picker instead
 - **720p-first trailers:** Stremio/TMDB trailer metadata is ranked for 720p first; YouTube playback receives an HD720 preference hint when fixed-quality playback is not exposed
 - Local **Continue Watching** with resume position
 - External subtitles attached to the Media3 player
@@ -36,14 +38,14 @@
 
 - Product name: **NM Stream TV**
 - Package/application ID: `za.co.nm.streamtv`
-- Version: `0.6.0`
+- Version: `0.7.0`
 - Product family label: **NM Digital**
 
 ## Build
 
 The repository contains `.github/workflows/android-apk.yml`. Every push to `main`, pull request to `main`, or manual workflow dispatch builds:
 
-`NM-Stream-TV-v0.6.0-debug.apk`
+`NM-Stream-TV-v0.7.0-debug.apk`
 
 The workflow uses JDK 17, Gradle 9.6, Android SDK 37 and Android Build Tools 36.0.0.
 

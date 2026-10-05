@@ -29,6 +29,7 @@ data class MainUiState(
     val streamOptions: List<StreamOption> = emptyList(),
     val subtitleOptions: List<SubtitleOption> = emptyList(),
     val streamsLoading: Boolean = false,
+    val sourceRequestKey: String? = null,
     val rdUser: RdUser? = null,
     val rdDeviceCode: RdDeviceCode? = null,
     val rdConnecting: Boolean = false,
@@ -228,11 +229,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadSources(item: AppMedia, videoId: String = item.meta.id) {
+        val requestKey = sourceRequestKey(item, videoId)
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 streamOptions = emptyList(),
                 subtitleOptions = emptyList(),
                 streamsLoading = true,
+                sourceRequestKey = requestKey,
                 message = null
             )
             val streamsDeferred = async {
@@ -264,6 +267,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
     }
+
+    fun sourceRequestKey(item: AppMedia, videoId: String): String =
+        "${item.meta.id}|${videoId}"
 
     fun addToPersonalList(name: String, item: AppMedia) {
         viewModelScope.launch {

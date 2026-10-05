@@ -2,6 +2,7 @@ package za.co.nm.streamtv
 
 import android.content.Intent
 import android.net.Uri
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -18,12 +19,15 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.nativeKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -62,7 +66,14 @@ private sealed interface Screen {
     data object Settings : Screen
     data class Details(val item: AppMedia) : Screen
     data class Sources(val item: AppMedia, val videoId: String, val title: String) : Screen
-    data class Player(val item: AppMedia, val videoId: String, val title: String, val source: StreamOption) : Screen
+    data class AutoPlay(val item: AppMedia, val videoId: String, val title: String, val requestKey: String) : Screen
+    data class Player(
+        val item: AppMedia,
+        val videoId: String,
+        val title: String,
+        val source: StreamOption,
+        val returnToSources: Boolean = true
+    ) : Screen
     data class Trailer(val item: AppMedia, val title: String, val source: StreamOption) : Screen
 }
 
@@ -73,7 +84,12 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
 
     BackHandler(screen !is Screen.Home) {
         screen = when (val current = screen) {
-            is Screen.Player -> Screen.Sources(current.item, current.videoId, current.title)
+            is Screen.Player -> if (current.returnToSources) {
+                Screen.Sources(current.item, current.videoId, current.title)
+            } else {
+                Screen.Details(current.item)
+            }
+            is Screen.AutoPlay -> Screen.Details(current.item)
             is Screen.Trailer -> Screen.Details(current.item)
             is Screen.Sources -> Screen.Details(current.item)
             else -> Screen.Home
@@ -97,6 +113,12 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             screen = Screen.Details(it)
                         },
                         onContinue = {
+                            viewModel.loadDetails(it.media)
+                            val key = viewModel.sourceRequestKey(it.media, it.videoId)
+                            viewModel.loadSources(it.media, it.videoId)
+                            screen = Screen.AutoPlay(it.media, it.videoId, it.title, key)
+                        },
+                        onContinueManual = {
                             viewModel.loadDetails(it.media)
                             viewModel.loadSources(it.media, it.videoId)
                             screen = Screen.Sources(it.media, it.videoId, it.title)
@@ -131,7 +153,12 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         inNoel = state.noelList.any { mediaMatches(it, detailItem) },
                         inSarah = state.sarahList.any { mediaMatches(it, detailItem) },
                         trailer = trailer,
-                        choose = { item, id, title ->
+                        play = { item, id, title ->
+                            val key = viewModel.sourceRequestKey(item, id)
+                            viewModel.loadSources(item, id)
+                            screen = Screen.AutoPlay(item, id, title, key)
+                        },
+                        chooseManual = { item, id, title ->
                             viewModel.loadSources(item, id)
                             screen = Screen.Sources(item, id, title)
                         },
@@ -149,6 +176,59 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             }
                         }
                     )
+                }
+                is Screen.AutoPlay -> {
+                    AutoPlayScreen(current.title)
+                    LaunchedEffect(
+                        current.requestKey,
+                        state.sourceRequestKey,
+                        state.streamsLoading,
+                        state.streamOptions
+                    ) {
+                        if (
+                            state.sourceRequestKey == current.requestKey &&
+                            !state.streamsLoading
+                        ) {
+                            val best = state.streamOptions.firstOrNull { option ->
+                                option.playableUrl != null ||
+                                    option.youtubeUrl != null ||
+                                    !option.stream.externalUrl.isNullOrBlank()
+                            }
+
+                            when {
+                                best?.playableUrl != null -> {
+                                    screen = Screen.Player(
+                                        current.item,
+                                        current.videoId,
+                                        current.title,
+                                        best,
+                                        returnToSources = false
+                                    )
+                                }
+                                best?.youtubeUrl != null -> {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(best.youtubeUrl))
+                                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        )
+                                    }
+                                    screen = Screen.Details(current.item)
+                                }
+                                !best?.stream?.externalUrl.isNullOrBlank() -> {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(best?.stream?.externalUrl))
+                                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        )
+                                    }
+                                    screen = Screen.Details(current.item)
+                                }
+                                else -> {
+                                    screen = Screen.Sources(current.item, current.videoId, current.title)
+                                }
+                            }
+                        }
+                    }
                 }
                 is Screen.Sources -> SourcesScreen(current.title, state.streamsLoading, state.streamOptions, state.subtitleOptions.size) { source ->
                     when {
@@ -225,7 +305,12 @@ private fun NavChip(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun HomeScreen(state: MainUiState, onOpen: (AppMedia) -> Unit, onContinue: (PlaybackProgress) -> Unit) {
+private fun HomeScreen(
+    state: MainUiState,
+    onOpen: (AppMedia) -> Unit,
+    onContinue: (PlaybackProgress) -> Unit,
+    onContinueManual: (PlaybackProgress) -> Unit
+) {
     if (state.loading) {
         CenterText("Loading NM Stream TV…")
         return
@@ -254,7 +339,7 @@ private fun HomeScreen(state: MainUiState, onOpen: (AppMedia) -> Unit, onContinu
                 onOpen = onOpen
             )
         }
-        item { ContinueRow(state.continueWatching, onContinue) }
+        item { ContinueRow(state.continueWatching, onContinue, onContinueManual) }
 
         if (state.traktWatchlist.isNotEmpty()) item { MediaRow("My Trakt Watchlist", state.traktWatchlist, onOpen) }
         if (state.iptvSports.isNotEmpty()) item { MediaRow("Live Sports · Rugby · F1 · Soccer · Cricket", state.iptvSports.take(40), onOpen) }
@@ -359,7 +444,11 @@ private fun PosterCard(item: AppMedia, onOpen: (AppMedia) -> Unit) {
 }
 
 @Composable
-private fun ContinueRow(media: List<PlaybackProgress>, onOpen: (PlaybackProgress) -> Unit) {
+private fun ContinueRow(
+    media: List<PlaybackProgress>,
+    onOpen: (PlaybackProgress) -> Unit,
+    onLongOpen: (PlaybackProgress) -> Unit
+) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Continue Watching", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 40.dp))
         if (media.isEmpty()) {
@@ -378,7 +467,15 @@ private fun ContinueRow(media: List<PlaybackProgress>, onOpen: (PlaybackProgress
         } else LazyRow(contentPadding = PaddingValues(horizontal = 40.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(media) { p ->
                 var focused by remember { mutableStateOf(false) }
-                Column(Modifier.width(240.dp).onFocusChanged { focused = it.isFocused }.clickable { onOpen(p) }.focusable()) {
+                Column(
+                    Modifier.width(240.dp)
+                        .onFocusChanged { focused = it.isFocused }
+                        .tvActivation(
+                            onClick = { onOpen(p) },
+                            onLongClick = { onLongOpen(p) }
+                        )
+                        .focusable()
+                ) {
                     Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(NmPanel).border(if (focused) 2.dp else 0.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(8.dp))) {
                         AsyncImage(model = p.media.meta.background ?: p.media.meta.poster, contentDescription = p.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                         Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(5.dp).background(Color.White.copy(alpha = .2f))) {
@@ -389,9 +486,9 @@ private fun ContinueRow(media: List<PlaybackProgress>, onOpen: (PlaybackProgress
                     Text(p.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
                         when (p.source) {
-                            "Up Next" -> "UP NEXT"
-                            "Trakt" -> "TRAKT · ${p.percent}%"
-                            else -> (p.source?.let { "$it · " } ?: "") + p.percent + "%"
+                            "Up Next" -> "UP NEXT · OK plays · hold for sources"
+                            "Trakt" -> "TRAKT · ${p.percent}% · hold for sources"
+                            else -> (p.source?.let { "$it · " } ?: "") + p.percent + "% · hold for sources"
                         },
                         color = if (p.source == "Trakt" || p.source == "Up Next") NmGreen else NmMuted,
                         fontSize = 12.sp,
@@ -717,7 +814,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV v0.6.0 · an NM Digital product", color = NmMuted) }
+        item { Text("NM Stream TV v0.7.0 · an NM Digital product", color = NmMuted) }
     }
 }
 
@@ -738,7 +835,8 @@ private fun DetailsScreen(
     inNoel: Boolean,
     inSarah: Boolean,
     trailer: StreamOption?,
-    choose: (AppMedia, String, String) -> Unit,
+    play: (AppMedia, String, String) -> Unit,
+    chooseManual: (AppMedia, String, String) -> Unit,
     addNoel: () -> Unit,
     addSarah: () -> Unit,
     playTrailer: (StreamOption) -> Unit
@@ -755,7 +853,11 @@ private fun DetailsScreen(
 
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         if (item.meta.type != "series" || item.meta.videos.isEmpty()) {
-                            Button(onClick = { choose(item, item.meta.id, item.meta.name) }) { Text("▶  Choose source") }
+                            HoldActionButton(
+                                label = "▶  Play",
+                                onClick = { play(item, item.meta.id, item.meta.name) },
+                                onLongClick = { chooseManual(item, item.meta.id, item.meta.name) }
+                            )
                         }
                         trailer?.let {
                             Button(onClick = { playTrailer(it) }) {
@@ -763,6 +865,12 @@ private fun DetailsScreen(
                             }
                         }
                     }
+
+                    Text(
+                        "Press OK/Play to use the best 720p source · Hold OK/Play to choose manually",
+                        color = NmGreen,
+                        fontSize = 12.sp
+                    )
 
                     if (item.meta.type == "movie" || item.meta.type == "series") {
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -786,11 +894,103 @@ private fun DetailsScreen(
                 item { Text("Episodes", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold) }
                 items(item.meta.videos) { ep ->
                     var focused by remember { mutableStateOf(false) }
-                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (focused) NmPanelFocus else NmPanel).onFocusChanged { focused = it.isFocused }.clickable { choose(item, ep.id, ep.displayName()) }.focusable().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (focused) NmPanelFocus else NmPanel)
+                            .onFocusChanged { focused = it.isFocused }
+                            .tvActivation(
+                                onClick = { play(item, ep.id, ep.displayName()) },
+                                onLongClick = { chooseManual(item, ep.id, ep.displayName()) }
+                            )
+                            .focusable()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         AsyncImage(model = ep.thumbnail, contentDescription = ep.displayName(), contentScale = ContentScale.Crop, modifier = Modifier.width(180.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)))
                         Spacer(Modifier.width(16.dp)); Column(Modifier.weight(1f)) { Text(ep.displayName(), color = Color.White, fontWeight = FontWeight.Bold); ep.overview?.let { Text(it, color = NmMuted, maxLines = 2, overflow = TextOverflow.Ellipsis) } }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AutoPlayScreen(title: String) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text("Finding the best source…", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+            Text(title, color = NmMuted, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("720p preferred · Debrid/HTTP before P2P", color = NmGreen, fontSize = 14.sp)
+        }
+    }
+}
+
+@Composable
+private fun HoldActionButton(
+    label: String,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (focused) NmRed else NmPanelFocus)
+            .border(
+                if (focused) 2.dp else 0.dp,
+                if (focused) Color.White else Color.Transparent,
+                RoundedCornerShape(8.dp)
+            )
+            .onFocusChanged { focused = it.isFocused }
+            .tvActivation(onClick = onClick, onLongClick = onLongClick)
+            .focusable()
+            .padding(horizontal = 18.dp, vertical = 11.dp)
+    ) {
+        Text(label, color = Color.White, fontWeight = FontWeight.Bold)
+    }
+}
+
+private fun Modifier.tvActivation(
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+): Modifier = composed {
+    var longPressHandled by remember { mutableStateOf(false) }
+
+    onPreviewKeyEvent { event ->
+        val native = event.nativeKeyEvent
+        val supported = native.keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
+            native.keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
+            native.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
+            native.keyCode == AndroidKeyEvent.KEYCODE_MEDIA_PLAY ||
+            native.keyCode == AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
+            native.keyCode == AndroidKeyEvent.KEYCODE_BUTTON_A
+
+        if (!supported) {
+            false
+        } else {
+            when (native.action) {
+                AndroidKeyEvent.ACTION_DOWN -> {
+                    if (native.repeatCount == 0) {
+                        longPressHandled = false
+                    } else if (!longPressHandled) {
+                        longPressHandled = true
+                        onLongClick()
+                    }
+                    true
+                }
+
+                AndroidKeyEvent.ACTION_UP -> {
+                    if (!longPressHandled) onClick()
+                    longPressHandled = false
+                    true
+                }
+
+                else -> false
             }
         }
     }
