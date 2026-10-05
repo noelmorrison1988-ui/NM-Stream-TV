@@ -2,9 +2,10 @@
 
 **NM Stream TV** is an Android TV / Android-box media front end branded as an **NM Digital** product. It provides a cinematic, remote-friendly interface for user-configured media sources without bundling third-party scraping providers.
 
-## v0.7.0 features
+## v0.8.0 features
 
 - Cinematic Netflix-inspired (but original) Android TV interface
+- **NM Stream TV startup splash:** supplied Morrison Entertainment family artwork is bundled offline, shown full-screen with no cropping, and fades into the app after startup
 - Home hero banner, horizontal media rails and D-pad focus animations
 - Movies, series, search, episodes and source-selection screens
 - Generic **Stremio add-on protocol** support via user-supplied HTTPS `manifest.json` URLs
@@ -38,16 +39,18 @@
 
 - Product name: **NM Stream TV**
 - Package/application ID: `za.co.nm.streamtv`
-- Version: `0.7.0`
+- Version: `0.8.0`
 - Product family label: **NM Digital**
 
 ## Build
 
 The repository contains `.github/workflows/android-apk.yml`. Every push to `main`, pull request to `main`, or manual workflow dispatch builds:
 
-`NM-Stream-TV-v0.7.0-debug.apk`
+`NM-Stream-TV-v0.8.0-debug.apk`
 
 The workflow uses JDK 17, Gradle 9.6, Android SDK 37 and Android Build Tools 36.0.0.
+
+The startup artwork is bundled into the APK and does not require a network request. It is displayed for at least about 2.2 seconds, waits for initial loading when practical, and releases to the app after about 4.5 seconds at most.
 
 Local build, when the Android SDK is installed:
 
