@@ -84,12 +84,44 @@ object SimpleHttp {
 
     fun normalizeManifestUrl(input: String): String {
         var raw = input.trim()
-        if (!raw.startsWith("https://", true)) error("Add-on URLs must use HTTPS")
-        raw = raw.substringBefore('#')
+            .removeSurrounding(""")
+            .removeSurrounding("'")
+            .substringBefore('#')
+
+        if (raw.startsWith("stremio://", true)) {
+            raw = "https://" + raw.substringAfter("://")
+        } else if (!raw.contains("://")) {
+            raw = "https://$raw"
+        }
+
         val uri = URI(raw)
+        val scheme = uri.scheme?.lowercase()
+        val localhostHttp = scheme == "http" && (
+            uri.host.equals("127.0.0.1", true) ||
+                uri.host.equals("localhost", true)
+            )
+        require(scheme == "https" || localhostHttp) {
+            "Add-on manifests must use HTTPS (or localhost HTTP)"
+        }
         require(uri.userInfo == null) { "URLs containing username/password user-info are not supported" }
-        val path = uri.path.orEmpty()
-        return if (path.endsWith("/manifest.json")) raw else raw.trimEnd('/') + "/manifest.json"
+        require(!uri.host.isNullOrBlank()) { "Manifest URL is invalid" }
+
+        val cleanPath = uri.path.orEmpty().ifBlank { "/" }
+        val manifestPath = when {
+            cleanPath.endsWith("/manifest.json", true) -> cleanPath
+            cleanPath.endsWith("/") -> cleanPath + "manifest.json"
+            else -> cleanPath + "/manifest.json"
+        }
+
+        return URI(
+            uri.scheme,
+            null,
+            uri.host,
+            uri.port,
+            manifestPath,
+            uri.query,
+            null
+        ).toString()
     }
 
     fun baseUrlFromManifest(manifestUrl: String): String {
