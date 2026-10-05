@@ -198,7 +198,10 @@ data class StreamOption(
         else -> "Unavailable"
     }
 
-    fun preferenceScore(): Int {
+    fun preferenceScore(
+        preferredQuality: Int = 720,
+        preferHttpDebrid: Boolean = true
+    ): Int {
         val transport = when {
             playableUrl != null && isDebrid -> 0
             playableUrl != null -> 1
@@ -207,21 +210,27 @@ data class StreamOption(
             isP2p -> 8
             else -> 9
         }
-        val quality = when (detectedQuality) {
-            720 -> 0
-            1080 -> 1
-            576 -> 2
-            480 -> 3
-            1440 -> 4
-            2160 -> 5
-            360 -> 6
-            null -> 7
-            else -> 8
-        }
 
-        // User preference: avoid raw P2P first, then favour 720p, then transport.
-        return if (isP2p) 1000 + quality * 10 + transport
-        else quality * 10 + transport
+        val qualityOrder = listOf(
+            preferredQuality,
+            720,
+            1080,
+            576,
+            480,
+            1440,
+            2160,
+            360
+        ).distinct()
+        val quality = detectedQuality?.let { q ->
+            qualityOrder.indexOf(q).takeIf { it >= 0 } ?: qualityOrder.size
+        } ?: qualityOrder.size + 1
+
+        val p2pPenalty = when {
+            !isP2p -> 0
+            preferHttpDebrid -> 1000
+            else -> 100
+        }
+        return p2pPenalty + quality * 10 + transport
     }
 
     fun statusText(): String = when {

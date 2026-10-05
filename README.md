@@ -2,16 +2,17 @@
 
 **NM Stream TV** is an Android TV / Android-box media front end branded as an **NM Digital** product. It provides a cinematic, remote-friendly interface for user-configured media sources without bundling third-party scraping providers.
 
-## v0.10.0 features
+## v0.11.0 features
 
 - Cinematic Netflix-inspired (but original) Android TV interface
-- **NM Stream TV startup splash:** supplied Morrison Entertainment family artwork is bundled offline, shown full-screen with no cropping, and fades into the app after startup
+- **Clean native startup splash:** the previous glitch-prone embedded image decoder has been replaced by a native NM Stream TV / Morrison Entertainment splash
 - Home hero banner, horizontal media rails and D-pad focus animations
 - Movies, series, search, episodes and source-selection screens
 - Generic **Stremio add-on protocol** support via user-supplied HTTPS `manifest.json` URLs
 - Standard `catalog`, `meta`, `stream` and `subtitles` endpoints
 - Multiple add-ons installed at once; results are aggregated
 - **Real-Debrid device authentication** and access to the user's existing download library
+- **Stable debrid playback:** resume position is applied once at playback startup instead of rebuilding/re-seeking the player every time progress is saved; larger direct-stream buffering and HTTP redirect support are enabled
 - **TMDB artwork enrichment** using a user-entered API Read Access Token
 - **Native Trakt device authentication using Client ID only** with automatic token refresh; no Client Secret required for new Trakt apps
 - **Noel** and **Sarah** Home rows backed by Trakt personal lists with those names
@@ -25,6 +26,7 @@
 - Added **Motorsport Hub** and **M3U/EPG TV Addon** presets
 - Curated Add-on Manager containing the requested core integrations plus **Sports Streams (SportStream)**, **StremVerse** and IPTV setup options
 - **In-app add-on configurator:** Configure no longer opens an external browser; setup pages stay inside NM Stream TV and generated `stremio://` / `manifest.json` links are captured and installed automatically
+- **Phone/touch controls fixed:** app-local buttons now use touch-friendly Compose click handling while remaining D-pad focusable on TV
 - Manifest installer accepts both `https://` and copied `stremio://` links, shows install status/errors, and preserves configured query parameters
 - **Smart stream ranking:** 720p is the preferred default quality, direct/debrid HTTP is favoured over raw P2P, and the top result is marked DEFAULT
 - **One-press auto-play:** a normal OK/Play press resolves sources and immediately starts the best ranked playable stream
@@ -34,24 +36,25 @@
 - External subtitles attached to the Media3 player
 - Media3 / ExoPlayer playback including HLS and DASH modules
 - Encrypted local storage for add-on URLs and service credentials
+- **NM Account sync:** link a TV with a 6-digit code, then manage synced add-on manifests, playback preferences and optional encrypted IPTV settings from `https://nm-stream-tv-account.floot.app`
 - GitHub Actions workflow that builds an installable debug APK
 
 ## Branding
 
 - Product name: **NM Stream TV**
 - Package/application ID: `za.co.nm.streamtv`
-- Version: `0.10.0`
+- Version: `0.11.0`
 - Product family label: **NM Digital**
 
 ## Build
 
 The repository contains `.github/workflows/android-apk.yml`. Every push to `main`, pull request to `main`, or manual workflow dispatch builds:
 
-`NM-Stream-TV-v0.10.0-debug.apk`
+`NM-Stream-TV-v0.11.0-debug.apk`
 
 The workflow uses JDK 17, Gradle 9.6, Android SDK 37 and Android Build Tools 36.0.0.
 
-The startup artwork is bundled into the APK and does not require a network request. It is displayed for at least about 2.2 seconds, waits for initial loading when practical, and releases to the app after about 4.5 seconds at most.
+The startup screen is rendered natively inside the APK and does not require a network request. It is displayed for at least about 2.2 seconds, waits for initial loading when practical, and releases to the app after about 4.5 seconds at most.
 
 Local build, when the Android SDK is installed:
 
@@ -129,6 +132,7 @@ app/src/main/java/za/co/nm/streamtv/
 ├── MainActivity.kt
 ├── MainViewModel.kt
 ├── Models.kt
+├── NmAccountRepository.kt
 ├── PlaybackStore.kt
 ├── RealDebridRepository.kt
 ├── SecretStore.kt

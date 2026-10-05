@@ -46,10 +46,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
-import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
@@ -313,6 +313,40 @@ private fun Shell(selected: String, navigate: (Screen) -> Unit, content: @Compos
         }
         Box(Modifier.fillMaxSize()) { content() }
     }
+}
+
+@Composable
+private fun Button(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    content: @Composable RowScope.() -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+
+    Row(
+        modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                when {
+                    !enabled -> Color(0xFF343841)
+                    focused -> NmRed
+                    else -> NmPanelFocus
+                }
+            )
+            .border(
+                if (focused && enabled) 2.dp else 1.dp,
+                if (focused && enabled) Color.White else Color(0xFF444955),
+                RoundedCornerShape(8.dp)
+            )
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(enabled = enabled, onClick = onClick)
+            .focusable(enabled)
+            .padding(horizontal = 17.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        content = content
+    )
 }
 
 @Composable
@@ -684,8 +718,8 @@ private fun AddonsScreen(
             Text("Add-ons", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black)
             Text("Paste an https:// or stremio:// manifest link. NM Stream TV will validate it before saving.", color = NmMuted)
             Spacer(Modifier.height(14.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(Modifier.width(700.dp)) { InputBox(url, "https://example.com/manifest.json") { url = it } }
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.fillMaxWidth()) { InputBox(url, "https://example.com/manifest.json") { url = it } }
                 Button(
                     onClick = { install(url) },
                     enabled = url.isNotBlank() && !state.addonInstalling
@@ -813,7 +847,7 @@ private fun AddonConfiguratorScreen(
                         settings.allowFileAccess = false
                         settings.allowContentAccess = false
                         settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                        settings.userAgentString = settings.userAgentString + " NMStreamTV/0.10"
+                        settings.userAgentString = settings.userAgentString + " NMStreamTV/0.11"
 
                         webChromeClient = WebChromeClient()
                         webViewClient = object : WebViewClient() {
@@ -914,15 +948,58 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
     var xtreamServer by remember { mutableStateOf("") }
     var xtreamUser by remember { mutableStateOf("") }
     var xtreamPass by remember { mutableStateOf("") }
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 42.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 55.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    val context = LocalContext.current
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 24.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 55.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text("Settings", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black) }
+        item { CardBox {
+            Text("NM Account", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text(
+                if (state.nmAccountLinked) {
+                    "Linked" + (state.nmAccountName?.let { " · $it" } ?: "")
+                } else {
+                    "Not linked"
+                },
+                color = if (state.nmAccountLinked) NmGreen else NmMuted
+            )
+            Text(
+                "Pair this device once, then manage synced add-ons, preferred quality, source priority and optional encrypted IPTV settings from your phone.",
+                color = NmMuted
+            )
+            Text("Phone dashboard: ${NmAccountRepository.DASHBOARD_URL}", color = NmMuted, fontSize = 12.sp)
+            if (state.nmAccountLinked) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = vm::syncNmAccountNow) { Text("Sync now") }
+                    Button(onClick = vm::unlinkNmAccount) { Text("Unlink") }
+                }
+                Text("Sync status: ${state.nmSyncStatus}", color = NmGreen)
+            } else {
+                Button(
+                    onClick = vm::beginNmAccountPairing,
+                    enabled = !state.nmPairing
+                ) { Text(if (state.nmPairing) "Waiting for phone…" else "Link this device") }
+
+                state.nmPairCode?.let { code ->
+                    DeviceCode("NM Account", code, NmAccountRepository.DASHBOARD_URL)
+                }
+            }
+            Button(onClick = {
+                runCatching {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse(NmAccountRepository.DASHBOARD_URL))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
+            }) { Text("Open phone control panel") }
+        } }
         item { CardBox {
             Text("TMDB artwork", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text("Status: " + state.tmdbStatus, color = if (state.tmdbConfigured) NmGreen else NmMuted)
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.width(640.dp)) { InputBox(tmdb, "TMDB API Read Access Token") { tmdb = it } }
-                Button(onClick = { vm.saveTmdbToken(tmdb); tmdb = "" }) { Text("Save") }
-                if (state.tmdbConfigured) Button(onClick = { vm.saveTmdbToken("") }) { Text("Remove") }
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.fillMaxWidth()) { InputBox(tmdb, "TMDB API Read Access Token") { tmdb = it } }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = { vm.saveTmdbToken(tmdb); tmdb = "" }) { Text("Save") }
+                    if (state.tmdbConfigured) Button(onClick = { vm.saveTmdbToken("") }) { Text("Remove") }
+                }
             }
         } }
         item { CardBox {
@@ -931,8 +1008,8 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Text("Use an IPTV source you are authorized to access. M3U/M3U8 and Xtream live TV are supported; sports are automatically prioritised.", color = NmMuted)
             Text("M3U / XMLTV", color = Color.White, fontWeight = FontWeight.Bold)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.width(760.dp)) { InputBox(m3uUrl, "M3U / M3U8 playlist URL") { m3uUrl = it } }
-                Box(Modifier.width(760.dp)) { InputBox(epgUrl, "XMLTV EPG URL (optional)") { epgUrl = it } }
+                Box(Modifier.fillMaxWidth()) { InputBox(m3uUrl, "M3U / M3U8 playlist URL") { m3uUrl = it } }
+                Box(Modifier.fillMaxWidth()) { InputBox(epgUrl, "XMLTV EPG URL (optional)") { epgUrl = it } }
                 Button(onClick = {
                     vm.saveIptvM3u(m3uUrl, epgUrl)
                     m3uUrl = ""
@@ -941,9 +1018,9 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             }
             Text("Xtream Codes", color = Color.White, fontWeight = FontWeight.Bold)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.width(760.dp)) { InputBox(xtreamServer, "Portal/server URL") { xtreamServer = it } }
-                Box(Modifier.width(520.dp)) { InputBox(xtreamUser, "Username") { xtreamUser = it } }
-                Box(Modifier.width(520.dp)) { InputBox(xtreamPass, "Password", password = true) { xtreamPass = it } }
+                Box(Modifier.fillMaxWidth()) { InputBox(xtreamServer, "Portal/server URL") { xtreamServer = it } }
+                Box(Modifier.fillMaxWidth()) { InputBox(xtreamUser, "Username") { xtreamUser = it } }
+                Box(Modifier.fillMaxWidth()) { InputBox(xtreamPass, "Password", password = true) { xtreamPass = it } }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = {
                         vm.saveIptvXtream(xtreamServer, xtreamUser, xtreamPass)
@@ -965,12 +1042,15 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             )
             Text("Native Trakt: TV device sign-in using your Client ID only, automatic token refresh, cloud Continue Watching, Up Next episodes and personal list sync. New Trakt apps no longer need a Client Secret for user sign-in.", color = NmMuted)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.width(640.dp)) { InputBox(traktId, "Trakt Client ID") { traktId = it } }
+                Box(Modifier.fillMaxWidth()) { InputBox(traktId, "Trakt Client ID") { traktId = it } }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(onClick = {
-                        vm.saveTraktClientId(traktId)
-                        traktId = ""
-                    }) { Text("Save Client ID") }
+                    Button(
+                        onClick = {
+                            vm.saveTraktClientId(traktId)
+                            traktId = ""
+                        },
+                        enabled = traktId.isNotBlank()
+                    ) { Text("Save Client ID") }
                     if (state.traktConfigured) Button(onClick = vm::clearTraktCredentials) { Text("Remove") }
                 }
             }
@@ -990,7 +1070,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV v0.10.0 · an NM Digital product", color = NmMuted) }
+        item { Text("NM Stream TV v0.11.0 · an NM Digital product", color = NmMuted) }
     }
 }
 
@@ -1222,37 +1302,90 @@ private fun SourcesScreen(title: String, loading: Boolean, sources: List<StreamO
 }
 
 @Composable
-private fun PlayerScreen(item: AppMedia, videoId: String, title: String, url: String, headers: Map<String, String>, subtitles: List<SubtitleOption>, resumeMs: Long, resumePercent: Double?, onStarted: (Long, Long) -> Unit, onProgress: (Long, Long) -> Unit, onStopped: (Long, Long) -> Unit) {
+private fun PlayerScreen(
+    item: AppMedia,
+    videoId: String,
+    title: String,
+    url: String,
+    headers: Map<String, String>,
+    subtitles: List<SubtitleOption>,
+    resumeMs: Long,
+    resumePercent: Double?,
+    onStarted: (Long, Long) -> Unit,
+    onProgress: (Long, Long) -> Unit,
+    onStopped: (Long, Long) -> Unit
+) {
     val context = LocalContext.current
-    val player = remember(url, headers, subtitles, resumeMs, resumePercent) {
-        val dataSource = DefaultHttpDataSource.Factory().setDefaultRequestProperties(headers)
-        ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(dataSource)).build().apply {
-            val subs = subtitles.mapIndexed { index, option ->
-                MediaItem.SubtitleConfiguration.Builder(Uri.parse(option.subtitle.url))
-                    .setId(option.subtitle.id.ifBlank { "sub-" + index })
-                    .setLanguage(option.subtitle.lang)
-                    .setLabel(option.subtitle.lang.uppercase() + " · " + option.addonName)
-                    .setMimeType(subtitleMime(option.subtitle.url))
-                    .setSelectionFlags(if (index == 0 && option.subtitle.lang.startsWith("en", true)) C.SELECTION_FLAG_DEFAULT else 0)
-                    .build()
-            }
-            setMediaItem(MediaItem.Builder().setUri(url).setSubtitleConfigurations(subs).build())
-            prepare()
-            playWhenReady = resumeMs <= 0 && resumePercent == null
-        }
-    }
-    var started by remember(player) { mutableStateOf(false) }
-    var resumeApplied by remember(player) { mutableStateOf(resumeMs <= 0 && resumePercent == null) }
 
-    LaunchedEffect(player, resumeMs, resumePercent) {
+    // Resume is captured once. Progress updates must never rebuild the player.
+    val initialResumeMs = remember(url, videoId) { resumeMs }
+    val initialResumePercent = remember(url, videoId) { resumePercent }
+
+    val player = remember(url, videoId, headers, subtitles) {
+        val dataSource = DefaultHttpDataSource.Factory()
+            .setDefaultRequestProperties(headers)
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(20_000)
+            .setReadTimeoutMs(45_000)
+
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                30_000,
+                120_000,
+                2_500,
+                5_000
+            )
+            .build()
+
+        ExoPlayer.Builder(context)
+            .setLoadControl(loadControl)
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(context).setDataSourceFactory(dataSource)
+            )
+            .build()
+            .apply {
+                val subs = subtitles.mapIndexed { index, option ->
+                    MediaItem.SubtitleConfiguration.Builder(Uri.parse(option.subtitle.url))
+                        .setId(option.subtitle.id.ifBlank { "sub-" + index })
+                        .setLanguage(option.subtitle.lang)
+                        .setLabel(option.subtitle.lang.uppercase() + " · " + option.addonName)
+                        .setMimeType(subtitleMime(option.subtitle.url))
+                        .setSelectionFlags(
+                            if (index == 0 && option.subtitle.lang.startsWith("en", true)) {
+                                C.SELECTION_FLAG_DEFAULT
+                            } else {
+                                0
+                            }
+                        )
+                        .build()
+                }
+                setMediaItem(
+                    MediaItem.Builder()
+                        .setUri(url)
+                        .setSubtitleConfigurations(subs)
+                        .build()
+                )
+                prepare()
+                playWhenReady = initialResumeMs <= 0 && initialResumePercent == null
+            }
+    }
+
+    var started by remember(player) { mutableStateOf(false) }
+    var resumeApplied by remember(player) {
+        mutableStateOf(initialResumeMs <= 0 && initialResumePercent == null)
+    }
+
+    LaunchedEffect(player) {
         while (!resumeApplied) {
             delay(250)
             val duration = player.duration.takeIf { it > 0 } ?: continue
             val target = when {
-                resumeMs > 0 -> resumeMs
-                resumePercent != null -> (duration * (resumePercent.coerceIn(0.0, 99.0) / 100.0)).toLong()
+                initialResumeMs > 0 -> initialResumeMs
+                initialResumePercent != null ->
+                    (duration * (initialResumePercent.coerceIn(0.0, 99.0) / 100.0)).toLong()
                 else -> 0L
             }.coerceIn(0L, (duration - 1L).coerceAtLeast(0L))
+
             player.seekTo(target)
             player.playWhenReady = true
             resumeApplied = true
@@ -1261,24 +1394,46 @@ private fun PlayerScreen(item: AppMedia, videoId: String, title: String, url: St
 
     LaunchedEffect(player) {
         while (true) {
-            delay(5000)
-            val d = player.duration.takeIf { it > 0 } ?: 0L
-            val p = player.currentPosition.coerceAtLeast(0L)
-            if (!started && d > 0) { onStarted(p, d); started = true }
-            if (d > 0) onProgress(p, d)
+            delay(5_000)
+            val duration = player.duration.takeIf { it > 0 } ?: 0L
+            val position = player.currentPosition.coerceAtLeast(0L)
+            if (!started && duration > 0) {
+                onStarted(position, duration)
+                started = true
+            }
+            if (duration > 0) onProgress(position, duration)
         }
     }
+
     DisposableEffect(player) {
         onDispose {
-            val d = player.duration.takeIf { it > 0 } ?: 0L
-            val p = player.currentPosition.coerceAtLeast(0L)
-            if (d > 0) onStopped(p, d)
+            val duration = player.duration.takeIf { it > 0 } ?: 0L
+            val position = player.currentPosition.coerceAtLeast(0L)
+            if (duration > 0) onStopped(position, duration)
             player.release()
         }
     }
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        AndroidView(factory = { PlayerView(it).apply { useController = true; this.player = player } }, update = { it.player = player }, modifier = Modifier.fillMaxSize())
-        Text(title, color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(24.dp).background(Color.Black.copy(alpha = .55f)).padding(10.dp))
+        AndroidView(
+            factory = {
+                PlayerView(it).apply {
+                    useController = true
+                    this.player = player
+                }
+            },
+            update = { it.player = player },
+            modifier = Modifier.fillMaxSize()
+        )
+        Text(
+            title,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier
+                .padding(24.dp)
+                .background(Color.Black.copy(alpha = .55f))
+                .padding(10.dp)
+        )
     }
 }
 
