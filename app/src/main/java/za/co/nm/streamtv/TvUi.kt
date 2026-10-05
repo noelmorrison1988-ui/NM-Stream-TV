@@ -732,7 +732,6 @@ private fun AddonsScreen(state: MainUiState, install: (String) -> Unit, remove: 
 private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
     var tmdb by remember { mutableStateOf("") }
     var traktId by remember { mutableStateOf("") }
-    var traktSecret by remember { mutableStateOf("") }
     var m3uUrl by remember { mutableStateOf("") }
     var epgUrl by remember { mutableStateOf("") }
     var xtreamServer by remember { mutableStateOf("") }
@@ -783,20 +782,18 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Text("Trakt", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text(
                 if (state.traktConnected) "Connected"
-                else if (state.traktConfigured) "Credentials saved"
-                else "Client ID + Client Secret required",
+                else if (state.traktConfigured) "Client ID saved"
+                else "Client ID required",
                 color = if (state.traktConnected) NmGreen else NmMuted
             )
-            Text("Native Trakt: device sign-in, automatic token refresh, cloud Continue Watching, Up Next episodes and personal list sync. Create personal Trakt lists named Noel and Sarah; NM Stream TV uses them as the first two Home rows.", color = NmMuted)
+            Text("Native Trakt: TV device sign-in using your Client ID only, automatic token refresh, cloud Continue Watching, Up Next episodes and personal list sync. New Trakt apps no longer need a Client Secret for user sign-in.", color = NmMuted)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.width(640.dp)) { InputBox(traktId, "Trakt Client ID") { traktId = it } }
-                Box(Modifier.width(640.dp)) { InputBox(traktSecret, "Trakt Client Secret", password = true) { traktSecret = it } }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = {
-                        vm.saveTraktCredentials(traktId, traktSecret)
+                        vm.saveTraktClientId(traktId)
                         traktId = ""
-                        traktSecret = ""
-                    }) { Text("Save credentials") }
+                    }) { Text("Save Client ID") }
                     if (state.traktConfigured) Button(onClick = vm::clearTraktCredentials) { Text("Remove") }
                 }
             }
@@ -816,7 +813,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV v0.8.0 · an NM Digital product", color = NmMuted) }
+        item { Text("NM Stream TV v0.9.0 · an NM Digital product", color = NmMuted) }
     }
 }
 
