@@ -13,7 +13,7 @@ import java.nio.charset.StandardCharsets
 data class HttpResult(val code: Int, val body: String)
 
 object SimpleHttp {
-    private const val USER_AGENT = "NMStreamTV/0.2"
+    private const val USER_AGENT = "NMStreamTV/0.4"
 
     suspend fun get(url: String, headers: Map<String, String> = emptyMap()): HttpResult =
         request("GET", url, headers = headers)
@@ -84,7 +84,7 @@ object SimpleHttp {
 
     fun normalizeManifestUrl(input: String): String {
         var raw = input.trim()
-            .removeSurrounding(""")
+            .removeSurrounding("\"")
             .removeSurrounding("'")
             .substringBefore('#')
 
