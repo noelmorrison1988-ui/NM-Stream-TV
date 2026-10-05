@@ -218,7 +218,10 @@ data class StreamOption(
             null -> 7
             else -> 8
         }
-        return transport * 100 + quality
+
+        // User preference: avoid raw P2P first, then favour 720p, then transport.
+        return if (isP2p) 1000 + quality * 10 + transport
+        else quality * 10 + transport
     }
 
     fun statusText(): String = when {
