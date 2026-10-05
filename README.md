@@ -2,7 +2,7 @@
 
 **NM Stream TV** is an Android TV / Android-box media front end branded as an **NM Digital** product. It provides a cinematic, remote-friendly interface for user-configured media sources without bundling third-party scraping providers.
 
-## v0.5.0 features
+## v0.6.0 features
 
 - Cinematic Netflix-inspired (but original) Android TV interface
 - Home hero banner, horizontal media rails and D-pad focus animations
@@ -14,6 +14,7 @@
 - **TMDB artwork enrichment** using a user-entered API Read Access Token
 - **Native Trakt device authentication** with automatic token refresh
 - **Noel** and **Sarah** Home rows backed by Trakt personal lists with those names
+- **Add to Noel** and **Add to Sarah** buttons directly on movie/series detail screens
 - **Trakt cloud Continue Watching** from `/sync/playback`, including cross-device percentage resume
 - **Trakt Up Next**: recently watched shows are checked for the next aired unwatched episode and merged into Continue Watching
 - Native Trakt watchlist row and playback scrobbling for media with IMDb IDs
@@ -23,6 +24,8 @@
 - Added **Motorsport Hub** and **M3U/EPG TV Addon** presets
 - Curated Add-on Manager containing the requested core integrations plus **Sports Streams (SportStream)**, **StremVerse** and IPTV setup options
 - Manifest installer accepts both `https://` and copied `stremio://` links, shows install status/errors, and preserves configured query parameters
+- **Smart stream ranking:** 720p is the preferred default quality, direct/debrid HTTP is favoured over raw P2P, and the top result is marked DEFAULT
+- **720p-first trailers:** Stremio/TMDB trailer metadata is ranked for 720p first; YouTube playback receives an HD720 preference hint when fixed-quality playback is not exposed
 - Local **Continue Watching** with resume position
 - External subtitles attached to the Media3 player
 - Media3 / ExoPlayer playback including HLS and DASH modules
@@ -33,14 +36,14 @@
 
 - Product name: **NM Stream TV**
 - Package/application ID: `za.co.nm.streamtv`
-- Version: `0.5.0`
+- Version: `0.6.0`
 - Product family label: **NM Digital**
 
 ## Build
 
 The repository contains `.github/workflows/android-apk.yml`. Every push to `main`, pull request to `main`, or manual workflow dispatch builds:
 
-`NM-Stream-TV-v0.5.0-debug.apk`
+`NM-Stream-TV-v0.6.0-debug.apk`
 
 The workflow uses JDK 17, Gradle 9.6, Android SDK 37 and Android Build Tools 36.0.0.
 
