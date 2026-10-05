@@ -39,6 +39,22 @@ object AddonCatalog {
         AddonPreset("StremThru", "Debrid", "Interoperability layer for compatible debrid and Stremio services.", setupUrl = "https://stremio-addons.net/users/muniftanjim/lists/stremthru"),
         AddonPreset("Local Files", "Local", "Stremio local-file service compatibility entry.", note = "Stremio's localhost local-files service is not bundled into NM Stream TV."),
         AddonPreset("WatchHub", "Legal streaming", "Official Stremio service showing legal streaming availability.", manifestUrl = "https://watchhub.strem.io/manifest.json"),
+        AddonPreset(
+            "SportStream / Sports Streams",
+            "Sports",
+            "Live and upcoming sports listings including football, basketball, cricket, UFC, tennis and more.",
+            setupUrl = "https://stremio-addons.net/addons/sports-streams",
+            sports = true,
+            note = "Community add-on. Availability changes; use only streams you are authorized to access."
+        ),
+        AddonPreset(
+            "StremVerse",
+            "Sports",
+            "Live events, replays and highlights with cricket, football, F1, boxing and other sports.",
+            setupUrl = "https://stremio-addons.net/addons/stremverse",
+            sports = true,
+            note = "Community add-on. Some streams may require its own configuration or proxy service."
+        ),
 
         AddonPreset("IPTV Addon by Savi", "IPTV", "Use your private Xtream Codes provider or IPTV-org public channels.", setupUrl = "https://stremio-addons.net/addons/iptv-stremio-addon", sports = true, note = "Supports user-owned/private IPTV and public free channels."),
         AddonPreset("M3U IPTV", "IPTV", "Use your personal M3U playlist or Xtream Codes IPTV.", setupUrl = "https://stremio-addons.net/addons/m3u-iptv", sports = true),
