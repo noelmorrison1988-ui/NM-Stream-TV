@@ -2,7 +2,7 @@
 
 **NM Stream TV** is an Android TV / Android-box media front end branded as an **NM Digital** product. It provides a cinematic, remote-friendly interface for user-configured media sources without bundling third-party scraping providers.
 
-## v0.3.0 features
+## v0.4.0 features
 
 - Cinematic Netflix-inspired (but original) Android TV interface
 - Home hero banner, horizontal media rails and D-pad focus animations
@@ -13,10 +13,12 @@
 - **Real-Debrid device authentication** and access to the user's existing download library
 - **TMDB artwork enrichment** using a user-entered API Read Access Token
 - **Native Trakt device authentication** with automatic token refresh
+- **Trakt cloud Continue Watching** from `/sync/playback`, including cross-device percentage resume
 - Native Trakt watchlist row and playback scrobbling for media with IMDb IDs
 - **Live TV / IPTV** with user-supplied M3U/M3U8 playlists, optional XMLTV URL and Xtream Codes credentials
 - Sports-first live TV discovery for rugby, Formula 1, soccer, cricket and other sport
-- Curated Add-on Manager containing the 25 requested core integrations plus IPTV setup options
+- Curated Add-on Manager containing the requested core integrations plus **Sports Streams (SportStream)**, **StremVerse** and IPTV setup options
+- Manifest installer accepts both `https://` and copied `stremio://` links, shows install status/errors, and preserves configured query parameters
 - Local **Continue Watching** with resume position
 - External subtitles attached to the Media3 player
 - Media3 / ExoPlayer playback including HLS and DASH modules
@@ -27,14 +29,14 @@
 
 - Product name: **NM Stream TV**
 - Package/application ID: `za.co.nm.streamtv`
-- Version: `0.3.0`
+- Version: `0.4.0`
 - Product family label: **NM Digital**
 
 ## Build
 
 The repository contains `.github/workflows/android-apk.yml`. Every push to `main`, pull request to `main`, or manual workflow dispatch builds:
 
-`NM-Stream-TV-v0.3.0-debug.apk`
+`NM-Stream-TV-v0.4.0-debug.apk`
 
 The workflow uses JDK 17, Gradle 9.6, Android SDK 37 and Android Build Tools 36.0.0.
 
@@ -74,7 +76,7 @@ The token is stored locally using Android Keystore-backed AES-GCM encryption and
 3. Choose **Connect Trakt**.
 4. Visit the displayed verification URL and enter the device code.
 
-The app stores OAuth tokens locally, refreshes them automatically when needed, loads the user's Trakt watchlist and scrobbles supported playback. Trakt integration is optional. Use it in accordance with Trakt's API terms and branding requirements.
+The app stores OAuth tokens locally, refreshes them automatically when needed, loads the user's Trakt watchlist, imports Trakt playback progress into Continue Watching, resumes cloud items by percentage, and scrobbles supported playback. Trakt integration is optional. Use it in accordance with Trakt's API terms and branding requirements.
 
 ## IPTV / Live TV
 
