@@ -167,7 +167,7 @@ class IptvRepository(context: Context) {
     }
 
     private fun attribute(line: String, name: String): String {
-        val pattern = Regex("""$name\\s*=\\s*"([^"]*)"""", RegexOption.IGNORE_CASE)
+        val pattern = Regex("""$name\s*=\s*"([^"]*)"""", RegexOption.IGNORE_CASE)
         return pattern.find(line)?.groupValues?.getOrNull(1).orEmpty()
     }
 
