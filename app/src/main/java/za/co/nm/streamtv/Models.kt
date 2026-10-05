@@ -29,7 +29,8 @@ data class CatalogExtra(
 data class InstalledAddon(
     val manifestUrl: String,
     val baseUrl: String,
-    val manifest: AddonManifest
+    val manifest: AddonManifest,
+    val resourceQuery: String? = null
 )
 
 data class CatalogResponse(val metas: List<MetaItem> = emptyList())
@@ -143,10 +144,13 @@ data class PlaybackProgress(
     val title: String,
     val positionMs: Long,
     val durationMs: Long,
-    val updatedAtMs: Long
+    val updatedAtMs: Long,
+    val cloudPercent: Double? = null,
+    val source: String? = null
 ) {
     val percent: Int
-        get() = if (durationMs <= 0) 0 else ((positionMs * 100) / durationMs).toInt().coerceIn(0, 100)
+        get() = cloudPercent?.toInt()?.coerceIn(0, 100)
+            ?: if (durationMs <= 0) 0 else ((positionMs * 100) / durationMs).toInt().coerceIn(0, 100)
 }
 
 data class RdDeviceCode(

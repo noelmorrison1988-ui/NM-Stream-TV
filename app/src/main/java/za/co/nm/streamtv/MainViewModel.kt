@@ -14,6 +14,8 @@ import kotlinx.coroutines.launch
 data class MainUiState(
     val loading: Boolean = true,
     val addons: List<InstalledAddon> = emptyList(),
+    val addonInstalling: Boolean = false,
+    val addonInstallStatus: String? = null,
     val movies: List<AppMedia> = emptyList(),
     val series: List<AppMedia> = emptyList(),
     val debridItems: List<AppMedia> = emptyList(),
@@ -56,6 +58,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private var rdAuthJob: Job? = null
     private var traktAuthJob: Job? = null
+    private var traktCloudPlayback: List<PlaybackProgress> = emptyList()
 
     init {
         refreshEverything()
@@ -75,6 +78,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val traktWatchlistDeferred = async {
                 if (trakt.isConnected()) runCatching { trakt.watchlist() }.getOrDefault(emptyList()) else emptyList()
             }
+            val traktPlaybackDeferred = async {
+                if (trakt.isConnected()) runCatching { trakt.playbackProgress() }.getOrDefault(emptyList()) else emptyList()
+            }
             val iptvDeferred = async {
                 if (iptv.configured()) runCatching { iptv.loadChannels() }.getOrDefault(emptyList()) else emptyList()
             }
@@ -92,6 +98,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val traktWatchlist = if (tmdb.configured()) {
                 runCatching { tmdb.enrichBatch(rawTraktWatchlist, 30) }.getOrDefault(rawTraktWatchlist)
             } else rawTraktWatchlist
+
+            val rawTraktPlayback = traktPlaybackDeferred.await()
+            val traktPlayback = if (tmdb.configured() && rawTraktPlayback.isNotEmpty()) {
+                val rawMedia = rawTraktPlayback.map { it.media }
+                val enrichedMedia = runCatching { tmdb.enrichBatch(rawMedia, 30) }.getOrDefault(rawMedia)
+                rawTraktPlayback.mapIndexed { index, progress ->
+                    progress.copy(media = enrichedMedia.getOrElse(index) { progress.media })
+                }
+            } else rawTraktPlayback
+            traktCloudPlayback = traktPlayback
+
             val iptvChannels = iptvDeferred.await()
             val iptvSports = iptv.sportsOnly(iptvChannels)
 
@@ -102,7 +119,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 series = series,
                 rdUser = rdUser,
                 debridItems = rdItems,
-                continueWatching = playback.load(),
+                continueWatching = mergeContinueWatching(playback.load(), traktPlayback),
                 rdDeviceCode = null,
                 rdConnecting = false,
                 tmdbConfigured = tmdb.configured(),
@@ -123,21 +140,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun installAddon(url: String) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(message = "Installing add-on…")
+            if (url.isBlank()) {
+                _uiState.value = _uiState.value.copy(addonInstallStatus = "Enter a manifest URL first")
+                return@launch
+            }
+            _uiState.value = _uiState.value.copy(
+                addonInstalling = true,
+                addonInstallStatus = "Checking manifest…"
+            )
             runCatching { addons.install(url) }
                 .onSuccess { installed ->
-                    _uiState.value = _uiState.value.copy(message = "Installed ${installed.manifest.name}")
+                    _uiState.value = _uiState.value.copy(
+                        addonInstalling = false,
+                        addonInstallStatus = "Installed ${installed.manifest.name}",
+                        addons = (_uiState.value.addons + installed).distinctBy { it.manifestUrl }
+                    )
                     refreshEverything()
                 }
                 .onFailure { error ->
-                    _uiState.value = _uiState.value.copy(message = error.message ?: "Could not install add-on")
+                    _uiState.value = _uiState.value.copy(
+                        addonInstalling = false,
+                        addonInstallStatus = error.message ?: "Could not install add-on"
+                    )
                 }
         }
     }
 
     fun removeAddon(manifestUrl: String) {
         addons.remove(manifestUrl)
-        _uiState.value = _uiState.value.copy(message = "Add-on removed")
+        _uiState.value = _uiState.value.copy(addonInstallStatus = "Add-on removed")
         refreshEverything()
     }
 
@@ -212,11 +243,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         traktAuthJob?.cancel()
         runCatching { trakt.saveCredentials(clientId, clientSecret) }
             .onSuccess {
+                traktCloudPlayback = emptyList()
                 _uiState.value = _uiState.value.copy(
                     traktConfigured = trakt.credentialsConfigured(),
                     traktConnected = false,
                     traktUser = null,
                     traktWatchlist = emptyList(),
+                    continueWatching = playback.load(),
                     traktDeviceCode = null,
                     traktConnecting = false,
                     message = "Trakt credentials saved"
@@ -237,11 +270,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun clearTraktCredentials() {
         traktAuthJob?.cancel()
         trakt.clearCredentials()
+        traktCloudPlayback = emptyList()
         _uiState.value = _uiState.value.copy(
             traktConfigured = false,
             traktConnected = false,
             traktUser = null,
             traktWatchlist = emptyList(),
+            continueWatching = playback.load(),
             traktDeviceCode = null,
             traktConnecting = false,
             message = "Trakt configuration removed"
@@ -330,10 +365,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun disconnectTrakt() {
         traktAuthJob?.cancel()
         trakt.disconnect()
+        traktCloudPlayback = emptyList()
         _uiState.value = _uiState.value.copy(
             traktConnected = false,
             traktUser = null,
             traktWatchlist = emptyList(),
+            continueWatching = playback.load(),
             traktDeviceCode = null,
             traktConnecting = false,
             message = "Trakt disconnected"
@@ -379,6 +416,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resumePosition(item: AppMedia, videoId: String): Long = playback.resumePosition(item, videoId)
 
+    fun resumeCloudPercent(item: AppMedia, videoId: String): Double? =
+        traktCloudPlayback.firstOrNull {
+            it.media.meta.id == item.meta.id && it.videoId == videoId
+        }?.cloudPercent
+
     fun onPlaybackStarted(item: AppMedia, videoId: String, positionMs: Long, durationMs: Long) {
         if (_uiState.value.traktConnected) {
             val percent = if (durationMs > 0) positionMs * 100.0 / durationMs else 0.0
@@ -389,7 +431,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun onPlaybackProgress(item: AppMedia, videoId: String, title: String, positionMs: Long, durationMs: Long) {
         val progress = PlaybackProgress(item, videoId, title, positionMs, durationMs, System.currentTimeMillis())
         if (durationMs > 0 && progress.percent >= 95) playback.complete(item, videoId) else playback.save(progress)
-        _uiState.value = _uiState.value.copy(continueWatching = playback.load())
+        _uiState.value = _uiState.value.copy(
+            continueWatching = mergeContinueWatching(playback.load(), traktCloudPlayback)
+        )
     }
 
     fun onPlaybackStopped(item: AppMedia, videoId: String, title: String, positionMs: Long, durationMs: Long) {
@@ -403,6 +447,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun clearMessage() {
         _uiState.value = _uiState.value.copy(message = null)
     }
+
+    private fun mergeContinueWatching(
+        local: List<PlaybackProgress>,
+        cloud: List<PlaybackProgress>
+    ): List<PlaybackProgress> =
+        (local + cloud)
+            .sortedByDescending { it.updatedAtMs }
+            .distinctBy { "${it.media.meta.id}|${it.videoId}" }
+            .take(30)
 
     private fun RdDownload.toAppMedia(): AppMedia? {
         val playable = download?.takeIf { it.startsWith("https://", true) || it.startsWith("http://", true) } ?: return null

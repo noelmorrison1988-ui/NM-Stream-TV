@@ -5,6 +5,11 @@ import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 
 class TraktRepository(context: Context) {
     companion object {
@@ -19,6 +24,7 @@ class TraktRepository(context: Context) {
 
     private val secureStore = SecretStore(context)
     private val gson = Gson()
+    private val authMutex = Mutex()
 
     fun saveCredentials(clientId: String, clientSecret: String) {
         require(clientId.isNotBlank()) { "Enter your Trakt Client ID" }
@@ -106,6 +112,127 @@ class TraktRepository(context: Context) {
         return out.distinctBy { "${it.meta.type}:${it.meta.id}" }.take(limit)
     }
 
+    suspend fun playbackProgress(limit: Int = 60): List<PlaybackProgress> {
+        val auth = validAuth() ?: return emptyList()
+        val moviesResult = SimpleHttp.get("$API/sync/playback/movies?extended=full", headers(auth))
+        val episodesResult = SimpleHttp.get("$API/sync/playback/episodes?extended=full", headers(auth))
+        val now = System.currentTimeMillis()
+        val out = mutableListOf<PlaybackProgress>()
+
+        if (moviesResult.code in 200..299) {
+            val array = JsonParser.parseString(moviesResult.body).asJsonArray
+            out += array.mapIndexedNotNull { index, element ->
+                parseMoviePlayback(element.asJsonObject, now - index)
+            }
+        }
+
+        if (episodesResult.code in 200..299) {
+            val array = JsonParser.parseString(episodesResult.body).asJsonArray
+            out += array.mapIndexedNotNull { index, element ->
+                parseEpisodePlayback(element.asJsonObject, now - 10_000L - index)
+            }
+        }
+
+        return out
+            .filter { it.cloudPercent != null && it.cloudPercent >= 1.0 && it.cloudPercent < 95.0 }
+            .sortedByDescending { it.updatedAtMs }
+            .take(limit)
+    }
+
+    private fun parseMoviePlayback(root: JsonObject, fallbackTime: Long): PlaybackProgress? {
+        val movie = root.getAsJsonObject("movie") ?: return null
+        val title = movie.get("title")?.asString?.takeIf { it.isNotBlank() } ?: return null
+        val ids = movie.getAsJsonObject("ids")
+        val imdb = ids?.get("imdb")?.takeUnless { it.isJsonNull }?.asString
+        val traktId = ids?.get("trakt")?.takeUnless { it.isJsonNull }?.asInt
+        val progress = root.get("progress")?.asDouble ?: return null
+        val year = movie.get("year")?.takeUnless { it.isJsonNull }?.asInt
+        val overview = movie.get("overview")?.takeUnless { it.isJsonNull }?.asString
+        val rating = movie.get("rating")?.takeUnless { it.isJsonNull }?.asDouble
+        val mediaId = imdb ?: "trakt:movie:${traktId ?: title.hashCode()}"
+
+        val media = AppMedia(
+            meta = MetaItem(
+                id = mediaId,
+                type = "movie",
+                name = title,
+                description = overview,
+                releaseInfo = year?.toString(),
+                imdbRating = rating?.let { String.format("%.1f", it) }
+            ),
+            originAddonName = "Trakt Playback"
+        )
+
+        return PlaybackProgress(
+            media = media,
+            videoId = mediaId,
+            title = title,
+            positionMs = 0L,
+            durationMs = 0L,
+            updatedAtMs = parseTraktTime(root.get("paused_at")?.asString, fallbackTime),
+            cloudPercent = progress.coerceIn(0.0, 100.0),
+            source = "Trakt"
+        )
+    }
+
+    private fun parseEpisodePlayback(root: JsonObject, fallbackTime: Long): PlaybackProgress? {
+        val show = root.getAsJsonObject("show") ?: return null
+        val episode = root.getAsJsonObject("episode") ?: return null
+        val showTitle = show.get("title")?.asString?.takeIf { it.isNotBlank() } ?: return null
+        val showIds = show.getAsJsonObject("ids")
+        val showImdb = showIds?.get("imdb")?.takeUnless { it.isJsonNull }?.asString
+        val showTrakt = showIds?.get("trakt")?.takeUnless { it.isJsonNull }?.asInt
+        val season = episode.get("season")?.asInt ?: return null
+        val number = episode.get("number")?.asInt ?: return null
+        val episodeTitle = episode.get("title")?.takeUnless { it.isJsonNull }?.asString.orEmpty()
+        val progress = root.get("progress")?.asDouble ?: return null
+        val year = show.get("year")?.takeUnless { it.isJsonNull }?.asInt
+        val overview = show.get("overview")?.takeUnless { it.isJsonNull }?.asString
+        val showId = showImdb ?: "trakt:show:${showTrakt ?: showTitle.hashCode()}"
+        val videoId = if (showImdb != null) "$showImdb:$season:$number" else "$showId:$season:$number"
+        val episodeLabel = "S${season.toString().padStart(2, '0')}E${number.toString().padStart(2, '0')}"
+        val title = if (episodeTitle.isBlank()) "$showTitle · $episodeLabel" else "$showTitle · $episodeLabel · $episodeTitle"
+
+        val media = AppMedia(
+            meta = MetaItem(
+                id = showId,
+                type = "series",
+                name = showTitle,
+                description = overview,
+                releaseInfo = year?.toString()
+            ),
+            originAddonName = "Trakt Playback"
+        )
+
+        return PlaybackProgress(
+            media = media,
+            videoId = videoId,
+            title = title,
+            positionMs = 0L,
+            durationMs = 0L,
+            updatedAtMs = parseTraktTime(root.get("paused_at")?.asString, fallbackTime),
+            cloudPercent = progress.coerceIn(0.0, 100.0),
+            source = "Trakt"
+        )
+    }
+
+    private fun parseTraktTime(value: String?, fallback: Long): Long {
+        if (value.isNullOrBlank()) return fallback
+        val patterns = listOf(
+            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss'Z'"
+        )
+        for (pattern in patterns) {
+            val parsed = runCatching {
+                SimpleDateFormat(pattern, Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                }.parse(value)?.time
+            }.getOrNull()
+            if (parsed != null) return parsed
+        }
+        return fallback
+    }
+
     suspend fun scrobble(action: String, media: AppMedia, videoId: String, progressPercent: Double) {
         val auth = validAuth() ?: return
         val imdb = Regex("tt\\d{5,10}").find(videoId)?.value
@@ -155,10 +282,12 @@ class TraktRepository(context: Context) {
         return runCatching { gson.fromJson(json, TraktStoredAuth::class.java) }.getOrNull()
     }
 
-    private suspend fun validAuth(): TraktStoredAuth? {
-        val auth = loadAuth() ?: return null
-        if (auth.expiresAtEpochMs > System.currentTimeMillis() + REFRESH_AHEAD_MS) return auth
-        return refresh(auth)
+    private suspend fun validAuth(): TraktStoredAuth? = authMutex.withLock {
+        val auth = loadAuth() ?: return@withLock null
+        if (auth.expiresAtEpochMs > System.currentTimeMillis() + REFRESH_AHEAD_MS) {
+            return@withLock auth
+        }
+        refresh(auth)
     }
 
     private suspend fun refresh(auth: TraktStoredAuth): TraktStoredAuth? {

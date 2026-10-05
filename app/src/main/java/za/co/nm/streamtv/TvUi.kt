@@ -135,6 +135,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     headers = current.source.requestHeaders,
                     subtitles = state.subtitleOptions,
                     resumeMs = viewModel.resumePosition(current.item, current.videoId),
+                    resumePercent = viewModel.resumeCloudPercent(current.item, current.videoId),
                     onStarted = { p, d -> viewModel.onPlaybackStarted(current.item, current.videoId, p, d) },
                     onProgress = { p, d -> viewModel.onPlaybackProgress(current.item, current.videoId, current.title, p, d) },
                     onStopped = { p, d -> viewModel.onPlaybackStopped(current.item, current.videoId, current.title, p, d) }
@@ -261,7 +262,13 @@ private fun ContinueRow(media: List<PlaybackProgress>, onOpen: (PlaybackProgress
                             Box(Modifier.fillMaxHeight().fillMaxWidth(p.percent.coerceAtLeast(1) / 100f).background(NmRed))
                         }
                     }
-                    Spacer(Modifier.height(6.dp)); Text(p.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(6.dp))
+                    Text(p.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        (p.source?.let { "$it · " } ?: "") + p.percent + "%",
+                        color = if (p.source == "Trakt") NmGreen else NmMuted,
+                        fontSize = 12.sp
+                    )
                 }
             }
         }
@@ -318,19 +325,40 @@ private fun SearchScreen(state: MainUiState, onSearch: (String) -> Unit, onOpen:
 private fun AddonsScreen(state: MainUiState, install: (String) -> Unit, remove: (String) -> Unit) {
     val context = LocalContext.current
     var url by remember { mutableStateOf("") }
+
+    LaunchedEffect(state.addonInstallStatus) {
+        if (state.addonInstallStatus?.startsWith("Installed ") == true) url = ""
+    }
+
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 42.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
             Text("Add-ons", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black)
-            Text("Install an HTTPS Stremio-compatible manifest URL.", color = NmMuted)
+            Text("Paste an https:// or stremio:// manifest link. NM Stream TV will validate it before saving.", color = NmMuted)
             Spacer(Modifier.height(14.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box(Modifier.width(700.dp)) { InputBox(url, "https://example.com/manifest.json") { url = it } }
-                Button(onClick = { if (url.isNotBlank()) install(url) }) { Text("Install") }
+                Button(
+                    onClick = { install(url) },
+                    enabled = url.isNotBlank() && !state.addonInstalling
+                ) { Text(if (state.addonInstalling) "Installing…" else "Install") }
+            }
+            state.addonInstallStatus?.let { status ->
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    status,
+                    color = when {
+                        status.startsWith("Installed ") -> NmGreen
+                        status == "Checking manifest…" -> NmMuted
+                        status == "Add-on removed" -> NmMuted
+                        else -> NmRed
+                    },
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
         item {
             Text("Curated add-on catalog", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
-            Text("25 core add-ons plus IPTV options. Configurable services open their setup page; paste the generated manifest above.", color = NmMuted)
+            Text("Core add-ons plus SportStream/Sports Streams, StremVerse and IPTV options. Configurable services open their setup page; paste the generated manifest above.", color = NmMuted)
         }
         items(AddonCatalog.presets) { preset ->
             CardBox {
@@ -461,7 +489,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV v0.3.0 · an NM Digital product", color = NmMuted) }
+        item { Text("NM Stream TV v0.4.0 · an NM Digital product", color = NmMuted) }
     }
 }
 
@@ -519,9 +547,9 @@ private fun SourcesScreen(title: String, loading: Boolean, sources: List<StreamO
 }
 
 @Composable
-private fun PlayerScreen(item: AppMedia, videoId: String, title: String, url: String, headers: Map<String, String>, subtitles: List<SubtitleOption>, resumeMs: Long, onStarted: (Long, Long) -> Unit, onProgress: (Long, Long) -> Unit, onStopped: (Long, Long) -> Unit) {
+private fun PlayerScreen(item: AppMedia, videoId: String, title: String, url: String, headers: Map<String, String>, subtitles: List<SubtitleOption>, resumeMs: Long, resumePercent: Double?, onStarted: (Long, Long) -> Unit, onProgress: (Long, Long) -> Unit, onStopped: (Long, Long) -> Unit) {
     val context = LocalContext.current
-    val player = remember(url, headers, subtitles) {
+    val player = remember(url, headers, subtitles, resumeMs, resumePercent) {
         val dataSource = DefaultHttpDataSource.Factory().setDefaultRequestProperties(headers)
         ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(dataSource)).build().apply {
             val subs = subtitles.mapIndexed { index, option ->
@@ -534,10 +562,28 @@ private fun PlayerScreen(item: AppMedia, videoId: String, title: String, url: St
                     .build()
             }
             setMediaItem(MediaItem.Builder().setUri(url).setSubtitleConfigurations(subs).build())
-            prepare(); if (resumeMs > 0) seekTo(resumeMs); playWhenReady = true
+            prepare()
+            playWhenReady = resumeMs <= 0 && resumePercent == null
         }
     }
     var started by remember(player) { mutableStateOf(false) }
+    var resumeApplied by remember(player) { mutableStateOf(resumeMs <= 0 && resumePercent == null) }
+
+    LaunchedEffect(player, resumeMs, resumePercent) {
+        while (!resumeApplied) {
+            delay(250)
+            val duration = player.duration.takeIf { it > 0 } ?: continue
+            val target = when {
+                resumeMs > 0 -> resumeMs
+                resumePercent != null -> (duration * (resumePercent.coerceIn(0.0, 99.0) / 100.0)).toLong()
+                else -> 0L
+            }.coerceIn(0L, (duration - 1L).coerceAtLeast(0L))
+            player.seekTo(target)
+            player.playWhenReady = true
+            resumeApplied = true
+        }
+    }
+
     LaunchedEffect(player) {
         while (true) {
             delay(5000)
