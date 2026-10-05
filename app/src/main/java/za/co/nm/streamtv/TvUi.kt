@@ -2,7 +2,6 @@ package za.co.nm.streamtv
 
 import android.content.Intent
 import android.net.Uri
-import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -26,7 +25,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -958,34 +961,27 @@ private fun Modifier.tvActivation(
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ): Modifier = composed {
-    var longPressHandled by remember { mutableStateOf(false) }
+    var pressedAtMs by remember { mutableStateOf<Long?>(null) }
 
     onPreviewKeyEvent { event ->
-        val native = event
-        val supported = native.keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
-            native.keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
-            native.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
-            native.keyCode == AndroidKeyEvent.KEYCODE_MEDIA_PLAY ||
-            native.keyCode == AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
-            native.keyCode == AndroidKeyEvent.KEYCODE_BUTTON_A
+        val supported = event.key == Key.DirectionCenter || event.key == Key.Enter
 
         if (!supported) {
             false
         } else {
-            when (native.action) {
-                AndroidKeyEvent.ACTION_DOWN -> {
-                    if (native.repeatCount == 0) {
-                        longPressHandled = false
-                    } else if (!longPressHandled) {
-                        longPressHandled = true
-                        onLongClick()
+            when (event.type) {
+                KeyEventType.KeyDown -> {
+                    if (pressedAtMs == null) {
+                        pressedAtMs = System.currentTimeMillis()
                     }
                     true
                 }
 
-                AndroidKeyEvent.ACTION_UP -> {
-                    if (!longPressHandled) onClick()
-                    longPressHandled = false
+                KeyEventType.KeyUp -> {
+                    val started = pressedAtMs
+                    pressedAtMs = null
+                    val heldForMs = started?.let { System.currentTimeMillis() - it } ?: 0L
+                    if (heldForMs >= 550L) onLongClick() else onClick()
                     true
                 }
 
