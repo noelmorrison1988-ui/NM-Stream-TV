@@ -89,7 +89,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 rdConnecting = false,
                 tmdbConfigured = tmdb.configured(),
                 tmdbStatus = tmdb.maskedToken(),
-                traktConfigured = trakt.clientIdConfigured(),
+                traktConfigured = trakt.credentialsConfigured(),
                 traktConnected = trakt.isConnected(),
                 traktUser = traktUser,
                 traktDeviceCode = null,
@@ -185,14 +185,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshEverything()
     }
 
-    fun saveTraktClientId(clientId: String) {
+    fun saveTraktCredentials(clientId: String, clientSecret: String) {
         traktAuthJob?.cancel()
-        trakt.saveClientId(clientId)
+        runCatching { trakt.saveCredentials(clientId, clientSecret) }
+            .onSuccess {
+                _uiState.value = _uiState.value.copy(
+                    traktConfigured = trakt.credentialsConfigured(),
+                    traktConnected = false,
+                    traktUser = null,
+                    traktDeviceCode = null,
+                    traktConnecting = false,
+                    message = "Trakt credentials saved"
+                )
+            }
+            .onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    traktConfigured = trakt.credentialsConfigured(),
+                    traktConnected = false,
+                    traktUser = null,
+                    traktDeviceCode = null,
+                    traktConnecting = false,
+                    message = error.message ?: "Could not save Trakt credentials"
+                )
+            }
+    }
+
+    fun clearTraktCredentials() {
+        traktAuthJob?.cancel()
+        trakt.clearCredentials()
         _uiState.value = _uiState.value.copy(
-            traktConfigured = trakt.clientIdConfigured(),
+            traktConfigured = false,
             traktConnected = false,
             traktUser = null,
-            message = if (clientId.isBlank()) "Trakt configuration removed" else "Trakt Client ID saved"
+            traktDeviceCode = null,
+            traktConnecting = false,
+            message = "Trakt configuration removed"
         )
     }
 
@@ -246,7 +273,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.value = _uiState.value.copy(traktDeviceCode = device, traktConnecting = true)
             val deadline = System.currentTimeMillis() + device.expiresIn * 1000L
             while (System.currentTimeMillis() < deadline) {
-                val auth = runCatching { trakt.pollDeviceToken(device.deviceCode) }.getOrNull()
+                val attempt = runCatching { trakt.pollDeviceToken(device.deviceCode) }
+                val error = attempt.exceptionOrNull()
+                if (error != null) {
+                    _uiState.value = _uiState.value.copy(
+                        traktConnecting = false,
+                        traktDeviceCode = null,
+                        message = error.message ?: "Trakt sign-in failed"
+                    )
+                    return@launch
+                }
+                val auth = attempt.getOrNull()
                 if (auth != null) {
                     val user = runCatching { trakt.getUser() }.getOrNull()
                     _uiState.value = _uiState.value.copy(
@@ -258,7 +295,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     return@launch
                 }
-                delay(device.interval.coerceAtLeast(5) * 1000L)
+                delay(device.interval.coerceAtLeast(6) * 1000L)
             }
             _uiState.value = _uiState.value.copy(traktConnecting = false, traktDeviceCode = null, message = "Trakt sign-in code expired")
         }
