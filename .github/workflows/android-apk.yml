@@ -45,11 +45,11 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/NM-Stream-TV-v0.10.0-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/NM-Stream-TV-v0.10.1-debug.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: NM-Stream-TV-v0.10.0-debug
-          path: dist/NM-Stream-TV-v0.10.0-debug.apk
+          name: NM-Stream-TV-v0.10.1-debug
+          path: dist/NM-Stream-TV-v0.10.1-debug.apk
           if-no-files-found: error
