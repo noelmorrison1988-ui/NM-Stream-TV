@@ -89,6 +89,32 @@ class IptvRepository(context: Context) {
         )
     }
 
+    fun replaceConfig(remote: IptvConfig) {
+        val m3u = remote.m3uUrl.trim().takeIf { it.isNotBlank() }?.let {
+            validateRemoteUrl(it, "M3U playlist URL")
+        }.orEmpty()
+        val epg = remote.epgUrl.trim().takeIf { it.isNotBlank() }?.let {
+            validateRemoteUrl(it, "EPG URL")
+        }.orEmpty()
+        val server = remote.xtreamServer.trim().takeIf { it.isNotBlank() }?.let {
+            validateRemoteUrl(it, "Xtream server URL").trimEnd('/')
+        }.orEmpty()
+
+        val clean = IptvConfig(
+            m3uUrl = m3u,
+            epgUrl = epg,
+            xtreamServer = server,
+            xtreamUsername = remote.xtreamUsername.trim(),
+            xtreamPassword = remote.xtreamPassword
+        )
+
+        if (!clean.configured) {
+            clear()
+        } else {
+            store.put(CONFIG_KEY, gson.toJson(clean))
+        }
+    }
+
     fun clear() = store.remove(CONFIG_KEY)
 
     fun configured(): Boolean = config().configured
