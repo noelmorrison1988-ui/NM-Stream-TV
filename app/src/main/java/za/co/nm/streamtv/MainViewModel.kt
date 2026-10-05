@@ -1,6 +1,7 @@
 package za.co.nm.streamtv
 
 import android.app.Application
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
@@ -47,6 +48,14 @@ data class MainUiState(
     val iptvGuide: Map<String, List<EpgProgramme>> = emptyMap(),
     val iptvConfigured: Boolean = false,
     val iptvStatus: String = "Not configured",
+    val nmAccountLinked: Boolean = false,
+    val nmAccountName: String? = null,
+    val nmPairCode: String? = null,
+    val nmPairing: Boolean = false,
+    val nmSyncStatus: String = "Not linked",
+    val preferredQuality: Int = 720,
+    val preferHttpDebrid: Boolean = true,
+    val preferredSubtitleLanguage: String = "en",
     val message: String? = null
 )
 
@@ -57,17 +66,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val trakt = TraktRepository(application)
     private val iptv = IptvRepository(application)
     private val playback = PlaybackStore(application)
+    private val nmAccount = NmAccountRepository(application)
 
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     private var rdAuthJob: Job? = null
     private var traktAuthJob: Job? = null
+    private var nmPairJob: Job? = null
+    private var nmSyncJob: Job? = null
     private var traktCloudPlayback: List<PlaybackProgress> = emptyList()
     private var traktUpNext: List<PlaybackProgress> = emptyList()
 
     init {
         refreshEverything()
+        startNmSyncLoop()
     }
 
     fun refreshEverything() {
@@ -139,6 +152,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 runCatching { iptv.loadGuide(iptvChannels) }.getOrDefault(emptyMap())
             } else emptyMap()
 
+            val nmPrefs = nmAccount.playbackPreferences()
+
             _uiState.value = _uiState.value.copy(
                 loading = false,
                 addons = installed,
@@ -164,7 +179,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 iptvCategories = iptvCategories,
                 iptvGuide = iptvGuide,
                 iptvConfigured = iptv.configured(),
-                iptvStatus = iptv.status()
+                iptvStatus = iptv.status(),
+                nmAccountLinked = nmAccount.isLinked(),
+                nmAccountName = nmAccount.accountName(),
+                nmSyncStatus = if (nmAccount.isLinked()) _uiState.value.nmSyncStatus else "Not linked",
+                preferredQuality = nmPrefs.preferredQuality,
+                preferHttpDebrid = nmPrefs.preferHttpDebrid,
+                preferredSubtitleLanguage = nmPrefs.subtitleLanguage
             )
         }
     }
@@ -254,15 +275,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (item.meta.type == "rd") emptyList()
                 else runCatching { addons.loadSubtitles(_uiState.value.addons, item.meta.type, videoId) }.getOrDefault(emptyList())
             }
+            val prefs = nmAccount.playbackPreferences()
             val sortedStreams = streamsDeferred.await()
                 .sortedWith(
-                    compareBy<StreamOption> { it.preferenceScore() }
-                        .thenBy { it.stream.behaviorHints?.videoSize ?: Long.MAX_VALUE }
+                    compareBy<StreamOption> {
+                        it.preferenceScore(
+                            preferredQuality = prefs.preferredQuality,
+                            preferHttpDebrid = prefs.preferHttpDebrid
+                        )
+                    }.thenBy { it.stream.behaviorHints?.videoSize ?: Long.MAX_VALUE }
                 )
+
+            val sortedSubtitles = subtitlesDeferred.await()
+                .sortedBy { option ->
+                    if (option.subtitle.lang.startsWith(prefs.subtitleLanguage, true)) 0 else 1
+                }
 
             _uiState.value = _uiState.value.copy(
                 streamOptions = sortedStreams,
-                subtitleOptions = subtitlesDeferred.await(),
+                subtitleOptions = sortedSubtitles,
                 streamsLoading = false
             )
         }
@@ -531,6 +562,178 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             iptvStatus = "Not configured",
             message = "IPTV configuration removed"
         )
+    }
+
+    fun beginNmAccountPairing() {
+        nmPairJob?.cancel()
+        nmPairJob = viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                nmPairing = true,
+                nmPairCode = null,
+                nmSyncStatus = "Creating pairing code…",
+                message = null
+            )
+
+            val deviceName = listOf(Build.MANUFACTURER, Build.MODEL)
+                .filter { it.isNotBlank() }
+                .joinToString(" ")
+                .ifBlank { "NM Stream TV" }
+
+            val pair = runCatching {
+                nmAccount.startPairing(deviceName, BuildConfig.VERSION_NAME)
+            }.getOrElse { error ->
+                _uiState.value = _uiState.value.copy(
+                    nmPairing = false,
+                    nmPairCode = null,
+                    nmSyncStatus = "Pairing failed",
+                    message = error.message ?: "Could not create NM Account pairing code"
+                )
+                return@launch
+            }
+
+            _uiState.value = _uiState.value.copy(
+                nmPairCode = pair.code,
+                nmPairing = true,
+                nmSyncStatus = "Waiting for phone"
+            )
+
+            val deadline = System.currentTimeMillis() + 10 * 60 * 1000L
+            while (System.currentTimeMillis() < deadline) {
+                delay(3_000)
+                val result = runCatching { nmAccount.pollPairing(pair) }
+                val status = result.getOrNull()
+                if (status?.linked == true) {
+                    runCatching {
+                        nmAccount.saveLinked(status)
+                        nmAccount.bootstrap(
+                            addons.storedManifestUrls(),
+                            nmAccount.playbackPreferences()
+                        )
+                        applyNmAccountSync(force = true)
+                    }.onFailure { error ->
+                        _uiState.value = _uiState.value.copy(
+                            message = error.message ?: "NM Account linked, but initial sync failed"
+                        )
+                    }
+
+                    _uiState.value = _uiState.value.copy(
+                        nmAccountLinked = true,
+                        nmAccountName = nmAccount.accountName(),
+                        nmPairCode = null,
+                        nmPairing = false,
+                        nmSyncStatus = "Synced",
+                        message = "NM Account linked to this TV"
+                    )
+                    refreshEverything()
+                    return@launch
+                }
+
+                val error = result.exceptionOrNull()
+                if (error != null && error.message?.contains("410") == true) break
+            }
+
+            _uiState.value = _uiState.value.copy(
+                nmPairCode = null,
+                nmPairing = false,
+                nmSyncStatus = "Pairing code expired",
+                message = "NM Account pairing code expired. Try again."
+            )
+        }
+    }
+
+    fun syncNmAccountNow() {
+        viewModelScope.launch {
+            if (!nmAccount.isLinked()) {
+                _uiState.value = _uiState.value.copy(message = "Link this TV to NM Account first")
+                return@launch
+            }
+            _uiState.value = _uiState.value.copy(nmSyncStatus = "Syncing…")
+            runCatching { applyNmAccountSync(force = false) }
+                .onSuccess {
+                    _uiState.value = _uiState.value.copy(
+                        nmSyncStatus = "Synced",
+                        message = "NM Account settings are up to date"
+                    )
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(
+                        nmSyncStatus = "Sync failed",
+                        message = error.message ?: "NM Account sync failed"
+                    )
+                }
+        }
+    }
+
+    fun unlinkNmAccount() {
+        nmPairJob?.cancel()
+        nmAccount.unlink()
+        _uiState.value = _uiState.value.copy(
+            nmAccountLinked = false,
+            nmAccountName = null,
+            nmPairCode = null,
+            nmPairing = false,
+            nmSyncStatus = "Not linked",
+            message = "This TV was unlinked from NM Account"
+        )
+    }
+
+    private fun startNmSyncLoop() {
+        nmSyncJob?.cancel()
+        nmSyncJob = viewModelScope.launch {
+            while (true) {
+                if (nmAccount.isLinked()) {
+                    runCatching { applyNmAccountSync(force = false) }
+                        .onFailure {
+                            _uiState.value = _uiState.value.copy(nmSyncStatus = "Waiting to sync")
+                        }
+                }
+                delay(15_000)
+            }
+        }
+    }
+
+    private suspend fun applyNmAccountSync(force: Boolean): Boolean {
+        if (!nmAccount.isLinked()) return false
+        val remote = nmAccount.fetchState()
+        val currentVersion = nmAccount.lastAppliedVersion()
+        val changed = force || remote.settings.settingsVersion > currentVersion
+
+        if (changed) {
+            nmAccount.applyLocalPreferences(remote)
+            addons.syncManifestUrls(remote.settings.addonManifests)
+
+            if (remote.settings.syncIptv) {
+                remote.settings.iptv?.let { cloud ->
+                    iptv.replaceConfig(
+                        IptvConfig(
+                            m3uUrl = cloud.m3uUrl,
+                            epgUrl = cloud.epgUrl,
+                            xtreamServer = cloud.xtreamServer,
+                            xtreamUsername = cloud.xtreamUsername,
+                            xtreamPassword = cloud.xtreamPassword
+                        )
+                    )
+                }
+            }
+
+            val prefs = nmAccount.playbackPreferences()
+            _uiState.value = _uiState.value.copy(
+                nmAccountLinked = true,
+                nmAccountName = remote.accountName,
+                nmSyncStatus = "Synced",
+                preferredQuality = prefs.preferredQuality,
+                preferHttpDebrid = prefs.preferHttpDebrid,
+                preferredSubtitleLanguage = prefs.subtitleLanguage
+            )
+            refreshEverything()
+        } else {
+            _uiState.value = _uiState.value.copy(
+                nmAccountLinked = true,
+                nmAccountName = remote.accountName,
+                nmSyncStatus = "Synced"
+            )
+        }
+        return changed
     }
 
     fun resumePosition(item: AppMedia, videoId: String): Long = playback.resumePosition(item, videoId)
