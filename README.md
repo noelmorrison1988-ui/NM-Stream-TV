@@ -2,7 +2,7 @@
 
 **NM Stream TV** is an Android TV / Android-box media front end branded as an **NM Digital** product. It provides a cinematic, remote-friendly interface for user-configured media sources without bundling third-party scraping providers.
 
-## v0.9.0 features
+## v0.10.0 features
 
 - Cinematic Netflix-inspired (but original) Android TV interface
 - **NM Stream TV startup splash:** supplied Morrison Entertainment family artwork is bundled offline, shown full-screen with no cropping, and fades into the app after startup
@@ -24,6 +24,7 @@
 - Native XMLTV EPG parsing with a **Now & Next TV guide**; Xtream setups automatically try the standard XMLTV endpoint when no custom EPG URL is supplied
 - Added **Motorsport Hub** and **M3U/EPG TV Addon** presets
 - Curated Add-on Manager containing the requested core integrations plus **Sports Streams (SportStream)**, **StremVerse** and IPTV setup options
+- **In-app add-on configurator:** Configure no longer opens an external browser; setup pages stay inside NM Stream TV and generated `stremio://` / `manifest.json` links are captured and installed automatically
 - Manifest installer accepts both `https://` and copied `stremio://` links, shows install status/errors, and preserves configured query parameters
 - **Smart stream ranking:** 720p is the preferred default quality, direct/debrid HTTP is favoured over raw P2P, and the top result is marked DEFAULT
 - **One-press auto-play:** a normal OK/Play press resolves sources and immediately starts the best ranked playable stream
@@ -39,14 +40,14 @@
 
 - Product name: **NM Stream TV**
 - Package/application ID: `za.co.nm.streamtv`
-- Version: `0.9.0`
+- Version: `0.10.0`
 - Product family label: **NM Digital**
 
 ## Build
 
 The repository contains `.github/workflows/android-apk.yml`. Every push to `main`, pull request to `main`, or manual workflow dispatch builds:
 
-`NM-Stream-TV-v0.9.0-debug.apk`
+`NM-Stream-TV-v0.10.0-debug.apk`
 
 The workflow uses JDK 17, Gradle 9.6, Android SDK 37 and Android Build Tools 36.0.0.
 
