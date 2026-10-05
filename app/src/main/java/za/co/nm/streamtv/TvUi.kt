@@ -12,6 +12,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -49,7 +50,6 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
-import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
@@ -64,6 +64,40 @@ private val NmPanelFocus = Color(0xFF252830)
 private val NmRed = Color(0xFFE2182D)
 private val NmMuted = Color(0xFFB6BBC5)
 private val NmGreen = Color(0xFF69D39A)
+
+
+@Composable
+private fun Button(
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier,
+    content: @Composable RowScope.() -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    Row(
+        modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                when {
+                    !enabled -> Color(0xFF3A3D45)
+                    focused -> Color(0xFFFF2948)
+                    else -> NmRed
+                }
+            )
+            .border(
+                if (focused && enabled) 2.dp else 0.dp,
+                if (focused && enabled) Color.White else Color.Transparent,
+                RoundedCornerShape(8.dp)
+            )
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(enabled = enabled, onClick = onClick)
+            .focusable(enabled)
+            .padding(horizontal = 18.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+        content = content
+    )
+}
 
 private sealed interface Screen {
     data object Home : Screen
@@ -1137,32 +1171,35 @@ private fun Modifier.tvActivation(
 ): Modifier = composed {
     var pressedAtMs by remember { mutableStateOf<Long?>(null) }
 
-    onPreviewKeyEvent { event ->
-        val supported = event.key == Key.DirectionCenter || event.key == Key.Enter
+    this
+        .combinedClickable(
+            onClick = onClick,
+            onLongClick = onLongClick
+        )
+        .onPreviewKeyEvent { event ->
+            val supported = event.key == Key.DirectionCenter || event.key == Key.Enter
 
-        if (!supported) {
-            false
-        } else {
-            when (event.type) {
-                KeyEventType.KeyDown -> {
-                    if (pressedAtMs == null) {
-                        pressedAtMs = System.currentTimeMillis()
+            if (!supported) {
+                false
+            } else {
+                when (event.type) {
+                    KeyEventType.KeyDown -> {
+                        if (pressedAtMs == null) pressedAtMs = System.currentTimeMillis()
+                        true
                     }
-                    true
-                }
 
-                KeyEventType.KeyUp -> {
-                    val started = pressedAtMs
-                    pressedAtMs = null
-                    val heldForMs = started?.let { System.currentTimeMillis() - it } ?: 0L
-                    if (heldForMs >= 550L) onLongClick() else onClick()
-                    true
-                }
+                    KeyEventType.KeyUp -> {
+                        val started = pressedAtMs
+                        pressedAtMs = null
+                        val heldForMs = started?.let { System.currentTimeMillis() - it } ?: 0L
+                        if (heldForMs >= 550L) onLongClick() else onClick()
+                        true
+                    }
 
-                else -> false
+                    else -> false
+                }
             }
         }
-    }
 }
 
 @Composable
@@ -1222,63 +1259,134 @@ private fun SourcesScreen(title: String, loading: Boolean, sources: List<StreamO
 }
 
 @Composable
-private fun PlayerScreen(item: AppMedia, videoId: String, title: String, url: String, headers: Map<String, String>, subtitles: List<SubtitleOption>, resumeMs: Long, resumePercent: Double?, onStarted: (Long, Long) -> Unit, onProgress: (Long, Long) -> Unit, onStopped: (Long, Long) -> Unit) {
+private fun PlayerScreen(
+    item: AppMedia,
+    videoId: String,
+    title: String,
+    url: String,
+    headers: Map<String, String>,
+    subtitles: List<SubtitleOption>,
+    resumeMs: Long,
+    resumePercent: Double?,
+    onStarted: (Long, Long) -> Unit,
+    onProgress: (Long, Long) -> Unit,
+    onStopped: (Long, Long) -> Unit
+) {
     val context = LocalContext.current
-    val player = remember(url, headers, subtitles, resumeMs, resumePercent) {
-        val dataSource = DefaultHttpDataSource.Factory().setDefaultRequestProperties(headers)
-        ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(dataSource)).build().apply {
-            val subs = subtitles.mapIndexed { index, option ->
-                MediaItem.SubtitleConfiguration.Builder(Uri.parse(option.subtitle.url))
-                    .setId(option.subtitle.id.ifBlank { "sub-" + index })
-                    .setLanguage(option.subtitle.lang)
-                    .setLabel(option.subtitle.lang.uppercase() + " · " + option.addonName)
-                    .setMimeType(subtitleMime(option.subtitle.url))
-                    .setSelectionFlags(if (index == 0 && option.subtitle.lang.startsWith("en", true)) C.SELECTION_FLAG_DEFAULT else 0)
-                    .build()
-            }
-            setMediaItem(MediaItem.Builder().setUri(url).setSubtitleConfigurations(subs).build())
-            prepare()
-            playWhenReady = resumeMs <= 0 && resumePercent == null
-        }
-    }
-    var started by remember(player) { mutableStateOf(false) }
-    var resumeApplied by remember(player) { mutableStateOf(resumeMs <= 0 && resumePercent == null) }
 
-    LaunchedEffect(player, resumeMs, resumePercent) {
-        while (!resumeApplied) {
-            delay(250)
-            val duration = player.duration.takeIf { it > 0 } ?: continue
-            val target = when {
-                resumeMs > 0 -> resumeMs
-                resumePercent != null -> (duration * (resumePercent.coerceIn(0.0, 99.0) / 100.0)).toLong()
-                else -> 0L
-            }.coerceIn(0L, (duration - 1L).coerceAtLeast(0L))
-            player.seekTo(target)
-            player.playWhenReady = true
-            resumeApplied = true
+    // Snapshot resume data once per URL. Progress saves must never recreate/re-seek the player.
+    val initialResumeMs = remember(url) { resumeMs }
+    val initialResumePercent = remember(url) { resumePercent }
+
+    val player = remember(url) {
+        val dataSource = DefaultHttpDataSource.Factory()
+            .setDefaultRequestProperties(headers)
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(15_000)
+            .setReadTimeoutMs(30_000)
+
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(context).setDataSourceFactory(dataSource)
+            )
+            .build()
+            .apply {
+                val subs = subtitles.mapIndexed { index, option ->
+                    MediaItem.SubtitleConfiguration.Builder(Uri.parse(option.subtitle.url))
+                        .setId(option.subtitle.id.ifBlank { "sub-" + index })
+                        .setLanguage(option.subtitle.lang)
+                        .setLabel(option.subtitle.lang.uppercase() + " · " + option.addonName)
+                        .setMimeType(subtitleMime(option.subtitle.url))
+                        .setSelectionFlags(
+                            if (index == 0 && option.subtitle.lang.startsWith("en", true))
+                                C.SELECTION_FLAG_DEFAULT else 0
+                        )
+                        .build()
+                }
+
+                setMediaItem(
+                    MediaItem.Builder()
+                        .setUri(url)
+                        .setSubtitleConfigurations(subs)
+                        .build()
+                )
+                prepare()
+                playWhenReady = initialResumeMs <= 0 && initialResumePercent == null
+            }
+    }
+
+    var started by remember(player) { mutableStateOf(false) }
+    var resumeApplied by remember(player) {
+        mutableStateOf(initialResumeMs <= 0 && initialResumePercent == null)
+    }
+
+    LaunchedEffect(player) {
+        if (!resumeApplied) {
+            while (!resumeApplied) {
+                delay(200)
+                val duration = player.duration.takeIf { it > 0 } ?: continue
+                val target = when {
+                    initialResumeMs > 0 -> initialResumeMs
+                    initialResumePercent != null ->
+                        (duration * (initialResumePercent.coerceIn(0.0, 99.0) / 100.0)).toLong()
+                    else -> 0L
+                }.coerceIn(0L, (duration - 1L).coerceAtLeast(0L))
+
+                if (target > 0L) player.seekTo(target)
+                resumeApplied = true
+                player.playWhenReady = true
+            }
         }
     }
 
     LaunchedEffect(player) {
         while (true) {
-            delay(5000)
-            val d = player.duration.takeIf { it > 0 } ?: 0L
-            val p = player.currentPosition.coerceAtLeast(0L)
-            if (!started && d > 0) { onStarted(p, d); started = true }
-            if (d > 0) onProgress(p, d)
+            delay(5_000)
+            val duration = player.duration.takeIf { it > 0 } ?: continue
+            val position = player.currentPosition.coerceAtLeast(0L)
+
+            if (!started) {
+                onStarted(position, duration)
+                started = true
+            }
+
+            if (position > 0L) onProgress(position, duration)
         }
     }
+
     DisposableEffect(player) {
         onDispose {
-            val d = player.duration.takeIf { it > 0 } ?: 0L
-            val p = player.currentPosition.coerceAtLeast(0L)
-            if (d > 0) onStopped(p, d)
+            val duration = player.duration.takeIf { it > 0 } ?: 0L
+            val position = player.currentPosition.coerceAtLeast(0L)
+            if (duration > 0 && position > 0L) onStopped(position, duration)
             player.release()
         }
     }
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        AndroidView(factory = { PlayerView(it).apply { useController = true; this.player = player } }, update = { it.player = player }, modifier = Modifier.fillMaxSize())
-        Text(title, color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(24.dp).background(Color.Black.copy(alpha = .55f)).padding(10.dp))
+        AndroidView(
+            factory = {
+                PlayerView(it).apply {
+                    useController = true
+                    keepScreenOn = true
+                    this.player = player
+                }
+            },
+            update = {
+                it.player = player
+                it.keepScreenOn = true
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+        Text(
+            title,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier
+                .padding(24.dp)
+                .background(Color.Black.copy(alpha = .55f))
+                .padding(10.dp)
+        )
     }
 }
 
