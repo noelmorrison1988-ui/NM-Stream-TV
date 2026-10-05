@@ -917,6 +917,86 @@ private fun DetailsScreen(
 }
 
 @Composable
+private fun AutoPlayScreen(title: String) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text("Finding the best source…", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+            Text(title, color = NmMuted, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("720p preferred · Debrid/HTTP before P2P", color = NmGreen, fontSize = 14.sp)
+        }
+    }
+}
+
+@Composable
+private fun HoldActionButton(
+    label: String,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (focused) NmRed else NmPanelFocus)
+            .border(
+                if (focused) 2.dp else 0.dp,
+                if (focused) Color.White else Color.Transparent,
+                RoundedCornerShape(8.dp)
+            )
+            .onFocusChanged { focused = it.isFocused }
+            .tvActivation(onClick = onClick, onLongClick = onLongClick)
+            .focusable()
+            .padding(horizontal = 18.dp, vertical = 11.dp)
+    ) {
+        Text(label, color = Color.White, fontWeight = FontWeight.Bold)
+    }
+}
+
+private fun Modifier.tvActivation(
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+): Modifier = composed {
+    var longPressHandled by remember { mutableStateOf(false) }
+
+    onPreviewKeyEvent { event ->
+        val native = event.nativeKeyEvent
+        val supported = native.keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
+            native.keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
+            native.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
+            native.keyCode == AndroidKeyEvent.KEYCODE_MEDIA_PLAY ||
+            native.keyCode == AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
+            native.keyCode == AndroidKeyEvent.KEYCODE_BUTTON_A
+
+        if (!supported) {
+            false
+        } else {
+            when (native.action) {
+                AndroidKeyEvent.ACTION_DOWN -> {
+                    if (native.repeatCount == 0) {
+                        longPressHandled = false
+                    } else if (!longPressHandled) {
+                        longPressHandled = true
+                        onLongClick()
+                    }
+                    true
+                }
+
+                AndroidKeyEvent.ACTION_UP -> {
+                    if (!longPressHandled) onClick()
+                    longPressHandled = false
+                    true
+                }
+
+                else -> false
+            }
+        }
+    }
+}
+
+@Composable
 private fun SourcesScreen(title: String, loading: Boolean, sources: List<StreamOption>, subtitleCount: Int, select: (StreamOption) -> Unit) {
     val recommended = sources.firstOrNull()
 
