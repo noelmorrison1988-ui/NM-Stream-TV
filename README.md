@@ -111,3 +111,4 @@ app/src/main/java/za/co/nm/streamtv/
 ## Production hardening still recommended
 
 Before a public store release, add a signed release build, crash reporting, accessibility review, TV-device matrix testing, network/cache layer, service-specific rate-limit handling, privacy-policy hosting, app-store artwork and a formal QA pass on physical Android TV devices.
+
