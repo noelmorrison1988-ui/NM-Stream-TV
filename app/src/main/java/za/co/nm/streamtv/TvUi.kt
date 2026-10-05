@@ -305,7 +305,12 @@ private fun NavChip(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun HomeScreen(state: MainUiState, onOpen: (AppMedia) -> Unit, onContinue: (PlaybackProgress) -> Unit) {
+private fun HomeScreen(
+    state: MainUiState,
+    onOpen: (AppMedia) -> Unit,
+    onContinue: (PlaybackProgress) -> Unit,
+    onContinueManual: (PlaybackProgress) -> Unit
+) {
     if (state.loading) {
         CenterText("Loading NM Stream TV…")
         return
@@ -334,7 +339,7 @@ private fun HomeScreen(state: MainUiState, onOpen: (AppMedia) -> Unit, onContinu
                 onOpen = onOpen
             )
         }
-        item { ContinueRow(state.continueWatching, onContinue) }
+        item { ContinueRow(state.continueWatching, onContinue, onContinueManual) }
 
         if (state.traktWatchlist.isNotEmpty()) item { MediaRow("My Trakt Watchlist", state.traktWatchlist, onOpen) }
         if (state.iptvSports.isNotEmpty()) item { MediaRow("Live Sports · Rugby · F1 · Soccer · Cricket", state.iptvSports.take(40), onOpen) }
@@ -439,7 +444,11 @@ private fun PosterCard(item: AppMedia, onOpen: (AppMedia) -> Unit) {
 }
 
 @Composable
-private fun ContinueRow(media: List<PlaybackProgress>, onOpen: (PlaybackProgress) -> Unit) {
+private fun ContinueRow(
+    media: List<PlaybackProgress>,
+    onOpen: (PlaybackProgress) -> Unit,
+    onLongOpen: (PlaybackProgress) -> Unit
+) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Continue Watching", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 40.dp))
         if (media.isEmpty()) {
@@ -458,7 +467,15 @@ private fun ContinueRow(media: List<PlaybackProgress>, onOpen: (PlaybackProgress
         } else LazyRow(contentPadding = PaddingValues(horizontal = 40.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(media) { p ->
                 var focused by remember { mutableStateOf(false) }
-                Column(Modifier.width(240.dp).onFocusChanged { focused = it.isFocused }.clickable { onOpen(p) }.focusable()) {
+                Column(
+                    Modifier.width(240.dp)
+                        .onFocusChanged { focused = it.isFocused }
+                        .tvActivation(
+                            onClick = { onOpen(p) },
+                            onLongClick = { onLongOpen(p) }
+                        )
+                        .focusable()
+                ) {
                     Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(NmPanel).border(if (focused) 2.dp else 0.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(8.dp))) {
                         AsyncImage(model = p.media.meta.background ?: p.media.meta.poster, contentDescription = p.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                         Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(5.dp).background(Color.White.copy(alpha = .2f))) {
@@ -469,9 +486,9 @@ private fun ContinueRow(media: List<PlaybackProgress>, onOpen: (PlaybackProgress
                     Text(p.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
                         when (p.source) {
-                            "Up Next" -> "UP NEXT"
-                            "Trakt" -> "TRAKT · ${p.percent}%"
-                            else -> (p.source?.let { "$it · " } ?: "") + p.percent + "%"
+                            "Up Next" -> "UP NEXT · OK plays · hold for sources"
+                            "Trakt" -> "TRAKT · ${p.percent}% · hold for sources"
+                            else -> (p.source?.let { "$it · " } ?: "") + p.percent + "% · hold for sources"
                         },
                         color = if (p.source == "Trakt" || p.source == "Up Next") NmGreen else NmMuted,
                         fontSize = 12.sp,
@@ -818,7 +835,8 @@ private fun DetailsScreen(
     inNoel: Boolean,
     inSarah: Boolean,
     trailer: StreamOption?,
-    choose: (AppMedia, String, String) -> Unit,
+    play: (AppMedia, String, String) -> Unit,
+    chooseManual: (AppMedia, String, String) -> Unit,
     addNoel: () -> Unit,
     addSarah: () -> Unit,
     playTrailer: (StreamOption) -> Unit
@@ -835,7 +853,11 @@ private fun DetailsScreen(
 
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         if (item.meta.type != "series" || item.meta.videos.isEmpty()) {
-                            Button(onClick = { choose(item, item.meta.id, item.meta.name) }) { Text("▶  Choose source") }
+                            HoldActionButton(
+                                label = "▶  Play",
+                                onClick = { play(item, item.meta.id, item.meta.name) },
+                                onLongClick = { chooseManual(item, item.meta.id, item.meta.name) }
+                            )
                         }
                         trailer?.let {
                             Button(onClick = { playTrailer(it) }) {
@@ -843,6 +865,12 @@ private fun DetailsScreen(
                             }
                         }
                     }
+
+                    Text(
+                        "Press OK/Play to use the best 720p source · Hold OK/Play to choose manually",
+                        color = NmGreen,
+                        fontSize = 12.sp
+                    )
 
                     if (item.meta.type == "movie" || item.meta.type == "series") {
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -866,7 +894,19 @@ private fun DetailsScreen(
                 item { Text("Episodes", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold) }
                 items(item.meta.videos) { ep ->
                     var focused by remember { mutableStateOf(false) }
-                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (focused) NmPanelFocus else NmPanel).onFocusChanged { focused = it.isFocused }.clickable { choose(item, ep.id, ep.displayName()) }.focusable().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (focused) NmPanelFocus else NmPanel)
+                            .onFocusChanged { focused = it.isFocused }
+                            .tvActivation(
+                                onClick = { play(item, ep.id, ep.displayName()) },
+                                onLongClick = { chooseManual(item, ep.id, ep.displayName()) }
+                            )
+                            .focusable()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         AsyncImage(model = ep.thumbnail, contentDescription = ep.displayName(), contentScale = ContentScale.Crop, modifier = Modifier.width(180.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)))
                         Spacer(Modifier.width(16.dp)); Column(Modifier.weight(1f)) { Text(ep.displayName(), color = Color.White, fontWeight = FontWeight.Bold); ep.overview?.let { Text(it, color = NmMuted, maxLines = 2, overflow = TextOverflow.Ellipsis) } }
                     }
