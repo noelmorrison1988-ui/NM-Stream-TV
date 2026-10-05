@@ -42,6 +42,9 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private val NmBg = Color(0xFF050609)
 private val NmPanel = Color(0xFF15171D)
@@ -186,7 +189,29 @@ private fun HomeScreen(state: MainUiState, onOpen: (AppMedia) -> Unit, onContinu
     val hero = state.movies.firstOrNull() ?: state.series.firstOrNull()
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         item { if (hero != null) Hero(hero, onOpen) else EmptyHero(state.addons.isEmpty()) }
-        if (state.continueWatching.isNotEmpty()) item { ContinueRow(state.continueWatching, onContinue) }
+
+        item {
+            PersonalMediaRow(
+                title = "Noel",
+                media = state.noelList,
+                emptyText = if (state.traktConnected)
+                    "Add movies or series to the Trakt list named Noel."
+                else "Connect Trakt to load the Noel list.",
+                onOpen = onOpen
+            )
+        }
+        item {
+            PersonalMediaRow(
+                title = "Sarah",
+                media = state.sarahList,
+                emptyText = if (state.traktConnected)
+                    "Add movies or series to the Trakt list named Sarah."
+                else "Connect Trakt to load the Sarah list.",
+                onOpen = onOpen
+            )
+        }
+        item { ContinueRow(state.continueWatching, onContinue) }
+
         if (state.traktWatchlist.isNotEmpty()) item { MediaRow("My Trakt Watchlist", state.traktWatchlist, onOpen) }
         if (state.iptvSports.isNotEmpty()) item { MediaRow("Live Sports · Rugby · F1 · Soccer · Cricket", state.iptvSports.take(40), onOpen) }
         if (state.movies.isNotEmpty()) item { MediaRow("Movies", state.movies, onOpen) }
@@ -226,6 +251,47 @@ private fun EmptyHero(noAddons: Boolean) {
 }
 
 @Composable
+private fun PersonalMediaRow(
+    title: String,
+    media: List<AppMedia>,
+    emptyText: String,
+    onOpen: (AppMedia) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 40.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(title, color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Black)
+            Spacer(Modifier.width(10.dp))
+            Text("TRAKT LIST", color = NmRed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        }
+
+        if (media.isEmpty()) {
+            Box(
+                Modifier
+                    .padding(horizontal = 40.dp)
+                    .fillMaxWidth()
+                    .height(82.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(NmPanel)
+                    .padding(18.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                Text(emptyText, color = NmMuted)
+            }
+        } else {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 40.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                items(media) { PosterCard(it, onOpen) }
+            }
+        }
+    }
+}
+
+@Composable
 private fun MediaRow(title: String, media: List<AppMedia>, onOpen: (AppMedia) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(title, color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 40.dp))
@@ -252,7 +318,20 @@ private fun PosterCard(item: AppMedia, onOpen: (AppMedia) -> Unit) {
 private fun ContinueRow(media: List<PlaybackProgress>, onOpen: (PlaybackProgress) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Continue Watching", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 40.dp))
-        LazyRow(contentPadding = PaddingValues(horizontal = 40.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        if (media.isEmpty()) {
+            Box(
+                Modifier
+                    .padding(horizontal = 40.dp)
+                    .fillMaxWidth()
+                    .height(82.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(NmPanel)
+                    .padding(18.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                Text("Your Trakt playback and next unwatched episodes will appear here.", color = NmMuted)
+            }
+        } else LazyRow(contentPadding = PaddingValues(horizontal = 40.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(media) { p ->
                 var focused by remember { mutableStateOf(false) }
                 Column(Modifier.width(240.dp).onFocusChanged { focused = it.isFocused }.clickable { onOpen(p) }.focusable()) {
@@ -265,9 +344,14 @@ private fun ContinueRow(media: List<PlaybackProgress>, onOpen: (PlaybackProgress
                     Spacer(Modifier.height(6.dp))
                     Text(p.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
-                        (p.source?.let { "$it · " } ?: "") + p.percent + "%",
-                        color = if (p.source == "Trakt") NmGreen else NmMuted,
-                        fontSize = 12.sp
+                        when (p.source) {
+                            "Up Next" -> "UP NEXT"
+                            "Trakt" -> "TRAKT · ${p.percent}%"
+                            else -> (p.source?.let { "$it · " } ?: "") + p.percent + "%"
+                        },
+                        color = if (p.source == "Trakt" || p.source == "Up Next") NmGreen else NmMuted,
+                        fontSize = 12.sp,
+                        fontWeight = if (p.source == "Up Next") FontWeight.Bold else FontWeight.Normal
                     )
                 }
             }
@@ -277,6 +361,10 @@ private fun ContinueRow(media: List<PlaybackProgress>, onOpen: (PlaybackProgress
 
 @Composable
 private fun LiveTvScreen(state: MainUiState, onOpen: (AppMedia) -> Unit) {
+    val guideChannels = state.iptvChannels
+        .filter { state.iptvGuide[it.meta.id].orEmpty().isNotEmpty() }
+        .take(40)
+
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(top = 26.dp, bottom = 48.dp),
@@ -290,20 +378,116 @@ private fun LiveTvScreen(state: MainUiState, onOpen: (AppMedia) -> Unit) {
                     else "Add your M3U playlist or Xtream account in Settings.",
                     color = if (state.iptvConfigured) NmGreen else NmMuted
                 )
-                Text("Sports prioritises rugby, Formula 1, soccer, cricket and other sports channels.", color = NmMuted)
+                Text(
+                    "Dedicated Rugby, F1 & Motorsport, Soccer and Cricket categories are prioritised above your provider's own channel groups.",
+                    color = NmMuted
+                )
             }
         }
-        if (state.iptvSports.isNotEmpty()) item {
-            MediaRow("Sports", state.iptvSports.take(100), onOpen)
+
+        if (guideChannels.isNotEmpty()) {
+            item {
+                Column(Modifier.padding(horizontal = 42.dp)) {
+                    Text("TV Guide · Now & Next", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                    Text("Programme data from your XMLTV/Xtream EPG.", color = NmMuted)
+                }
+            }
+            items(guideChannels, key = { "guide-${it.meta.id}" }) { channel ->
+                EpgChannelRow(channel, state.iptvGuide[channel.meta.id].orEmpty(), onOpen)
+            }
         }
+
+        state.iptvCategories.forEach { category ->
+            item(key = "category-${category.name}") {
+                MediaRow(category.name, category.channels.take(120), onOpen)
+            }
+        }
+
         if (state.iptvChannels.isNotEmpty()) item {
-            MediaRow("All Live TV", state.iptvChannels.take(160), onOpen)
+            MediaRow("All Channels", state.iptvChannels.take(180), onOpen)
         }
+
         if (state.iptvConfigured && state.iptvChannels.isEmpty()) item {
-            Text("No channels could be loaded from the configured IPTV source.", color = NmMuted, modifier = Modifier.padding(horizontal = 42.dp))
+            Text(
+                "No channels could be loaded from the configured IPTV source.",
+                color = NmMuted,
+                modifier = Modifier.padding(horizontal = 42.dp)
+            )
         }
     }
 }
+
+@Composable
+private fun EpgChannelRow(
+    channel: AppMedia,
+    programmes: List<EpgProgramme>,
+    onOpen: (AppMedia) -> Unit
+) {
+    val nowMs = System.currentTimeMillis()
+    val current = programmes.firstOrNull { it.isLive(nowMs) }
+    val next = programmes.firstOrNull { it.startMs >= (current?.stopMs ?: nowMs) }
+    var focused by remember { mutableStateOf(false) }
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 42.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (focused) NmPanelFocus else NmPanel)
+            .border(if (focused) 2.dp else 0.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(10.dp))
+            .onFocusChanged { focused = it.isFocused }
+            .clickable { onOpen(channel) }
+            .focusable()
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        AsyncImage(
+            model = channel.meta.poster ?: channel.meta.background,
+            contentDescription = channel.meta.name,
+            modifier = Modifier.size(74.dp).clip(RoundedCornerShape(8.dp)),
+            contentScale = ContentScale.Fit
+        )
+        Column(Modifier.width(220.dp)) {
+            Text(channel.meta.name, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 2)
+            Text(channel.meta.genres.firstOrNull() ?: "Live TV", color = NmRed, fontSize = 12.sp)
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (current != null) {
+                Text(
+                    "NOW · ${formatGuideTime(current.startMs)}–${formatGuideTime(current.stopMs)}",
+                    color = NmGreen,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(current.title, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                current.description?.let {
+                    Text(it, color = NmMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp)
+                }
+                val duration = (current.stopMs - current.startMs).coerceAtLeast(1L)
+                val progress = ((nowMs - current.startMs).coerceIn(0L, duration).toFloat() / duration.toFloat())
+                Box(Modifier.fillMaxWidth().height(4.dp).background(Color.White.copy(alpha = .15f))) {
+                    Box(Modifier.fillMaxHeight().fillMaxWidth(progress.coerceIn(0f, 1f)).background(NmRed))
+                }
+            } else {
+                Text("NO CURRENT EPG PROGRAMME", color = NmMuted, fontSize = 12.sp)
+            }
+            next?.let {
+                Text(
+                    "NEXT · ${formatGuideTime(it.startMs)}  ${it.title}",
+                    color = NmMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 12.sp
+                )
+            }
+        }
+        Text("WATCH", color = NmGreen, fontWeight = FontWeight.Black)
+    }
+}
+
+private fun formatGuideTime(timeMs: Long): String =
+    SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(timeMs))
 
 @Composable
 private fun SearchScreen(state: MainUiState, onSearch: (String) -> Unit, onOpen: (AppMedia) -> Unit) {
@@ -460,7 +644,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
                 else "Client ID + Client Secret required",
                 color = if (state.traktConnected) NmGreen else NmMuted
             )
-            Text("Native Trakt: device sign-in, automatic token refresh, watchlist sync and playback scrobbling. Enter the Client ID and Client Secret from your Trakt API app; they are stored encrypted on this device.", color = NmMuted)
+            Text("Native Trakt: device sign-in, automatic token refresh, cloud Continue Watching, Up Next episodes and personal list sync. Create personal Trakt lists named Noel and Sarah; NM Stream TV uses them as the first two Home rows.", color = NmMuted)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.width(640.dp)) { InputBox(traktId, "Trakt Client ID") { traktId = it } }
                 Box(Modifier.width(640.dp)) { InputBox(traktSecret, "Trakt Client Secret", password = true) { traktSecret = it } }
@@ -489,7 +673,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV v0.4.0 · an NM Digital product", color = NmMuted) }
+        item { Text("NM Stream TV v0.5.0 · an NM Digital product", color = NmMuted) }
     }
 }
 

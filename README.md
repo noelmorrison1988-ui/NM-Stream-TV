@@ -2,7 +2,7 @@
 
 **NM Stream TV** is an Android TV / Android-box media front end branded as an **NM Digital** product. It provides a cinematic, remote-friendly interface for user-configured media sources without bundling third-party scraping providers.
 
-## v0.4.0 features
+## v0.5.0 features
 
 - Cinematic Netflix-inspired (but original) Android TV interface
 - Home hero banner, horizontal media rails and D-pad focus animations
@@ -13,10 +13,14 @@
 - **Real-Debrid device authentication** and access to the user's existing download library
 - **TMDB artwork enrichment** using a user-entered API Read Access Token
 - **Native Trakt device authentication** with automatic token refresh
+- **Noel** and **Sarah** Home rows backed by Trakt personal lists with those names
 - **Trakt cloud Continue Watching** from `/sync/playback`, including cross-device percentage resume
+- **Trakt Up Next**: recently watched shows are checked for the next aired unwatched episode and merged into Continue Watching
 - Native Trakt watchlist row and playback scrobbling for media with IMDb IDs
 - **Live TV / IPTV** with user-supplied M3U/M3U8 playlists, optional XMLTV URL and Xtream Codes credentials
-- Sports-first live TV discovery for rugby, Formula 1, soccer, cricket and other sport
+- Sports-first live TV discovery with dedicated **Rugby**, **F1 & Motorsport**, **Soccer & Football**, **Cricket** and **Other Sports** rows
+- Native XMLTV EPG parsing with a **Now & Next TV guide**; Xtream setups automatically try the standard XMLTV endpoint when no custom EPG URL is supplied
+- Added **Motorsport Hub** and **M3U/EPG TV Addon** presets
 - Curated Add-on Manager containing the requested core integrations plus **Sports Streams (SportStream)**, **StremVerse** and IPTV setup options
 - Manifest installer accepts both `https://` and copied `stremio://` links, shows install status/errors, and preserves configured query parameters
 - Local **Continue Watching** with resume position
@@ -29,14 +33,14 @@
 
 - Product name: **NM Stream TV**
 - Package/application ID: `za.co.nm.streamtv`
-- Version: `0.4.0`
+- Version: `0.5.0`
 - Product family label: **NM Digital**
 
 ## Build
 
 The repository contains `.github/workflows/android-apk.yml`. Every push to `main`, pull request to `main`, or manual workflow dispatch builds:
 
-`NM-Stream-TV-v0.4.0-debug.apk`
+`NM-Stream-TV-v0.5.0-debug.apk`
 
 The workflow uses JDK 17, Gradle 9.6, Android SDK 37 and Android Build Tools 36.0.0.
 
@@ -76,7 +80,7 @@ The token is stored locally using Android Keystore-backed AES-GCM encryption and
 3. Choose **Connect Trakt**.
 4. Visit the displayed verification URL and enter the device code.
 
-The app stores OAuth tokens locally, refreshes them automatically when needed, loads the user's Trakt watchlist, imports Trakt playback progress into Continue Watching, resumes cloud items by percentage, and scrobbles supported playback. Trakt integration is optional. Use it in accordance with Trakt's API terms and branding requirements.
+The app stores OAuth tokens locally, refreshes them automatically when needed, loads the user's Trakt watchlist, personal lists named **Noel** and **Sarah**, imports playback progress into Continue Watching, finds the next aired unwatched episode for recently watched shows, resumes cloud items by percentage, and scrobbles supported playback. Trakt integration is optional. Use it in accordance with Trakt's API terms and branding requirements.
 
 ## IPTV / Live TV
 
@@ -85,7 +89,7 @@ Open **Settings → Live TV / IPTV** and add either:
 - your own M3U/M3U8 playlist (plus an optional XMLTV EPG URL), or
 - Xtream Codes server URL, username and password.
 
-Credentials are encrypted locally. NM Stream TV identifies likely sports channels and prioritises rugby, Formula 1, soccer, cricket and broader sports terms. The app does not include an IPTV subscription or channel package.
+Credentials are encrypted locally. NM Stream TV identifies likely sports channels and builds dedicated Rugby, F1 & Motorsport, Soccer & Football, Cricket and Other Sports categories. XMLTV guide data supplies Now/Next programme information. When Xtream is configured without a custom EPG URL, NM Stream TV tries the provider's standard XMLTV endpoint. The app does not include an IPTV subscription or channel package.
 
 ## Real-Debrid
 
@@ -93,7 +97,7 @@ Open **Settings → Real-Debrid → Connect Real-Debrid**. NM Stream TV uses Rea
 
 ## Continue Watching
 
-During playback the app records local progress every few seconds. Items over ~20 seconds and below 95% completion appear in **Continue Watching**. Selecting one reopens source selection and the player seeks to the saved position.
+During playback the app records local progress every few seconds. Continue Watching merges local progress, Trakt cloud playback and **Up Next** episodes from the most recently watched shows. Trakt's watched-progress data is used to identify the next aired unwatched episode.
 
 ## Subtitles
 

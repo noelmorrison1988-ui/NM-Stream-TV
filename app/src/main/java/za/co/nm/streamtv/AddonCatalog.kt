@@ -55,6 +55,22 @@ object AddonCatalog {
             sports = true,
             note = "Community add-on. Some streams may require its own configuration or proxy service."
         ),
+        AddonPreset(
+            "Motorsport Hub",
+            "F1 & Motorsport",
+            "Free and legal motorsport streams from official rights-holder sources, including Formula 1 classics, MotoGP, WEC, Le Mans, Formula E, WRC and more.",
+            setupUrl = "https://stremio-addons.net/addons/motorsport-hub",
+            sports = true,
+            note = "Official/free-source focused. No login and no piracy feeds."
+        ),
+        AddonPreset(
+            "M3U/EPG TV Addon",
+            "Rugby & Live TV",
+            "Bring your own licensed M3U or Xtream service with XMLTV EPG, categories, Live Now and upcoming programme data.",
+            setupUrl = "https://stremio-addons.net/addons/m3uepg-tv-addon",
+            sports = true,
+            note = "Useful for rugby and F1 channels from IPTV services you are authorized to access."
+        ),
 
         AddonPreset("IPTV Addon by Savi", "IPTV", "Use your private Xtream Codes provider or IPTV-org public channels.", setupUrl = "https://stremio-addons.net/addons/iptv-stremio-addon", sports = true, note = "Supports user-owned/private IPTV and public free channels."),
         AddonPreset("M3U IPTV", "IPTV", "Use your personal M3U playlist or Xtream Codes IPTV.", setupUrl = "https://stremio-addons.net/addons/m3u-iptv", sports = true),

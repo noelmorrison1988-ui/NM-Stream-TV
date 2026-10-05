@@ -18,6 +18,8 @@ data class MainUiState(
     val addonInstallStatus: String? = null,
     val movies: List<AppMedia> = emptyList(),
     val series: List<AppMedia> = emptyList(),
+    val noelList: List<AppMedia> = emptyList(),
+    val sarahList: List<AppMedia> = emptyList(),
     val debridItems: List<AppMedia> = emptyList(),
     val continueWatching: List<PlaybackProgress> = emptyList(),
     val searchResults: List<AppMedia> = emptyList(),
@@ -40,6 +42,8 @@ data class MainUiState(
     val traktConnecting: Boolean = false,
     val iptvChannels: List<AppMedia> = emptyList(),
     val iptvSports: List<AppMedia> = emptyList(),
+    val iptvCategories: List<LiveTvCategory> = emptyList(),
+    val iptvGuide: Map<String, List<EpgProgramme>> = emptyMap(),
     val iptvConfigured: Boolean = false,
     val iptvStatus: String = "Not configured",
     val message: String? = null
@@ -59,6 +63,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var rdAuthJob: Job? = null
     private var traktAuthJob: Job? = null
     private var traktCloudPlayback: List<PlaybackProgress> = emptyList()
+    private var traktUpNext: List<PlaybackProgress> = emptyList()
 
     init {
         refreshEverything()
@@ -81,6 +86,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val traktPlaybackDeferred = async {
                 if (trakt.isConnected()) runCatching { trakt.playbackProgress() }.getOrDefault(emptyList()) else emptyList()
             }
+            val traktUpNextDeferred = async {
+                if (trakt.isConnected()) runCatching { trakt.upNext() }.getOrDefault(emptyList()) else emptyList()
+            }
+            val noelListDeferred = async {
+                if (trakt.isConnected()) runCatching { trakt.personalList("Noel") }.getOrDefault(emptyList()) else emptyList()
+            }
+            val sarahListDeferred = async {
+                if (trakt.isConnected()) runCatching { trakt.personalList("Sarah") }.getOrDefault(emptyList()) else emptyList()
+            }
             val iptvDeferred = async {
                 if (iptv.configured()) runCatching { iptv.loadChannels() }.getOrDefault(emptyList()) else emptyList()
             }
@@ -100,26 +114,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else rawTraktWatchlist
 
             val rawTraktPlayback = traktPlaybackDeferred.await()
-            val traktPlayback = if (tmdb.configured() && rawTraktPlayback.isNotEmpty()) {
-                val rawMedia = rawTraktPlayback.map { it.media }
-                val enrichedMedia = runCatching { tmdb.enrichBatch(rawMedia, 30) }.getOrDefault(rawMedia)
-                rawTraktPlayback.mapIndexed { index, progress ->
-                    progress.copy(media = enrichedMedia.getOrElse(index) { progress.media })
-                }
-            } else rawTraktPlayback
+            val traktPlayback = enrichProgress(rawTraktPlayback, 30)
             traktCloudPlayback = traktPlayback
+
+            val rawUpNext = traktUpNextDeferred.await()
+            val upNext = enrichProgress(rawUpNext, 30)
+            traktUpNext = upNext
+
+            val rawNoelList = noelListDeferred.await()
+            val noelList = if (tmdb.configured()) {
+                runCatching { tmdb.enrichBatch(rawNoelList, 40) }.getOrDefault(rawNoelList)
+            } else rawNoelList
+
+            val rawSarahList = sarahListDeferred.await()
+            val sarahList = if (tmdb.configured()) {
+                runCatching { tmdb.enrichBatch(rawSarahList, 40) }.getOrDefault(rawSarahList)
+            } else rawSarahList
 
             val iptvChannels = iptvDeferred.await()
             val iptvSports = iptv.sportsOnly(iptvChannels)
+            val iptvCategories = iptv.categoryRows(iptvChannels)
+            val iptvGuide = if (iptvChannels.isNotEmpty()) {
+                runCatching { iptv.loadGuide(iptvChannels) }.getOrDefault(emptyMap())
+            } else emptyMap()
 
             _uiState.value = _uiState.value.copy(
                 loading = false,
                 addons = installed,
                 movies = movies,
                 series = series,
+                noelList = noelList,
+                sarahList = sarahList,
                 rdUser = rdUser,
                 debridItems = rdItems,
-                continueWatching = mergeContinueWatching(playback.load(), traktPlayback),
+                continueWatching = mergeContinueWatching(playback.load(), traktPlayback, upNext),
                 rdDeviceCode = null,
                 rdConnecting = false,
                 tmdbConfigured = tmdb.configured(),
@@ -132,6 +160,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 traktConnecting = false,
                 iptvChannels = iptvChannels,
                 iptvSports = iptvSports,
+                iptvCategories = iptvCategories,
+                iptvGuide = iptvGuide,
                 iptvConfigured = iptv.configured(),
                 iptvStatus = iptv.status()
             )
@@ -244,11 +274,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         runCatching { trakt.saveCredentials(clientId, clientSecret) }
             .onSuccess {
                 traktCloudPlayback = emptyList()
+                traktUpNext = emptyList()
                 _uiState.value = _uiState.value.copy(
                     traktConfigured = trakt.credentialsConfigured(),
                     traktConnected = false,
                     traktUser = null,
                     traktWatchlist = emptyList(),
+                    noelList = emptyList(),
+                    sarahList = emptyList(),
                     continueWatching = playback.load(),
                     traktDeviceCode = null,
                     traktConnecting = false,
@@ -271,11 +304,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         traktAuthJob?.cancel()
         trakt.clearCredentials()
         traktCloudPlayback = emptyList()
+        traktUpNext = emptyList()
         _uiState.value = _uiState.value.copy(
             traktConfigured = false,
             traktConnected = false,
             traktUser = null,
             traktWatchlist = emptyList(),
+            noelList = emptyList(),
+            sarahList = emptyList(),
             continueWatching = playback.load(),
             traktDeviceCode = null,
             traktConnecting = false,
@@ -366,10 +402,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         traktAuthJob?.cancel()
         trakt.disconnect()
         traktCloudPlayback = emptyList()
+        traktUpNext = emptyList()
         _uiState.value = _uiState.value.copy(
             traktConnected = false,
             traktUser = null,
             traktWatchlist = emptyList(),
+            noelList = emptyList(),
+            sarahList = emptyList(),
             continueWatching = playback.load(),
             traktDeviceCode = null,
             traktConnecting = false,
@@ -408,6 +447,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             iptvChannels = emptyList(),
             iptvSports = emptyList(),
+            iptvCategories = emptyList(),
+            iptvGuide = emptyMap(),
             iptvConfigured = false,
             iptvStatus = "Not configured",
             message = "IPTV configuration removed"
@@ -432,7 +473,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val progress = PlaybackProgress(item, videoId, title, positionMs, durationMs, System.currentTimeMillis())
         if (durationMs > 0 && progress.percent >= 95) playback.complete(item, videoId) else playback.save(progress)
         _uiState.value = _uiState.value.copy(
-            continueWatching = mergeContinueWatching(playback.load(), traktCloudPlayback)
+            continueWatching = mergeContinueWatching(playback.load(), traktCloudPlayback, traktUpNext)
         )
     }
 
@@ -448,13 +489,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(message = null)
     }
 
+    private suspend fun enrichProgress(
+        items: List<PlaybackProgress>,
+        limit: Int
+    ): List<PlaybackProgress> {
+        if (!tmdb.configured() || items.isEmpty()) return items
+        val rawMedia = items.map { it.media }
+        val enrichedMedia = runCatching { tmdb.enrichBatch(rawMedia, limit) }.getOrDefault(rawMedia)
+        return items.mapIndexed { index, progress ->
+            progress.copy(media = enrichedMedia.getOrElse(index) { progress.media })
+        }
+    }
+
     private fun mergeContinueWatching(
         local: List<PlaybackProgress>,
-        cloud: List<PlaybackProgress>
+        cloud: List<PlaybackProgress>,
+        upNext: List<PlaybackProgress>
     ): List<PlaybackProgress> =
-        (local + cloud)
+        (local + cloud + upNext)
             .sortedByDescending { it.updatedAtMs }
-            .distinctBy { "${it.media.meta.id}|${it.videoId}" }
+            .distinctBy {
+                if (it.media.meta.type == "series") "series|${it.media.meta.id}"
+                else "movie|${it.media.meta.id}|${it.videoId}"
+            }
             .take(30)
 
     private fun RdDownload.toAppMedia(): AppMedia? {

@@ -107,7 +107,24 @@ data class AppMedia(
     val meta: MetaItem,
     val originManifestUrl: String? = null,
     val originAddonName: String? = null,
-    val directUrl: String? = null
+    val directUrl: String? = null,
+    val epgId: String? = null
+)
+
+data class EpgProgramme(
+    val channelId: String,
+    val title: String,
+    val description: String? = null,
+    val startMs: Long,
+    val stopMs: Long
+) {
+    fun isLive(nowMs: Long = System.currentTimeMillis()): Boolean =
+        startMs <= nowMs && stopMs > nowMs
+}
+
+data class LiveTvCategory(
+    val name: String,
+    val channels: List<AppMedia>
 )
 
 data class StreamOption(
