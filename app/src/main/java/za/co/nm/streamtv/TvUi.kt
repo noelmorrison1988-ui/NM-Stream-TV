@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.*
@@ -62,6 +63,7 @@ private sealed interface Screen {
     data class Details(val item: AppMedia) : Screen
     data class Sources(val item: AppMedia, val videoId: String, val title: String) : Screen
     data class Player(val item: AppMedia, val videoId: String, val title: String, val source: StreamOption) : Screen
+    data class Trailer(val item: AppMedia, val title: String, val source: StreamOption) : Screen
 }
 
 @Composable
@@ -72,6 +74,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
     BackHandler(screen !is Screen.Home) {
         screen = when (val current = screen) {
             is Screen.Player -> Screen.Sources(current.item, current.videoId, current.title)
+            is Screen.Trailer -> Screen.Details(current.item)
             is Screen.Sources -> Screen.Details(current.item)
             else -> Screen.Home
         }
@@ -118,18 +121,59 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                 Screen.Settings -> Shell("Settings", { screen = it }) {
                     SettingsScreen(state, viewModel)
                 }
-                is Screen.Details -> DetailsScreen(state.selectedMedia ?: current.item, state.detailsLoading) { item, id, title ->
-                    viewModel.loadSources(item, id)
-                    screen = Screen.Sources(item, id, title)
+                is Screen.Details -> {
+                    val detailItem = state.selectedMedia ?: current.item
+                    val trailer = viewModel.bestTrailer(detailItem)
+                    DetailsScreen(
+                        item = detailItem,
+                        loading = state.detailsLoading,
+                        traktConnected = state.traktConnected,
+                        inNoel = state.noelList.any { mediaMatches(it, detailItem) },
+                        inSarah = state.sarahList.any { mediaMatches(it, detailItem) },
+                        trailer = trailer,
+                        choose = { item, id, title ->
+                            viewModel.loadSources(item, id)
+                            screen = Screen.Sources(item, id, title)
+                        },
+                        addNoel = { viewModel.addToPersonalList("Noel", detailItem) },
+                        addSarah = { viewModel.addToPersonalList("Sarah", detailItem) },
+                        playTrailer = { source ->
+                            when {
+                                source.playableUrl != null -> screen = Screen.Trailer(detailItem, "Trailer · ${detailItem.meta.name}", source)
+                                source.youtubeUrl != null -> runCatching {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(source.youtubeUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                }
+                                !source.stream.externalUrl.isNullOrBlank() -> runCatching {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(source.stream.externalUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                }
+                            }
+                        }
+                    )
                 }
                 is Screen.Sources -> SourcesScreen(current.title, state.streamsLoading, state.streamOptions, state.subtitleOptions.size) { source ->
                     when {
                         source.playableUrl != null -> screen = Screen.Player(current.item, current.videoId, current.title, source)
+                        source.youtubeUrl != null -> runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(source.youtubeUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        }
                         !source.stream.externalUrl.isNullOrBlank() -> runCatching {
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(source.stream.externalUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                         }
                     }
                 }
+                is Screen.Trailer -> PlayerScreen(
+                    item = current.item,
+                    videoId = "trailer:${current.item.meta.id}",
+                    title = current.title,
+                    url = current.source.playableUrl.orEmpty(),
+                    headers = current.source.requestHeaders,
+                    subtitles = emptyList(),
+                    resumeMs = 0L,
+                    resumePercent = null,
+                    onStarted = { _, _ -> },
+                    onProgress = { _, _ -> },
+                    onStopped = { _, _ -> }
+                )
                 is Screen.Player -> PlayerScreen(
                     item = current.item,
                     videoId = current.videoId,
@@ -687,7 +731,18 @@ private fun DeviceCode(service: String, code: String, url: String) {
 }
 
 @Composable
-private fun DetailsScreen(item: AppMedia, loading: Boolean, choose: (AppMedia, String, String) -> Unit) {
+private fun DetailsScreen(
+    item: AppMedia,
+    loading: Boolean,
+    traktConnected: Boolean,
+    inNoel: Boolean,
+    inSarah: Boolean,
+    trailer: StreamOption?,
+    choose: (AppMedia, String, String) -> Unit,
+    addNoel: () -> Unit,
+    addSarah: () -> Unit,
+    playTrailer: (StreamOption) -> Unit
+) {
     Box(Modifier.fillMaxSize()) {
         AsyncImage(model = item.meta.background ?: item.meta.poster, contentDescription = item.meta.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(NmBg, NmBg.copy(alpha = .9f), NmBg.copy(alpha = .4f)))))
@@ -697,7 +752,34 @@ private fun DetailsScreen(item: AppMedia, loading: Boolean, choose: (AppMedia, S
                     Text(item.meta.name, color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Black)
                     if (loading) Text("Loading enhanced metadata…", color = NmRed)
                     item.meta.description?.let { Text(it, color = Color.White.copy(alpha = .9f), fontSize = 17.sp, maxLines = 7, overflow = TextOverflow.Ellipsis) }
-                    if (item.meta.type != "series" || item.meta.videos.isEmpty()) Button(onClick = { choose(item, item.meta.id, item.meta.name) }) { Text("▶  Choose source") }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (item.meta.type != "series" || item.meta.videos.isEmpty()) {
+                            Button(onClick = { choose(item, item.meta.id, item.meta.name) }) { Text("▶  Choose source") }
+                        }
+                        trailer?.let {
+                            Button(onClick = { playTrailer(it) }) {
+                                Text("▶  Trailer · 720p preferred")
+                            }
+                        }
+                    }
+
+                    if (item.meta.type == "movie" || item.meta.type == "series") {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Button(
+                                onClick = addNoel,
+                                enabled = traktConnected && !inNoel
+                            ) { Text(if (inNoel) "✓ In Noel" else "+ Add to Noel") }
+
+                            Button(
+                                onClick = addSarah,
+                                enabled = traktConnected && !inSarah
+                            ) { Text(if (inSarah) "✓ In Sarah" else "+ Add to Sarah") }
+                        }
+                        if (!traktConnected) {
+                            Text("Connect Trakt in Settings to use the Noel and Sarah lists.", color = NmMuted, fontSize = 12.sp)
+                        }
+                    }
                 }
             }
             if (item.meta.videos.isNotEmpty()) {
@@ -716,15 +798,55 @@ private fun DetailsScreen(item: AppMedia, loading: Boolean, choose: (AppMedia, S
 
 @Composable
 private fun SourcesScreen(title: String, loading: Boolean, sources: List<StreamOption>, subtitleCount: Int, select: (StreamOption) -> Unit) {
+    val recommended = sources.firstOrNull()
+
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 46.dp), contentPadding = PaddingValues(top = 34.dp, bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text(title, color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Black); Text(subtitleCount.toString() + " subtitle tracks found", color = NmMuted) }
+        item {
+            Text(title, color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Black)
+            Text(subtitleCount.toString() + " subtitle tracks found", color = NmMuted)
+            Text("Default preference: 720p · Debrid/HTTP first · P2P last", color = NmGreen, fontSize = 13.sp)
+        }
+
+        if (!loading && recommended != null && (
+                recommended.playableUrl != null ||
+                recommended.youtubeUrl != null ||
+                !recommended.stream.externalUrl.isNullOrBlank()
+            )
+        ) {
+            item {
+                Button(onClick = { select(recommended) }) {
+                    Text("▶  PLAY DEFAULT · ${recommended.qualityLabel()} · ${recommended.transportLabel()}")
+                }
+            }
+        }
+
         if (loading) item { Text("Checking installed sources…", color = NmMuted) }
         else if (sources.isEmpty()) item { Text("No stream sources were returned.", color = NmMuted) }
-        else items(sources) { source ->
+        else itemsIndexed(sources) { index, source ->
             var focused by remember { mutableStateOf(false) }
-            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (focused) NmPanelFocus else NmPanel).onFocusChanged { focused = it.isFocused }.clickable { select(source) }.focusable().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) { Text(source.displayTitle(), color = Color.White, fontWeight = FontWeight.Bold); Text(source.addonName, color = NmRed); Text(source.statusText(), color = NmMuted) }
-                if (source.playableUrl != null) Text("PLAY", color = NmGreen, fontWeight = FontWeight.Black)
+            Row(
+                Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (focused) NmPanelFocus else NmPanel)
+                    .onFocusChanged { focused = it.isFocused }
+                    .clickable { select(source) }
+                    .focusable()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(source.displayTitle(), color = Color.White, fontWeight = FontWeight.Bold)
+                        if (index == 0) Text("DEFAULT", color = NmGreen, fontSize = 11.sp, fontWeight = FontWeight.Black)
+                    }
+                    Text(source.addonName, color = NmRed)
+                    Text(source.statusText(), color = NmMuted)
+                }
+                if (source.playableUrl != null || source.youtubeUrl != null) {
+                    Text("PLAY", color = NmGreen, fontWeight = FontWeight.Black)
+                } else if (source.isP2p) {
+                    Text("P2P", color = NmMuted, fontWeight = FontWeight.Bold)
+                }
             }
         }
     }
@@ -825,6 +947,10 @@ private fun InputBox(
 private fun CardBox(content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(NmPanel).padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
 }
+
+private fun mediaMatches(a: AppMedia, b: AppMedia): Boolean =
+    a.meta.id == b.meta.id ||
+        (a.meta.type == b.meta.type && a.meta.name.equals(b.meta.name, ignoreCase = true))
 
 @Composable
 private fun CenterText(value: String) {
