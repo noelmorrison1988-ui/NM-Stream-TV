@@ -1044,10 +1044,13 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.fillMaxWidth()) { InputBox(traktId, "Trakt Client ID") { traktId = it } }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(onClick = {
-                        vm.saveTraktClientId(traktId)
-                        traktId = ""
-                    }) { Text("Save Client ID") }
+                    Button(
+                        onClick = {
+                            vm.saveTraktClientId(traktId)
+                            traktId = ""
+                        },
+                        enabled = traktId.isNotBlank()
+                    ) { Text("Save Client ID") }
                     if (state.traktConfigured) Button(onClick = vm::clearTraktCredentials) { Text("Remove") }
                 }
             }
