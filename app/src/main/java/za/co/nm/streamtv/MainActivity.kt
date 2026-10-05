@@ -4,8 +4,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.Crossfade
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -15,9 +18,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.tv.material3.Text
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
@@ -60,20 +67,49 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun StartupSplash() {
-    val artwork = remember { SplashArtwork.decode() }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color(0xFF090A0E),
+                        Color(0xFF141821),
+                        Color(0xFF050609)
+                    )
+                )
+            ),
         contentAlignment = Alignment.Center
     ) {
-        artwork?.let {
-            Image(
-                bitmap = it,
-                contentDescription = "NM Stream TV · Morrison Entertainment",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Fit
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(horizontal = 32.dp)
+        ) {
+            Text(
+                "NM",
+                color = Color(0xFFD6A84B),
+                fontSize = 86.sp,
+                fontWeight = FontWeight.Black
+            )
+            Text(
+                "STREAM TV",
+                color = Color.White,
+                fontSize = 44.sp,
+                fontWeight = FontWeight.Black
+            )
+            Spacer(Modifier.height(18.dp))
+            Box(
+                Modifier
+                    .background(Color(0xFFE2182D))
+                    .height(4.dp)
+                    .fillMaxSize(0.18f)
+            )
+            Spacer(Modifier.height(18.dp))
+            Text(
+                "MORRISON ENTERTAINMENT",
+                color = Color(0xFFD6A84B),
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
             )
         }
     }
