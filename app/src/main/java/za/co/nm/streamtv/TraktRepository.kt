@@ -19,7 +19,6 @@ class TraktRepository(context: Context) {
         private const val API = "https://api.trakt.tv"
         private const val TOKEN_API = "https://auth.trakt.tv"
         private const val CLIENT_ID_KEY = "trakt_client_id"
-        private const val CLIENT_SECRET_KEY = "trakt_client_secret"
         private const val AUTH_KEY = "trakt_auth"
         private const val API_VERSION = "2"
         private const val REFRESH_AHEAD_MS = 10 * 60 * 1000L
@@ -29,23 +28,19 @@ class TraktRepository(context: Context) {
     private val gson = Gson()
     private val authMutex = Mutex()
 
-    fun saveCredentials(clientId: String, clientSecret: String) {
+    fun saveClientId(clientId: String) {
         require(clientId.isNotBlank()) { "Enter your Trakt Client ID" }
-        require(clientSecret.isNotBlank()) { "Enter your Trakt Client Secret" }
         secureStore.put(CLIENT_ID_KEY, clientId.trim())
-        secureStore.put(CLIENT_SECRET_KEY, clientSecret.trim())
         secureStore.remove(AUTH_KEY)
     }
 
     fun clearCredentials() {
         secureStore.remove(CLIENT_ID_KEY)
-        secureStore.remove(CLIENT_SECRET_KEY)
         secureStore.remove(AUTH_KEY)
     }
 
     fun credentialsConfigured(): Boolean =
-        !secureStore.get(CLIENT_ID_KEY).isNullOrBlank() &&
-            !secureStore.get(CLIENT_SECRET_KEY).isNullOrBlank()
+        !secureStore.get(CLIENT_ID_KEY).isNullOrBlank()
 
     fun maskedClientId(): String = secureStore.get(CLIENT_ID_KEY)?.let {
         if (it.length > 10) "••••${it.takeLast(6)}" else "Saved"
@@ -54,7 +49,7 @@ class TraktRepository(context: Context) {
     fun isConnected(): Boolean = loadAuth() != null
 
     suspend fun startDeviceAuth(): TraktDeviceCode {
-        val (clientId, _) = requireCredentials()
+        val clientId = requireClientId()
         val payload = gson.toJson(mapOf("client_id" to clientId))
         val body = SimpleHttp.requireSuccess(
             SimpleHttp.postJson("$API/oauth/device/code", payload),
@@ -64,12 +59,11 @@ class TraktRepository(context: Context) {
     }
 
     suspend fun pollDeviceToken(deviceCode: String): TraktStoredAuth? {
-        val (clientId, clientSecret) = requireCredentials()
+        val clientId = requireClientId()
         val payload = gson.toJson(
             mapOf(
                 "code" to deviceCode,
-                "client_id" to clientId,
-                "client_secret" to clientSecret
+                "client_id" to clientId
             )
         )
         val result = SimpleHttp.postJson("$API/oauth/device/token", payload)
@@ -450,13 +444,9 @@ class TraktRepository(context: Context) {
 
     fun disconnect() = secureStore.remove(AUTH_KEY)
 
-    private fun requireCredentials(): Pair<String, String> {
-        val clientId = secureStore.get(CLIENT_ID_KEY)?.takeIf { it.isNotBlank() }
+    private fun requireClientId(): String =
+        secureStore.get(CLIENT_ID_KEY)?.takeIf { it.isNotBlank() }
             ?: error("Add your Trakt Client ID in Settings first")
-        val clientSecret = secureStore.get(CLIENT_SECRET_KEY)?.takeIf { it.isNotBlank() }
-            ?: error("Add your Trakt Client Secret in Settings first")
-        return clientId to clientSecret
-    }
 
     private fun loadAuth(): TraktStoredAuth? {
         val json = secureStore.get(AUTH_KEY) ?: return null
@@ -472,14 +462,11 @@ class TraktRepository(context: Context) {
     }
 
     private suspend fun refresh(auth: TraktStoredAuth): TraktStoredAuth? {
-        val clientSecret = secureStore.get(CLIENT_SECRET_KEY)?.takeIf { it.isNotBlank() } ?: return null
         if (auth.refreshToken.isBlank()) return null
         val payload = gson.toJson(
             mapOf(
                 "refresh_token" to auth.refreshToken,
                 "client_id" to auth.clientId,
-                "client_secret" to clientSecret,
-                "redirect_uri" to "urn:ietf:wg:oauth:2.0:oob",
                 "grant_type" to "refresh_token"
             )
         )
