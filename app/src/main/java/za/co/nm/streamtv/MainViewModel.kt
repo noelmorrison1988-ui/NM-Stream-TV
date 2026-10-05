@@ -447,6 +447,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             iptvChannels = emptyList(),
             iptvSports = emptyList(),
+            iptvCategories = emptyList(),
+            iptvGuide = emptyMap(),
             iptvConfigured = false,
             iptvStatus = "Not configured",
             message = "IPTV configuration removed"
