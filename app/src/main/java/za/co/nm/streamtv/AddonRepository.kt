@@ -84,7 +84,7 @@ class AddonRepository(context: Context) {
         val ordered = listOfNotNull(preferred) + addons.filterNot { it === preferred }
         for (addon in ordered) {
             if (!supportsResource(addon.manifest, "meta", item.meta.type, item.meta.id)) continue
-            val url = "${addon.baseUrl}/meta/${SimpleHttp.encode(item.meta.type)}/${SimpleHttp.encode(item.meta.id)}.json"
+            val url = resourceUrl(addon, "meta/${SimpleHttp.encode(item.meta.type)}/${SimpleHttp.encode(item.meta.id)}.json")
             val result = runCatching {
                 val body = SimpleHttp.requireSuccess(SimpleHttp.get(url), "Loading metadata")
                 gson.fromJson(body, MetaResponse::class.java).meta
@@ -107,7 +107,7 @@ class AddonRepository(context: Context) {
                 .map { addon ->
                     async {
                         runCatching {
-                            val url = "${addon.baseUrl}/stream/${SimpleHttp.encode(type)}/${SimpleHttp.encode(videoId)}.json"
+                            val url = resourceUrl(addon, "stream/${SimpleHttp.encode(type)}/${SimpleHttp.encode(videoId)}.json")
                             val body = SimpleHttp.requireSuccess(SimpleHttp.get(url), "Loading streams")
                             gson.fromJson(body, StreamResponse::class.java).streams.map { stream ->
                                 StreamOption(addon.manifest.name, stream)
@@ -129,7 +129,7 @@ class AddonRepository(context: Context) {
                 .map { addon ->
                     async {
                         runCatching {
-                            val url = "${addon.baseUrl}/subtitles/${SimpleHttp.encode(type)}/${SimpleHttp.encode(videoId)}.json"
+                            val url = resourceUrl(addon, "subtitles/${SimpleHttp.encode(type)}/${SimpleHttp.encode(videoId)}.json")
                             val body = SimpleHttp.requireSuccess(SimpleHttp.get(url), "Loading subtitles")
                             gson.fromJson(body, SubtitleResponse::class.java).subtitles
                                 .filter { it.url.startsWith("https://", true) || it.url.startsWith("http://", true) }
@@ -149,7 +149,10 @@ class AddonRepository(context: Context) {
         search: String? = null
     ): List<AppMedia> {
         val extra = if (search.isNullOrBlank()) "" else "/search=${SimpleHttp.encode(search)}"
-        val url = "${addon.baseUrl}/catalog/${SimpleHttp.encode(catalog.type)}/${SimpleHttp.encode(catalog.id)}$extra.json"
+        val url = resourceUrl(
+            addon,
+            "catalog/${SimpleHttp.encode(catalog.type)}/${SimpleHttp.encode(catalog.id)}$extra.json"
+        )
         val body = SimpleHttp.requireSuccess(SimpleHttp.get(url), "Loading ${catalog.name ?: catalog.id}")
         return gson.fromJson(body, CatalogResponse::class.java).metas.map { meta ->
             AppMedia(meta = meta, originManifestUrl = addon.manifestUrl, originAddonName = addon.manifest.name)
@@ -162,8 +165,14 @@ class AddonRepository(context: Context) {
         return InstalledAddon(
             manifestUrl = manifestUrl,
             baseUrl = SimpleHttp.baseUrlFromManifest(manifestUrl),
-            manifest = manifest
+            manifest = manifest,
+            resourceQuery = runCatching { java.net.URI(manifestUrl).rawQuery }.getOrNull()
         )
+    }
+
+    private fun resourceUrl(addon: InstalledAddon, path: String): String {
+        val base = "${addon.baseUrl}/$path"
+        return addon.resourceQuery?.takeIf { it.isNotBlank() }?.let { "$base?$it" } ?: base
     }
 
     private fun supportsResource(manifest: AddonManifest, resourceName: String, type: String, id: String): Boolean =
