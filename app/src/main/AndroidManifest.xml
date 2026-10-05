@@ -12,7 +12,7 @@
         android:label="NM Stream TV"
         android:supportsRtl="true"
         android:theme="@style/Theme.NMStreamTV"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="true">
 
         <activity
             android:name=".MainActivity"

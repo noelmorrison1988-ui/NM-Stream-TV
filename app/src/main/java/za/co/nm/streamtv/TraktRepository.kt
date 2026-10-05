@@ -2,16 +2,19 @@ package za.co.nm.streamtv
 
 import android.content.Context
 import com.google.gson.Gson
+import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 
 class TraktRepository(context: Context) {
     companion object {
         private const val API = "https://api.trakt.tv"
+        private const val TOKEN_API = "https://auth.trakt.tv"
         private const val CLIENT_ID_KEY = "trakt_client_id"
         private const val CLIENT_SECRET_KEY = "trakt_client_secret"
         private const val AUTH_KEY = "trakt_auth"
         private const val API_VERSION = "2"
+        private const val REFRESH_AHEAD_MS = 10 * 60 * 1000L
     }
 
     private val secureStore = SecretStore(context)
@@ -39,8 +42,7 @@ class TraktRepository(context: Context) {
         if (it.length > 10) "••••${it.takeLast(6)}" else "Saved"
     } ?: "Not configured"
 
-    fun isConnected(): Boolean =
-        loadAuth()?.expiresAtEpochMs?.let { it > System.currentTimeMillis() } == true
+    fun isConnected(): Boolean = loadAuth() != null
 
     suspend fun startDeviceAuth(): TraktDeviceCode {
         val (clientId, _) = requireCredentials()
@@ -62,10 +64,8 @@ class TraktRepository(context: Context) {
             )
         )
         val result = SimpleHttp.postJson("$API/oauth/device/token", payload)
-
         when (result.code) {
-            400 -> return null
-            429 -> return null
+            400, 429 -> return null
             404 -> error("Trakt sign-in code is invalid. Start the connection again.")
             409 -> error("This Trakt sign-in code was already used. Start again.")
             410 -> error("The Trakt sign-in code expired. Start again.")
@@ -76,16 +76,7 @@ class TraktRepository(context: Context) {
             SimpleHttp.requireSuccess(result, "Completing Trakt sign-in"),
             TraktToken::class.java
         )
-        require(token.accessToken.isNotBlank()) { "Trakt returned an empty access token" }
-
-        val stored = TraktStoredAuth(
-            clientId = clientId,
-            accessToken = token.accessToken,
-            refreshToken = token.refreshToken,
-            expiresAtEpochMs = System.currentTimeMillis() + token.expiresIn * 1000L
-        )
-        secureStore.put(AUTH_KEY, gson.toJson(stored))
-        return stored
+        return saveToken(clientId, token)
     }
 
     suspend fun getUser(): TraktUser? {
@@ -98,6 +89,21 @@ class TraktRepository(context: Context) {
             username = user.get("username")?.asString.orEmpty(),
             name = user.get("name")?.takeUnless { it.isJsonNull }?.asString.orEmpty()
         )
+    }
+
+    suspend fun watchlist(limit: Int = 80): List<AppMedia> {
+        val auth = validAuth() ?: return emptyList()
+        val movieResult = SimpleHttp.get("$API/sync/watchlist/movies?extended=full&limit=$limit", headers(auth))
+        val showResult = SimpleHttp.get("$API/sync/watchlist/shows?extended=full&limit=$limit", headers(auth))
+        val out = mutableListOf<AppMedia>()
+
+        if (movieResult.code in 200..299) {
+            out += parseWatchlist(JsonParser.parseString(movieResult.body).asJsonArray, "movie")
+        }
+        if (showResult.code in 200..299) {
+            out += parseWatchlist(JsonParser.parseString(showResult.body).asJsonArray, "series")
+        }
+        return out.distinctBy { "${it.meta.type}:${it.meta.id}" }.take(limit)
     }
 
     suspend fun scrobble(action: String, media: AppMedia, videoId: String, progressPercent: Double) {
@@ -149,14 +155,69 @@ class TraktRepository(context: Context) {
         return runCatching { gson.fromJson(json, TraktStoredAuth::class.java) }.getOrNull()
     }
 
-    private fun validAuth(): TraktStoredAuth? {
+    private suspend fun validAuth(): TraktStoredAuth? {
         val auth = loadAuth() ?: return null
-        if (auth.expiresAtEpochMs <= System.currentTimeMillis()) {
-            disconnect()
+        if (auth.expiresAtEpochMs > System.currentTimeMillis() + REFRESH_AHEAD_MS) return auth
+        return refresh(auth)
+    }
+
+    private suspend fun refresh(auth: TraktStoredAuth): TraktStoredAuth? {
+        val clientSecret = secureStore.get(CLIENT_SECRET_KEY)?.takeIf { it.isNotBlank() } ?: return null
+        if (auth.refreshToken.isBlank()) return null
+        val payload = gson.toJson(
+            mapOf(
+                "refresh_token" to auth.refreshToken,
+                "client_id" to auth.clientId,
+                "client_secret" to clientSecret,
+                "redirect_uri" to "urn:ietf:wg:oauth:2.0:oob",
+                "grant_type" to "refresh_token"
+            )
+        )
+        val result = SimpleHttp.postJson("$TOKEN_API/oauth/token", payload)
+        if (result.code !in 200..299) {
+            if (result.code == 400 || result.code == 401) disconnect()
             return null
         }
-        return auth
+        val token = gson.fromJson(result.body, TraktToken::class.java)
+        return saveToken(auth.clientId, token)
     }
+
+    private fun saveToken(clientId: String, token: TraktToken): TraktStoredAuth {
+        require(token.accessToken.isNotBlank()) { "Trakt returned an empty access token" }
+        val stored = TraktStoredAuth(
+            clientId = clientId,
+            accessToken = token.accessToken,
+            refreshToken = token.refreshToken,
+            expiresAtEpochMs = System.currentTimeMillis() + token.expiresIn * 1000L
+        )
+        secureStore.put(AUTH_KEY, gson.toJson(stored))
+        return stored
+    }
+
+    private fun parseWatchlist(array: JsonArray, mediaType: String): List<AppMedia> =
+        array.mapNotNull { element ->
+            val root = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+            val objName = if (mediaType == "movie") "movie" else "show"
+            val media = root.getAsJsonObject(objName) ?: return@mapNotNull null
+            val title = media.get("title")?.asString?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val year = media.get("year")?.takeUnless { it.isJsonNull }?.asInt
+            val ids = media.getAsJsonObject("ids")
+            val imdb = ids?.get("imdb")?.takeUnless { it.isJsonNull }?.asString
+            val traktId = ids?.get("trakt")?.takeUnless { it.isJsonNull }?.asInt
+            val overview = media.get("overview")?.takeUnless { it.isJsonNull }?.asString
+            val rating = media.get("rating")?.takeUnless { it.isJsonNull }?.asDouble
+            AppMedia(
+                meta = MetaItem(
+                    id = imdb ?: "trakt:${traktId ?: title.hashCode()}",
+                    type = mediaType,
+                    name = title,
+                    description = overview,
+                    releaseInfo = year?.toString(),
+                    imdbRating = rating?.let { String.format("%.1f", it) }
+                ),
+                originAddonName = "Trakt Watchlist"
+            )
+        }
 
     private fun headers(auth: TraktStoredAuth): Map<String, String> = mapOf(
         "Authorization" to "Bearer ${auth.accessToken}",

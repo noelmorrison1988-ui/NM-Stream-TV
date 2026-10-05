@@ -53,6 +53,7 @@ private val NmGreen = Color(0xFF69D39A)
 private sealed interface Screen {
     data object Home : Screen
     data object Search : Screen
+    data object LiveTv : Screen
     data object Addons : Screen
     data object Settings : Screen
     data class Details(val item: AppMedia) : Screen
@@ -98,6 +99,12 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                 }
                 Screen.Search -> Shell("Search", { screen = it }) {
                     SearchScreen(state, viewModel::search) {
+                        viewModel.loadDetails(it)
+                        screen = Screen.Details(it)
+                    }
+                }
+                Screen.LiveTv -> Shell("Live TV", { screen = it }) {
+                    LiveTvScreen(state) {
                         viewModel.loadDetails(it)
                         screen = Screen.Details(it)
                     }
@@ -149,7 +156,7 @@ private fun Shell(selected: String, navigate: (Screen) -> Unit, content: @Compos
             Text("NM", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Black)
             Text(" STREAM", color = NmRed, fontSize = 25.sp, fontWeight = FontWeight.Black)
             Spacer(Modifier.width(28.dp))
-            listOf("Home" to Screen.Home, "Search" to Screen.Search, "Add-ons" to Screen.Addons, "Settings" to Screen.Settings).forEach { (label, target) ->
+            listOf("Home" to Screen.Home, "Search" to Screen.Search, "Live TV" to Screen.LiveTv, "Add-ons" to Screen.Addons, "Settings" to Screen.Settings).forEach { (label, target) ->
                 NavChip(label, selected == label) { navigate(target) }
                 Spacer(Modifier.width(8.dp))
             }
@@ -179,6 +186,8 @@ private fun HomeScreen(state: MainUiState, onOpen: (AppMedia) -> Unit, onContinu
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         item { if (hero != null) Hero(hero, onOpen) else EmptyHero(state.addons.isEmpty()) }
         if (state.continueWatching.isNotEmpty()) item { ContinueRow(state.continueWatching, onContinue) }
+        if (state.traktWatchlist.isNotEmpty()) item { MediaRow("My Trakt Watchlist", state.traktWatchlist, onOpen) }
+        if (state.iptvSports.isNotEmpty()) item { MediaRow("Live Sports · Rugby · F1 · Soccer · Cricket", state.iptvSports.take(40), onOpen) }
         if (state.movies.isNotEmpty()) item { MediaRow("Movies", state.movies, onOpen) }
         if (state.series.isNotEmpty()) item { MediaRow("Series", state.series, onOpen) }
         if (state.debridItems.isNotEmpty()) item { MediaRow("My Real-Debrid Library", state.debridItems, onOpen) }
@@ -260,6 +269,36 @@ private fun ContinueRow(media: List<PlaybackProgress>, onOpen: (PlaybackProgress
 }
 
 @Composable
+private fun LiveTvScreen(state: MainUiState, onOpen: (AppMedia) -> Unit) {
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(top = 26.dp, bottom = 48.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp)
+    ) {
+        item {
+            Column(Modifier.padding(horizontal = 42.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Live TV & Sports", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black)
+                Text(
+                    if (state.iptvConfigured) state.iptvStatus + " · " + state.iptvChannels.size + " channels loaded"
+                    else "Add your M3U playlist or Xtream account in Settings.",
+                    color = if (state.iptvConfigured) NmGreen else NmMuted
+                )
+                Text("Sports prioritises rugby, Formula 1, soccer, cricket and other sports channels.", color = NmMuted)
+            }
+        }
+        if (state.iptvSports.isNotEmpty()) item {
+            MediaRow("Sports", state.iptvSports.take(100), onOpen)
+        }
+        if (state.iptvChannels.isNotEmpty()) item {
+            MediaRow("All Live TV", state.iptvChannels.take(160), onOpen)
+        }
+        if (state.iptvConfigured && state.iptvChannels.isEmpty()) item {
+            Text("No channels could be loaded from the configured IPTV source.", color = NmMuted, modifier = Modifier.padding(horizontal = 42.dp))
+        }
+    }
+}
+
+@Composable
 private fun SearchScreen(state: MainUiState, onSearch: (String) -> Unit, onOpen: (AppMedia) -> Unit) {
     var query by remember { mutableStateOf("") }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 42.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -277,6 +316,7 @@ private fun SearchScreen(state: MainUiState, onSearch: (String) -> Unit, onOpen:
 
 @Composable
 private fun AddonsScreen(state: MainUiState, install: (String) -> Unit, remove: (String) -> Unit) {
+    val context = LocalContext.current
     var url by remember { mutableStateOf("") }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 42.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
@@ -287,6 +327,37 @@ private fun AddonsScreen(state: MainUiState, install: (String) -> Unit, remove: 
                 Box(Modifier.width(700.dp)) { InputBox(url, "https://example.com/manifest.json") { url = it } }
                 Button(onClick = { if (url.isNotBlank()) install(url) }) { Text("Install") }
             }
+        }
+        item {
+            Text("Curated add-on catalog", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+            Text("25 core add-ons plus IPTV options. Configurable services open their setup page; paste the generated manifest above.", color = NmMuted)
+        }
+        items(AddonCatalog.presets) { preset ->
+            CardBox {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(preset.name, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                            Text(preset.category.uppercase(), color = if (preset.sports) NmGreen else NmRed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Text(preset.description, color = NmMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        preset.note?.let { Text(it, color = NmMuted.copy(alpha = .8f), fontSize = 12.sp) }
+                    }
+                    preset.manifestUrl?.let { manifest ->
+                        Button(onClick = { install(manifest) }) { Text("Install") }
+                    }
+                    preset.setupUrl?.let { setup ->
+                        Button(onClick = {
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(setup)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                            }
+                        }) { Text("Configure") }
+                    }
+                }
+            }
+        }
+        item {
+            Text("Installed add-ons", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
         }
         items(state.addons) { addon ->
             CardBox {
@@ -307,6 +378,11 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
     var tmdb by remember { mutableStateOf("") }
     var traktId by remember { mutableStateOf("") }
     var traktSecret by remember { mutableStateOf("") }
+    var m3uUrl by remember { mutableStateOf("") }
+    var epgUrl by remember { mutableStateOf("") }
+    var xtreamServer by remember { mutableStateOf("") }
+    var xtreamUser by remember { mutableStateOf("") }
+    var xtreamPass by remember { mutableStateOf("") }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 42.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 55.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text("Settings", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black) }
         item { CardBox {
@@ -319,6 +395,36 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             }
         } }
         item { CardBox {
+            Text("Live TV / IPTV", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text("Status: " + state.iptvStatus, color = if (state.iptvConfigured) NmGreen else NmMuted)
+            Text("Use an IPTV source you are authorized to access. M3U/M3U8 and Xtream live TV are supported; sports are automatically prioritised.", color = NmMuted)
+            Text("M3U / XMLTV", color = Color.White, fontWeight = FontWeight.Bold)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.width(760.dp)) { InputBox(m3uUrl, "M3U / M3U8 playlist URL") { m3uUrl = it } }
+                Box(Modifier.width(760.dp)) { InputBox(epgUrl, "XMLTV EPG URL (optional)") { epgUrl = it } }
+                Button(onClick = {
+                    vm.saveIptvM3u(m3uUrl, epgUrl)
+                    m3uUrl = ""
+                    epgUrl = ""
+                }) { Text("Save M3U") }
+            }
+            Text("Xtream Codes", color = Color.White, fontWeight = FontWeight.Bold)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.width(760.dp)) { InputBox(xtreamServer, "Portal/server URL") { xtreamServer = it } }
+                Box(Modifier.width(520.dp)) { InputBox(xtreamUser, "Username") { xtreamUser = it } }
+                Box(Modifier.width(520.dp)) { InputBox(xtreamPass, "Password", password = true) { xtreamPass = it } }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = {
+                        vm.saveIptvXtream(xtreamServer, xtreamUser, xtreamPass)
+                        xtreamServer = ""
+                        xtreamUser = ""
+                        xtreamPass = ""
+                    }) { Text("Save Xtream") }
+                    if (state.iptvConfigured) Button(onClick = vm::clearIptv) { Text("Remove IPTV") }
+                }
+            }
+        } }
+        item { CardBox {
             Text("Trakt", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text(
                 if (state.traktConnected) "Connected"
@@ -326,7 +432,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
                 else "Client ID + Client Secret required",
                 color = if (state.traktConnected) NmGreen else NmMuted
             )
-            Text("Enter the Client ID and Client Secret from your Trakt API app. They are stored encrypted on this device.", color = NmMuted)
+            Text("Native Trakt: device sign-in, automatic token refresh, watchlist sync and playback scrobbling. Enter the Client ID and Client Secret from your Trakt API app; they are stored encrypted on this device.", color = NmMuted)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.width(640.dp)) { InputBox(traktId, "Trakt Client ID") { traktId = it } }
                 Box(Modifier.width(640.dp)) { InputBox(traktSecret, "Trakt Client Secret", password = true) { traktSecret = it } }
@@ -355,7 +461,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV v0.2.1 · an NM Digital product", color = NmMuted) }
+        item { Text("NM Stream TV v0.3.0 · an NM Digital product", color = NmMuted) }
     }
 }
 

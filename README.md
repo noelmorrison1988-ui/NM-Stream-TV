@@ -2,7 +2,7 @@
 
 **NM Stream TV** is an Android TV / Android-box media front end branded as an **NM Digital** product. It provides a cinematic, remote-friendly interface for user-configured media sources without bundling third-party scraping providers.
 
-## v0.2.0 features
+## v0.3.0 features
 
 - Cinematic Netflix-inspired (but original) Android TV interface
 - Home hero banner, horizontal media rails and D-pad focus animations
@@ -12,8 +12,11 @@
 - Multiple add-ons installed at once; results are aggregated
 - **Real-Debrid device authentication** and access to the user's existing download library
 - **TMDB artwork enrichment** using a user-entered API Read Access Token
-- **Trakt device authentication** using the user's own Trakt Client ID
-- Basic Trakt playback scrobbling for media with IMDb IDs
+- **Native Trakt device authentication** with automatic token refresh
+- Native Trakt watchlist row and playback scrobbling for media with IMDb IDs
+- **Live TV / IPTV** with user-supplied M3U/M3U8 playlists, optional XMLTV URL and Xtream Codes credentials
+- Sports-first live TV discovery for rugby, Formula 1, soccer, cricket and other sport
+- Curated Add-on Manager containing the 25 requested core integrations plus IPTV setup options
 - Local **Continue Watching** with resume position
 - External subtitles attached to the Media3 player
 - Media3 / ExoPlayer playback including HLS and DASH modules
@@ -24,14 +27,14 @@
 
 - Product name: **NM Stream TV**
 - Package/application ID: `za.co.nm.streamtv`
-- Version: `0.2.0`
+- Version: `0.3.0`
 - Product family label: **NM Digital**
 
 ## Build
 
 The repository contains `.github/workflows/android-apk.yml`. Every push to `main`, pull request to `main`, or manual workflow dispatch builds:
 
-`NM-Stream-TV-v0.2.0-debug.apk`
+`NM-Stream-TV-v0.3.0-debug.apk`
 
 The workflow uses JDK 17, Gradle 9.6, Android SDK 37 and Android Build Tools 36.0.0.
 
@@ -51,7 +54,7 @@ app/build/outputs/apk/debug/app-debug.apk
 
 Open **Add-ons** and paste an HTTPS Stremio-compatible manifest URL. NM Stream TV normalizes the URL to `/manifest.json`, validates the manifest, stores the URL locally, and discovers supported resources from the manifest.
 
-No MediaFusion, Torrentio, PenguPlay, or other third-party provider URL is bundled in this repository. Compatible add-ons are user-configured. The app plays ordinary HTTP(S) media URLs returned by installed add-ons and can open declared external URLs. It does not convert raw torrent hashes into debrid links.
+The Add-on Manager includes curated entries for metadata, discovery, subtitles, tracking, stream aggregation and IPTV. Static official manifests can be installed with one click; configurable third-party services open their setup page and remain user-configured. The app plays ordinary HTTP(S) media URLs returned by installed add-ons and can open declared external URLs. It does not convert raw torrent hashes into debrid links.
 
 Use NM Stream TV only with media and services you are authorized to access.
 
@@ -71,7 +74,16 @@ The token is stored locally using Android Keystore-backed AES-GCM encryption and
 3. Choose **Connect Trakt**.
 4. Visit the displayed verification URL and enter the device code.
 
-The app then stores the OAuth token locally and can scrobble supported playback. Trakt integration is optional. Use it in accordance with Trakt's API terms and branding requirements.
+The app stores OAuth tokens locally, refreshes them automatically when needed, loads the user's Trakt watchlist and scrobbles supported playback. Trakt integration is optional. Use it in accordance with Trakt's API terms and branding requirements.
+
+## IPTV / Live TV
+
+Open **Settings → Live TV / IPTV** and add either:
+
+- your own M3U/M3U8 playlist (plus an optional XMLTV EPG URL), or
+- Xtream Codes server URL, username and password.
+
+Credentials are encrypted locally. NM Stream TV identifies likely sports channels and prioritises rugby, Formula 1, soccer, cricket and broader sports terms. The app does not include an IPTV subscription or channel package.
 
 ## Real-Debrid
 
@@ -95,8 +107,10 @@ Returned HTTP(S) subtitle tracks are attached to the Media3 `MediaItem`. SRT, We
 
 ```text
 app/src/main/java/za/co/nm/streamtv/
+├── AddonCatalog.kt
 ├── AddonRepository.kt
 ├── HttpClient.kt
+├── IptvRepository.kt
 ├── MainActivity.kt
 ├── MainViewModel.kt
 ├── Models.kt
