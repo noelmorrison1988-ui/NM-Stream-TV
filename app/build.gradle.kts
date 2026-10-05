@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "za.co.nm.streamtv"
     compileSdk = 37
+    compileSdkMinor = 1
 
     defaultConfig {
         applicationId = "za.co.nm.streamtv"
