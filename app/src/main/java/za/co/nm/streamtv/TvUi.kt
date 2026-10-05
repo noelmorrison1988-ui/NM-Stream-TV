@@ -306,6 +306,7 @@ private fun AddonsScreen(state: MainUiState, install: (String) -> Unit, remove: 
 private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
     var tmdb by remember { mutableStateOf("") }
     var traktId by remember { mutableStateOf("") }
+    var traktSecret by remember { mutableStateOf("") }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 42.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 55.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text("Settings", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black) }
         item { CardBox {
@@ -319,12 +320,33 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
         } }
         item { CardBox {
             Text("Trakt", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            Text(if (state.traktConnected) "Connected" else if (state.traktConfigured) "Client ID saved" else "Not configured", color = if (state.traktConnected) NmGreen else NmMuted)
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (state.traktConnected) "Connected"
+                else if (state.traktConfigured) "Credentials saved"
+                else "Client ID + Client Secret required",
+                color = if (state.traktConnected) NmGreen else NmMuted
+            )
+            Text("Enter the Client ID and Client Secret from your Trakt API app. They are stored encrypted on this device.", color = NmMuted)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.width(640.dp)) { InputBox(traktId, "Trakt Client ID") { traktId = it } }
-                Button(onClick = { vm.saveTraktClientId(traktId); traktId = "" }) { Text("Save") }
+                Box(Modifier.width(640.dp)) { InputBox(traktSecret, "Trakt Client Secret", password = true) { traktSecret = it } }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = {
+                        vm.saveTraktCredentials(traktId, traktSecret)
+                        traktId = ""
+                        traktSecret = ""
+                    }) { Text("Save credentials") }
+                    if (state.traktConfigured) Button(onClick = vm::clearTraktCredentials) { Text("Remove") }
+                }
             }
-            if (state.traktConnected) Button(onClick = vm::disconnectTrakt) { Text("Disconnect Trakt") } else Button(onClick = vm::beginTraktSignIn) { Text(if (state.traktConnecting) "Waiting…" else "Connect Trakt") }
+            if (state.traktConnected) {
+                Button(onClick = vm::disconnectTrakt) { Text("Disconnect Trakt") }
+            } else {
+                Button(
+                    onClick = vm::beginTraktSignIn,
+                    enabled = state.traktConfigured && !state.traktConnecting
+                ) { Text(if (state.traktConnecting) "Waiting…" else "Connect Trakt") }
+            }
             state.traktDeviceCode?.let { DeviceCode("Trakt", it.userCode, it.verificationUrl) }
         } }
         item { CardBox {
@@ -333,7 +355,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV v0.2 · an NM Digital product", color = NmMuted) }
+        item { Text("NM Stream TV v0.2.1 · an NM Digital product", color = NmMuted) }
     }
 }
 
@@ -442,11 +464,24 @@ private fun subtitleMime(url: String): String = when {
 }
 
 @Composable
-private fun InputBox(value: String, placeholder: String, change: (String) -> Unit) {
+private fun InputBox(
+    value: String,
+    placeholder: String,
+    password: Boolean = false,
+    change: (String) -> Unit
+) {
     var focused by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color(0xFF111319)).border(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF343841), RoundedCornerShape(8.dp)).onFocusChanged { focused = it.isFocused }.padding(horizontal = 14.dp, vertical = 12.dp)) {
         if (value.isBlank()) Text(placeholder, color = NmMuted.copy(alpha = .7f))
-        BasicTextField(value = value, onValueChange = change, singleLine = true, textStyle = TextStyle(color = Color.White, fontSize = 16.sp), cursorBrush = SolidColor(NmRed), modifier = Modifier.fillMaxWidth())
+        BasicTextField(
+            value = value,
+            onValueChange = change,
+            singleLine = true,
+            textStyle = TextStyle(color = Color.White, fontSize = 16.sp),
+            cursorBrush = SolidColor(NmRed),
+            visualTransformation = if (password) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 
