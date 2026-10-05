@@ -241,6 +241,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveTraktCredentials(clientId: String, clientSecret: String) {
         traktAuthJob?.cancel()
+        traktCloudPlayback = emptyList()
         runCatching { trakt.saveCredentials(clientId, clientSecret) }
             .onSuccess {
                 _uiState.value = _uiState.value.copy(
@@ -268,6 +269,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun clearTraktCredentials() {
         traktAuthJob?.cancel()
         trakt.clearCredentials()
+        traktCloudPlayback = emptyList()
         _uiState.value = _uiState.value.copy(
             traktConfigured = false,
             traktConnected = false,
