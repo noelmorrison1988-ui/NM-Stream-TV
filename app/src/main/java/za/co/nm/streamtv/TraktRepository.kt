@@ -9,6 +9,7 @@ class TraktRepository(context: Context) {
     companion object {
         private const val API = "https://api.trakt.tv"
         private const val CLIENT_ID_KEY = "trakt_client_id"
+        private const val CLIENT_SECRET_KEY = "trakt_client_secret"
         private const val AUTH_KEY = "trakt_auth"
         private const val API_VERSION = "2"
     }
@@ -16,19 +17,33 @@ class TraktRepository(context: Context) {
     private val secureStore = SecretStore(context)
     private val gson = Gson()
 
-    fun saveClientId(clientId: String) {
-        if (clientId.isBlank()) {
-            secureStore.remove(CLIENT_ID_KEY)
-            secureStore.remove(AUTH_KEY)
-        } else secureStore.put(CLIENT_ID_KEY, clientId.trim())
+    fun saveCredentials(clientId: String, clientSecret: String) {
+        require(clientId.isNotBlank()) { "Enter your Trakt Client ID" }
+        require(clientSecret.isNotBlank()) { "Enter your Trakt Client Secret" }
+        secureStore.put(CLIENT_ID_KEY, clientId.trim())
+        secureStore.put(CLIENT_SECRET_KEY, clientSecret.trim())
+        secureStore.remove(AUTH_KEY)
     }
 
-    fun clientIdConfigured(): Boolean = !secureStore.get(CLIENT_ID_KEY).isNullOrBlank()
-    fun maskedClientId(): String = secureStore.get(CLIENT_ID_KEY)?.let { if (it.length > 10) "••••${it.takeLast(6)}" else "Saved" } ?: "Not configured"
-    fun isConnected(): Boolean = loadAuth()?.expiresAtEpochMs?.let { it > System.currentTimeMillis() } == true
+    fun clearCredentials() {
+        secureStore.remove(CLIENT_ID_KEY)
+        secureStore.remove(CLIENT_SECRET_KEY)
+        secureStore.remove(AUTH_KEY)
+    }
+
+    fun credentialsConfigured(): Boolean =
+        !secureStore.get(CLIENT_ID_KEY).isNullOrBlank() &&
+            !secureStore.get(CLIENT_SECRET_KEY).isNullOrBlank()
+
+    fun maskedClientId(): String = secureStore.get(CLIENT_ID_KEY)?.let {
+        if (it.length > 10) "••••${it.takeLast(6)}" else "Saved"
+    } ?: "Not configured"
+
+    fun isConnected(): Boolean =
+        loadAuth()?.expiresAtEpochMs?.let { it > System.currentTimeMillis() } == true
 
     suspend fun startDeviceAuth(): TraktDeviceCode {
-        val clientId = requireClientId()
+        val (clientId, _) = requireCredentials()
         val payload = gson.toJson(mapOf("client_id" to clientId))
         val body = SimpleHttp.requireSuccess(
             SimpleHttp.postJson("$API/oauth/device/code", payload),
@@ -38,11 +53,31 @@ class TraktRepository(context: Context) {
     }
 
     suspend fun pollDeviceToken(deviceCode: String): TraktStoredAuth? {
-        val clientId = requireClientId()
-        val payload = gson.toJson(mapOf("code" to deviceCode, "client_id" to clientId))
+        val (clientId, clientSecret) = requireCredentials()
+        val payload = gson.toJson(
+            mapOf(
+                "code" to deviceCode,
+                "client_id" to clientId,
+                "client_secret" to clientSecret
+            )
+        )
         val result = SimpleHttp.postJson("$API/oauth/device/token", payload)
-        if (result.code in listOf(400, 404, 409, 410, 418, 429)) return null
-        val token = gson.fromJson(SimpleHttp.requireSuccess(result, "Completing Trakt sign-in"), TraktToken::class.java)
+
+        when (result.code) {
+            400 -> return null
+            429 -> return null
+            404 -> error("Trakt sign-in code is invalid. Start the connection again.")
+            409 -> error("This Trakt sign-in code was already used. Start again.")
+            410 -> error("The Trakt sign-in code expired. Start again.")
+            418 -> error("Trakt authorization was denied.")
+        }
+
+        val token = gson.fromJson(
+            SimpleHttp.requireSuccess(result, "Completing Trakt sign-in"),
+            TraktToken::class.java
+        )
+        require(token.accessToken.isNotBlank()) { "Trakt returned an empty access token" }
+
         val stored = TraktStoredAuth(
             clientId = clientId,
             accessToken = token.accessToken,
@@ -67,7 +102,9 @@ class TraktRepository(context: Context) {
 
     suspend fun scrobble(action: String, media: AppMedia, videoId: String, progressPercent: Double) {
         val auth = validAuth() ?: return
-        val imdb = Regex("tt\\d{5,10}").find(videoId)?.value ?: Regex("tt\\d{5,10}").find(media.meta.id)?.value ?: return
+        val imdb = Regex("tt\\d{5,10}").find(videoId)?.value
+            ?: Regex("tt\\d{5,10}").find(media.meta.id)?.value
+            ?: return
         val percent = progressPercent.coerceIn(0.0, 100.0)
         val payload = JsonObject().apply {
             addProperty("progress", percent)
@@ -76,16 +113,22 @@ class TraktRepository(context: Context) {
                 val season = parts.getOrNull(parts.size - 2)?.toIntOrNull()
                 val episode = parts.lastOrNull()?.toIntOrNull()
                 if (season != null && episode != null) {
-                    add("show", JsonObject().apply { add("ids", JsonObject().apply { addProperty("imdb", imdb) }) })
+                    add("show", JsonObject().apply {
+                        add("ids", JsonObject().apply { addProperty("imdb", imdb) })
+                    })
                     add("episode", JsonObject().apply {
                         addProperty("season", season)
                         addProperty("number", episode)
                     })
                 } else {
-                    add("movie", JsonObject().apply { add("ids", JsonObject().apply { addProperty("imdb", imdb) }) })
+                    add("movie", JsonObject().apply {
+                        add("ids", JsonObject().apply { addProperty("imdb", imdb) })
+                    })
                 }
             } else {
-                add("movie", JsonObject().apply { add("ids", JsonObject().apply { addProperty("imdb", imdb) }) })
+                add("movie", JsonObject().apply {
+                    add("ids", JsonObject().apply { addProperty("imdb", imdb) })
+                })
             }
         }
         SimpleHttp.postJson("$API/scrobble/$action", gson.toJson(payload), headers(auth))
@@ -93,8 +136,13 @@ class TraktRepository(context: Context) {
 
     fun disconnect() = secureStore.remove(AUTH_KEY)
 
-    private fun requireClientId(): String = secureStore.get(CLIENT_ID_KEY)?.takeIf { it.isNotBlank() }
-        ?: error("Add your Trakt Client ID in Settings first")
+    private fun requireCredentials(): Pair<String, String> {
+        val clientId = secureStore.get(CLIENT_ID_KEY)?.takeIf { it.isNotBlank() }
+            ?: error("Add your Trakt Client ID in Settings first")
+        val clientSecret = secureStore.get(CLIENT_SECRET_KEY)?.takeIf { it.isNotBlank() }
+            ?: error("Add your Trakt Client Secret in Settings first")
+        return clientId to clientSecret
+    }
 
     private fun loadAuth(): TraktStoredAuth? {
         val json = secureStore.get(AUTH_KEY) ?: return null
