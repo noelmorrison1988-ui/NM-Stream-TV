@@ -29,7 +29,8 @@ data class CatalogExtra(
 data class InstalledAddon(
     val manifestUrl: String,
     val baseUrl: String,
-    val manifest: AddonManifest
+    val manifest: AddonManifest,
+    val resourceQuery: String? = null
 )
 
 data class CatalogResponse(val metas: List<MetaItem> = emptyList())
