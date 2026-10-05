@@ -13,6 +13,16 @@ class AddonRepository(context: Context) {
     private val secureStore = SecretStore(context)
     private val storedUrlsKey = "addon_manifest_urls"
 
+    fun storedManifestUrls(): List<String> = loadStoredUrls()
+
+    suspend fun syncManifestUrls(urls: List<String>): List<InstalledAddon> {
+        val normalized = urls.mapNotNull { raw ->
+            runCatching { SimpleHttp.normalizeManifestUrl(raw) }.getOrNull()
+        }.distinct()
+        saveStoredUrls(normalized)
+        return loadInstalled()
+    }
+
     suspend fun loadInstalled(): List<InstalledAddon> {
         val urls = loadStoredUrls()
         return supervisorScope {
