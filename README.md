@@ -14,7 +14,8 @@
 - **TMDB artwork enrichment** using a user-entered API Read Access Token
 - **Native Trakt device authentication** with automatic token refresh
 - **Trakt cloud Continue Watching** from `/sync/playback`, including cross-device percentage resume
-- Native Trakt watchlist row and playback scrobbling for media with IMDb IDs
+- Native Trakt watchlist row, playback scrobbling and **cloud Continue Watching** via Trakt playback sync
+- Resume from Trakt's cloud playback percentage across devices
 - **Live TV / IPTV** with user-supplied M3U/M3U8 playlists, optional XMLTV URL and Xtream Codes credentials
 - Sports-first live TV discovery for rugby, Formula 1, soccer, cricket and other sport
 - Curated Add-on Manager containing the requested core integrations plus **Sports Streams (SportStream)**, **StremVerse** and IPTV setup options
