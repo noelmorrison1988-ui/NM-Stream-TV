@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -100,9 +101,9 @@ private fun StartupSplash() {
             Spacer(Modifier.height(18.dp))
             Box(
                 Modifier
-                    .background(Color(0xFFE2182D))
+                    .width(240.dp)
                     .height(4.dp)
-                    .fillMaxSize(0.18f)
+                    .background(Color(0xFFE2182D))
             )
             Spacer(Modifier.height(18.dp))
             Text(
