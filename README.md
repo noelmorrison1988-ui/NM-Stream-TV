@@ -2,7 +2,7 @@
 
 **NM Stream TV** is an Android TV / Android-box media front end branded as an **NM Digital** product. It provides a cinematic, remote-friendly interface for user-configured media sources without bundling third-party scraping providers.
 
-## v0.8.0 features
+## v0.9.0 features
 
 - Cinematic Netflix-inspired (but original) Android TV interface
 - **NM Stream TV startup splash:** supplied Morrison Entertainment family artwork is bundled offline, shown full-screen with no cropping, and fades into the app after startup
@@ -13,7 +13,7 @@
 - Multiple add-ons installed at once; results are aggregated
 - **Real-Debrid device authentication** and access to the user's existing download library
 - **TMDB artwork enrichment** using a user-entered API Read Access Token
-- **Native Trakt device authentication** with automatic token refresh
+- **Native Trakt device authentication using Client ID only** with automatic token refresh; no Client Secret required for new Trakt apps
 - **Noel** and **Sarah** Home rows backed by Trakt personal lists with those names
 - **Add to Noel** and **Add to Sarah** buttons directly on movie/series detail screens
 - **Trakt cloud Continue Watching** from `/sync/playback`, including cross-device percentage resume
@@ -39,14 +39,14 @@
 
 - Product name: **NM Stream TV**
 - Package/application ID: `za.co.nm.streamtv`
-- Version: `0.8.0`
+- Version: `0.9.0`
 - Product family label: **NM Digital**
 
 ## Build
 
 The repository contains `.github/workflows/android-apk.yml`. Every push to `main`, pull request to `main`, or manual workflow dispatch builds:
 
-`NM-Stream-TV-v0.8.0-debug.apk`
+`NM-Stream-TV-v0.9.0-debug.apk`
 
 The workflow uses JDK 17, Gradle 9.6, Android SDK 37 and Android Build Tools 36.0.0.
 
@@ -83,10 +83,10 @@ The token is stored locally using Android Keystore-backed AES-GCM encryption and
 
 ## Trakt
 
-1. Register your own Trakt API application and obtain its Client ID.
-2. Open **Settings → Trakt** and save the Client ID.
+1. Register your own Trakt API application and copy its **Client ID**.
+2. Open **Settings → Trakt** and save the Client ID. A Client Secret is not required.
 3. Choose **Connect Trakt**.
-4. Visit the displayed verification URL and enter the device code.
+4. Visit the displayed verification URL and enter the device code shown on the TV.
 
 The app stores OAuth tokens locally, refreshes them automatically when needed, loads the user's Trakt watchlist, personal lists named **Noel** and **Sarah**, imports playback progress into Continue Watching, finds the next aired unwatched episode for recently watched shows, resumes cloud items by percentage, and scrobbles supported playback. Trakt integration is optional. Use it in accordance with Trakt's API terms and branding requirements.
 

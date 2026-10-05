@@ -347,9 +347,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshEverything()
     }
 
-    fun saveTraktCredentials(clientId: String, clientSecret: String) {
+    fun saveTraktClientId(clientId: String) {
         traktAuthJob?.cancel()
-        runCatching { trakt.saveCredentials(clientId, clientSecret) }
+        runCatching { trakt.saveClientId(clientId) }
             .onSuccess {
                 traktCloudPlayback = emptyList()
                 traktUpNext = emptyList()
@@ -363,7 +363,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     continueWatching = playback.load(),
                     traktDeviceCode = null,
                     traktConnecting = false,
-                    message = "Trakt credentials saved"
+                    message = "Trakt Client ID saved"
                 )
             }
             .onFailure { error ->
@@ -373,7 +373,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     traktUser = null,
                     traktDeviceCode = null,
                     traktConnecting = false,
-                    message = error.message ?: "Could not save Trakt credentials"
+                    message = error.message ?: "Could not save Trakt Client ID"
                 )
             }
     }
