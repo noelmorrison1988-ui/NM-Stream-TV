@@ -26,7 +26,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.key.nativeKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -962,7 +961,7 @@ private fun Modifier.tvActivation(
     var longPressHandled by remember { mutableStateOf(false) }
 
     onPreviewKeyEvent { event ->
-        val native = event.nativeKeyEvent
+        val native = event
         val supported = native.keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
             native.keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
             native.keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
