@@ -1,9 +1,21 @@
 package za.co.nm.streamtv
 
 import android.content.Context
+import android.util.Xml
 import com.google.gson.Gson
 import com.google.gson.JsonArray
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.xmlpull.v1.XmlPullParser
+import java.io.BufferedInputStream
+import java.io.InputStream
+import java.net.HttpURLConnection
 import java.net.URI
+import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
+import java.util.zip.GZIPInputStream
 
 data class IptvConfig(
     val m3uUrl: String = "",
@@ -20,14 +32,29 @@ data class IptvConfig(
 class IptvRepository(context: Context) {
     companion object {
         private const val CONFIG_KEY = "iptv_config_v1"
-        private val SPORTS_TERMS = listOf(
-            "rugby", "springbok", "urc", "currie", "six nations", "super rugby",
-            "formula 1", "formula one", "f1", "motorsport", "motogp", "racing",
+
+        private val RUGBY_TERMS = listOf(
+            "rugby", "springbok", "springboks", "urc", "currie", "six nations",
+            "super rugby", "rugby championship", "premiership rugby", "top 14"
+        )
+        private val MOTORSPORT_TERMS = listOf(
+            "formula 1", "formula one", "f1", "motorsport", "motor sport", "motogp",
+            "moto gp", "racing", "nascar", "indycar", "formula e", "wec", "le mans", "wrc"
+        )
+        private val SOCCER_TERMS = listOf(
             "soccer", "football", "premier league", "champions league", "uefa", "fifa",
-            "cricket", "ipl", "proteas", "t20", "test cricket",
+            "la liga", "serie a", "bundesliga", "ligue 1"
+        )
+        private val CRICKET_TERMS = listOf(
+            "cricket", "ipl", "proteas", "t20", "test cricket", "odi", "ashes"
+        )
+        private val GENERAL_SPORT_TERMS = listOf(
             "sport", "supersport", "sky sports", "espn", "premier sports",
             "tennis", "golf", "boxing", "ufc", "mma", "nba", "nfl", "nhl", "baseball", "cycling"
         )
+
+        private val SPORTS_TERMS =
+            RUGBY_TERMS + MOTORSPORT_TERMS + SOCCER_TERMS + CRICKET_TERMS + GENERAL_SPORT_TERMS
     }
 
     private val store = SecretStore(context)
@@ -68,12 +95,14 @@ class IptvRepository(context: Context) {
 
     fun status(): String {
         val cfg = config()
-        return when {
+        val base = when {
             cfg.hasM3u && cfg.hasXtream -> "M3U + Xtream configured"
             cfg.hasM3u -> "M3U configured"
             cfg.hasXtream -> "Xtream configured"
             else -> "Not configured"
         }
+        if (!cfg.configured) return base
+        return if (cfg.epgUrl.isNotBlank() || cfg.hasXtream) "$base · EPG available" else base
     }
 
     suspend fun loadChannels(limit: Int = 1200): List<AppMedia> {
@@ -84,17 +113,91 @@ class IptvRepository(context: Context) {
         return combined.distinctBy { it.directUrl }.take(limit)
     }
 
-    fun sportsOnly(items: List<AppMedia>): List<AppMedia> =
-        items.filter { item ->
-            val haystack = buildString {
-                append(item.meta.name)
-                append(' ')
-                append(item.meta.description.orEmpty())
-                append(' ')
-                append(item.meta.genres.joinToString(" "))
-            }.lowercase()
-            SPORTS_TERMS.any { haystack.contains(it) }
+    fun sportsOnly(items: List<AppMedia>): List<AppMedia> = items.filter { matchesAny(it, SPORTS_TERMS) }
+
+    fun categoryRows(items: List<AppMedia>): List<LiveTvCategory> {
+        val rows = mutableListOf<LiveTvCategory>()
+
+        fun special(name: String, terms: List<String>) {
+            val matches = items.filter { matchesAny(it, terms) }
+            if (matches.isNotEmpty()) rows += LiveTvCategory(name, matches)
         }
+
+        special("Rugby", RUGBY_TERMS)
+        special("F1 & Motorsport", MOTORSPORT_TERMS)
+        special("Soccer & Football", SOCCER_TERMS)
+        special("Cricket", CRICKET_TERMS)
+
+        val featuredIds = rows.flatMap { it.channels }.map { it.meta.id }.toSet()
+        val otherSports = sportsOnly(items).filterNot { it.meta.id in featuredIds }
+        if (otherSports.isNotEmpty()) rows += LiveTvCategory("Other Sports", otherSports)
+
+        val providerGroups = items
+            .groupBy { it.meta.genres.firstOrNull()?.trim().orEmpty().ifBlank { "Other Channels" } }
+            .entries
+            .sortedWith(
+                compareByDescending<Map.Entry<String, List<AppMedia>>> { entry ->
+                    entry.value.count { item -> item.meta.id in featuredIds }
+                }.thenBy { it.key.lowercase() }
+            )
+
+        providerGroups.forEach { (name, channels) ->
+            if (rows.none { it.name.equals(name, true) }) {
+                rows += LiveTvCategory(name, channels)
+            }
+        }
+        return rows.take(30)
+    }
+
+    suspend fun loadGuide(
+        channels: List<AppMedia>,
+        hoursForward: Int = 12,
+        programmesPerChannel: Int = 4
+    ): Map<String, List<EpgProgramme>> {
+        if (channels.isEmpty()) return emptyMap()
+        val cfg = config()
+        val url = when {
+            cfg.epgUrl.isNotBlank() -> cfg.epgUrl
+            cfg.hasXtream -> {
+                val user = SimpleHttp.encode(cfg.xtreamUsername)
+                val pass = SimpleHttp.encode(cfg.xtreamPassword)
+                "${cfg.xtreamServer}/xmltv.php?username=$user&password=$pass"
+            }
+            else -> return emptyMap()
+        }
+
+        val parsed = runCatching { parseXmlTv(url) }.getOrDefault(ParsedGuide())
+        if (parsed.programmes.isEmpty()) return emptyMap()
+
+        val now = System.currentTimeMillis()
+        val horizon = now + hoursForward.coerceIn(2, 48) * 60L * 60L * 1000L
+        val displayNameLookup = parsed.channelNames.entries.associate { normalizeName(it.value) to it.key }
+
+        return channels.mapNotNull { channel ->
+            val exactId = channel.epgId?.takeIf { it.isNotBlank() }
+            val fallbackId = displayNameLookup[normalizeName(channel.meta.name)]
+            val ids = listOfNotNull(exactId, fallbackId).distinct()
+            val programmes = ids
+                .flatMap { parsed.programmes[it].orEmpty() }
+                .filter { it.stopMs > now && it.startMs < horizon }
+                .distinctBy { "${it.channelId}|${it.startMs}|${it.title}" }
+                .sortedBy { it.startMs }
+                .take(programmesPerChannel.coerceIn(1, 12))
+
+            if (programmes.isEmpty()) null else channel.meta.id to programmes
+        }.toMap()
+    }
+
+    private fun matchesAny(item: AppMedia, terms: List<String>): Boolean {
+        val haystack = buildString {
+            append(item.meta.name)
+            append(' ')
+            append(item.meta.description.orEmpty())
+            append(' ')
+            append(item.meta.genres.joinToString(" "))
+        }.lowercase()
+        return terms.any { haystack.contains(it) }
+    }
 
     private suspend fun loadM3u(url: String): List<AppMedia> {
         val body = SimpleHttp.requireSuccess(SimpleHttp.get(url), "Loading IPTV playlist")
@@ -125,7 +228,8 @@ class IptvRepository(context: Context) {
                             genres = listOf(group)
                         ),
                         originAddonName = "NM IPTV · M3U",
-                        directUrl = line
+                        directUrl = line,
+                        epgId = tvgId.takeIf { it.isNotBlank() }
                     )
                     info = null
                 }
@@ -137,6 +241,16 @@ class IptvRepository(context: Context) {
     private suspend fun loadXtream(cfg: IptvConfig): List<AppMedia> {
         val user = SimpleHttp.encode(cfg.xtreamUsername)
         val pass = SimpleHttp.encode(cfg.xtreamPassword)
+        val categoriesUrl = "${cfg.xtreamServer}/player_api.php?username=$user&password=$pass&action=get_live_categories"
+        val categories = runCatching {
+            val body = SimpleHttp.requireSuccess(SimpleHttp.get(categoriesUrl), "Loading Xtream categories")
+            gson.fromJson(body, JsonArray::class.java).mapNotNull { element ->
+                val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+                val id = obj.get("category_id")?.asString ?: return@mapNotNull null
+                id to (obj.get("category_name")?.asString ?: "Live TV")
+            }.toMap()
+        }.getOrDefault(emptyMap())
+
         val api = "${cfg.xtreamServer}/player_api.php?username=$user&password=$pass&action=get_live_streams"
         val body = SimpleHttp.requireSuccess(SimpleHttp.get(api), "Loading Xtream live channels")
         val array = gson.fromJson(body, JsonArray::class.java)
@@ -145,9 +259,9 @@ class IptvRepository(context: Context) {
             val streamId = obj.get("stream_id")?.asInt ?: return@mapNotNull null
             val name = obj.get("name")?.asString?.takeIf { it.isNotBlank() } ?: "Live channel"
             val logo = obj.get("stream_icon")?.takeUnless { it.isJsonNull }?.asString
-            val category = obj.get("category_name")?.takeUnless { it.isJsonNull }?.asString
-                ?: obj.get("category_id")?.takeUnless { it.isJsonNull }?.asString
-                ?: "Live TV"
+            val categoryId = obj.get("category_id")?.takeUnless { it.isJsonNull }?.asString
+            val category = categoryId?.let { categories[it] } ?: "Live TV"
+            val epgId = obj.get("epg_channel_id")?.takeUnless { it.isJsonNull }?.asString
             val stream = "${cfg.xtreamServer}/live/$user/$pass/$streamId.ts"
             AppMedia(
                 meta = MetaItem(
@@ -161,10 +275,150 @@ class IptvRepository(context: Context) {
                     genres = listOf(category)
                 ),
                 originAddonName = "NM IPTV · Xtream",
-                directUrl = stream
+                directUrl = stream,
+                epgId = epgId?.takeIf { it.isNotBlank() }
             )
         }
     }
+
+    private data class ParsedGuide(
+        val channelNames: MutableMap<String, String> = mutableMapOf(),
+        val programmes: MutableMap<String, MutableList<EpgProgramme>> = mutableMapOf()
+    )
+
+    private suspend fun parseXmlTv(url: String): ParsedGuide = withContext(Dispatchers.IO) {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15_000
+            readTimeout = 35_000
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "NMStreamTV/0.5")
+            setRequestProperty("Accept", "application/xml, text/xml, application/gzip, */*")
+        }
+
+        val raw = BufferedInputStream(connection.inputStream)
+        val input: InputStream = if (
+            url.endsWith(".gz", true) ||
+            connection.contentEncoding.equals("gzip", true) ||
+            looksGzip(raw)
+        ) {
+            GZIPInputStream(raw)
+        } else raw
+
+        input.use { stream ->
+            val parser = Xml.newPullParser().apply {
+                setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
+                setInput(stream, null)
+            }
+
+            val guide = ParsedGuide()
+            var channelId: String? = null
+            var channelDisplayName: String? = null
+
+            var programmeChannel: String? = null
+            var programmeStart = 0L
+            var programmeStop = 0L
+            var programmeTitle: String? = null
+            var programmeDescription: String? = null
+
+            var event = parser.eventType
+            while (event != XmlPullParser.END_DOCUMENT) {
+                when (event) {
+                    XmlPullParser.START_TAG -> when (parser.name) {
+                        "channel" -> {
+                            channelId = parser.getAttributeValue(null, "id")
+                            channelDisplayName = null
+                        }
+                        "display-name" -> if (channelId != null && channelDisplayName == null) {
+                            channelDisplayName = parser.nextText().trim()
+                        }
+                        "programme" -> {
+                            programmeChannel = parser.getAttributeValue(null, "channel")
+                            programmeStart = parseXmlTvTime(parser.getAttributeValue(null, "start"))
+                            programmeStop = parseXmlTvTime(parser.getAttributeValue(null, "stop"))
+                            programmeTitle = null
+                            programmeDescription = null
+                        }
+                        "title" -> if (programmeChannel != null) {
+                            programmeTitle = parser.nextText().trim()
+                        }
+                        "desc" -> if (programmeChannel != null) {
+                            programmeDescription = parser.nextText().trim().takeIf { it.isNotBlank() }
+                        }
+                    }
+
+                    XmlPullParser.END_TAG -> when (parser.name) {
+                        "channel" -> {
+                            val id = channelId
+                            if (!id.isNullOrBlank() && !channelDisplayName.isNullOrBlank()) {
+                                guide.channelNames[id] = channelDisplayName.orEmpty()
+                            }
+                            channelId = null
+                            channelDisplayName = null
+                        }
+                        "programme" -> {
+                            val id = programmeChannel
+                            val title = programmeTitle
+                            if (!id.isNullOrBlank() && !title.isNullOrBlank() && programmeStart > 0L) {
+                                val stop = if (programmeStop > programmeStart) programmeStop else programmeStart + 2 * 60 * 60 * 1000L
+                                guide.programmes.getOrPut(id) { mutableListOf() }.add(
+                                    EpgProgramme(
+                                        channelId = id,
+                                        title = title,
+                                        description = programmeDescription,
+                                        startMs = programmeStart,
+                                        stopMs = stop
+                                    )
+                                )
+                            }
+                            programmeChannel = null
+                            programmeTitle = null
+                            programmeDescription = null
+                            programmeStart = 0L
+                            programmeStop = 0L
+                        }
+                    }
+                }
+                event = parser.next()
+            }
+
+            guide.programmes.values.forEach { it.sortBy(EpgProgramme::startMs) }
+            guide
+        }.also { connection.disconnect() }
+    }
+
+    private fun looksGzip(stream: BufferedInputStream): Boolean {
+        stream.mark(2)
+        val first = stream.read()
+        val second = stream.read()
+        stream.reset()
+        return first == 0x1f && second == 0x8b
+    }
+
+    private fun parseXmlTvTime(value: String?): Long {
+        if (value.isNullOrBlank()) return 0L
+        val cleaned = value.trim().replace(Regex("\\s+"), " ")
+        val patterns = listOf(
+            "yyyyMMddHHmmss Z",
+            "yyyyMMddHHmm Z",
+            "yyyyMMddHHmmss",
+            "yyyyMMddHHmm"
+        )
+        for (pattern in patterns) {
+            val parsed = runCatching {
+                SimpleDateFormat(pattern, Locale.US).apply {
+                    isLenient = true
+                    if (!pattern.contains("Z")) timeZone = TimeZone.getDefault()
+                }.parse(cleaned)?.time
+            }.getOrNull()
+            if (parsed != null) return parsed
+        }
+        return 0L
+    }
+
+    private fun normalizeName(value: String): String =
+        value.lowercase()
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
 
     private fun attribute(line: String, name: String): String {
         val pattern = Regex("""$name\s*=\s*"([^"]*)"""", RegexOption.IGNORE_CASE)
