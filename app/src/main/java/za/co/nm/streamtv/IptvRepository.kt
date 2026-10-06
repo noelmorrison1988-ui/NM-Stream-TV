@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Xml
 import com.google.gson.Gson
 import com.google.gson.JsonArray
+import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.xmlpull.v1.XmlPullParser
@@ -306,6 +307,237 @@ class IptvRepository(context: Context) {
             )
         }
     }
+
+
+    suspend fun loadXtreamMovies(limit: Int = 160): List<AppMedia> {
+        val cfg = config()
+        if (!cfg.hasXtream) return emptyList()
+
+        val categories = loadXtreamCategories(cfg, "get_vod_categories", "Movies")
+        val array = loadXtreamArray(cfg, "get_vod_streams", "Loading Xtream movies")
+
+        return array.mapNotNull { element ->
+            val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+            val streamId = jsonInt(obj, "stream_id") ?: return@mapNotNull null
+            val name = jsonString(obj, "name")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val extension = jsonString(obj, "container_extension")
+                ?.lowercase()
+                ?.takeIf { it.matches(Regex("[a-z0-9]{2,6}")) }
+                ?: "mp4"
+            val category = jsonString(obj, "category_id")?.let { categories[it] } ?: "Xtream Movies"
+            val poster = jsonString(obj, "stream_icon")?.takeIf { it.isNotBlank() }
+            val plot = jsonString(obj, "plot")?.takeIf { it.isNotBlank() }
+            val year = jsonString(obj, "year")?.takeIf { it.isNotBlank() }
+                ?: jsonString(obj, "release_date")?.take(4)
+            val rating = jsonString(obj, "rating")?.takeIf { it.isNotBlank() }
+            val genre = jsonString(obj, "genre")
+                ?.split(",", "/", "|")
+                ?.map { it.trim() }
+                ?.filter { it.isNotBlank() }
+                .orEmpty()
+            val stream = xtreamStreamUrl(cfg, "movie", streamId.toString(), extension)
+
+            AppMedia(
+                meta = MetaItem(
+                    id = "xtream:vod:$streamId",
+                    type = "movie",
+                    name = name,
+                    poster = poster,
+                    background = poster,
+                    description = plot ?: "Xtream VOD · $category",
+                    releaseInfo = year,
+                    imdbRating = rating,
+                    genres = (listOf(category) + genre).distinct()
+                ),
+                originAddonName = "NM IPTV · Xtream Movies",
+                directUrl = stream
+            )
+        }
+            .distinctBy { it.meta.id }
+            .take(limit.coerceIn(1, 1000))
+    }
+
+    suspend fun loadXtreamSeries(limit: Int = 160): List<AppMedia> {
+        val cfg = config()
+        if (!cfg.hasXtream) return emptyList()
+
+        val categories = loadXtreamCategories(cfg, "get_series_categories", "Series")
+        val array = loadXtreamArray(cfg, "get_series", "Loading Xtream series")
+
+        return array.mapNotNull { element ->
+            val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+            val seriesId = jsonInt(obj, "series_id") ?: return@mapNotNull null
+            val name = jsonString(obj, "name")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val category = jsonString(obj, "category_id")?.let { categories[it] } ?: "Xtream Series"
+            val poster = jsonString(obj, "cover")?.takeIf { it.isNotBlank() }
+            val backdrop = obj.get("backdrop_path")
+                ?.takeIf { it.isJsonArray }
+                ?.asJsonArray
+                ?.firstOrNull()
+                ?.takeUnless { it.isJsonNull }
+                ?.asString
+                ?.takeIf { it.isNotBlank() }
+            val plot = jsonString(obj, "plot")?.takeIf { it.isNotBlank() }
+            val release = jsonString(obj, "releaseDate")?.takeIf { it.isNotBlank() }
+                ?: jsonString(obj, "release_date")?.takeIf { it.isNotBlank() }
+            val rating = jsonString(obj, "rating")?.takeIf { it.isNotBlank() }
+            val genre = jsonString(obj, "genre")
+                ?.split(",", "/", "|")
+                ?.map { it.trim() }
+                ?.filter { it.isNotBlank() }
+                .orEmpty()
+
+            AppMedia(
+                meta = MetaItem(
+                    id = "xtream:series:$seriesId",
+                    type = "series",
+                    name = name,
+                    poster = poster,
+                    background = backdrop ?: poster,
+                    description = plot ?: "Xtream Series · $category",
+                    releaseInfo = release?.take(4),
+                    imdbRating = rating,
+                    genres = (listOf(category) + genre).distinct()
+                ),
+                originAddonName = "NM IPTV · Xtream Series"
+            )
+        }
+            .distinctBy { it.meta.id }
+            .take(limit.coerceIn(1, 1000))
+    }
+
+    suspend fun loadXtreamSeriesDetails(item: AppMedia): AppMedia {
+        val cfg = config()
+        if (!cfg.hasXtream || !item.meta.id.startsWith("xtream:series:")) return item
+
+        val seriesId = item.meta.id.removePrefix("xtream:series:").toIntOrNull() ?: return item
+        val user = SimpleHttp.encode(cfg.xtreamUsername)
+        val pass = SimpleHttp.encode(cfg.xtreamPassword)
+        val url = "${cfg.xtreamServer}/player_api.php?username=$user&password=$pass&action=get_series_info&series_id=$seriesId"
+        val body = SimpleHttp.requireSuccess(SimpleHttp.get(url), "Loading Xtream series details")
+        val root = gson.fromJson(body, JsonObject::class.java)
+        val info = root.getAsJsonObject("info")
+        val episodesObject = root.get("episodes")?.takeIf { it.isJsonObject }?.asJsonObject
+
+        val episodes = episodesObject?.entrySet()
+            ?.flatMap { (seasonKey, value) ->
+                val seasonFallback = seasonKey.toIntOrNull()
+                if (!value.isJsonArray) return@flatMap emptyList<VideoItem>()
+                value.asJsonArray.mapNotNull { element ->
+                    val episode = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+                    val episodeId = jsonString(episode, "id")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    val number = jsonInt(episode, "episode_num")
+                        ?: jsonInt(episode, "episode")
+                    val season = jsonInt(episode, "season") ?: seasonFallback
+                    val extension = jsonString(episode, "container_extension")
+                        ?.lowercase()
+                        ?.takeIf { it.matches(Regex("[a-z0-9]{2,6}")) }
+                        ?: "mkv"
+                    val episodeInfo = episode.get("info")?.takeIf { it.isJsonObject }?.asJsonObject
+                    val title = jsonString(episode, "title")
+                        ?: jsonString(episodeInfo, "name")
+                        ?: number?.let { "Episode $it" }
+                        ?: "Episode"
+                    val thumb = jsonString(episodeInfo, "movie_image")
+                        ?: jsonString(episodeInfo, "cover_big")
+                    val overview = jsonString(episodeInfo, "plot")
+                    val released = jsonString(episodeInfo, "releasedate")
+                        ?: jsonString(episodeInfo, "release_date")
+
+                    VideoItem(
+                        id = "xtream:episode:$episodeId:$extension",
+                        title = title,
+                        season = season,
+                        episode = number,
+                        released = released,
+                        thumbnail = thumb,
+                        overview = overview
+                    )
+                }
+            }
+            ?.sortedWith(compareBy<VideoItem> { it.season ?: Int.MAX_VALUE }.thenBy { it.episode ?: Int.MAX_VALUE })
+            .orEmpty()
+
+        val enriched = item.meta.copy(
+            poster = jsonString(info, "cover")?.takeIf { it.isNotBlank() } ?: item.meta.poster,
+            background = info?.get("backdrop_path")
+                ?.takeIf { it.isJsonArray }
+                ?.asJsonArray
+                ?.firstOrNull()
+                ?.takeUnless { it.isJsonNull }
+                ?.asString
+                ?.takeIf { it.isNotBlank() }
+                ?: item.meta.background,
+            description = jsonString(info, "plot")?.takeIf { it.isNotBlank() } ?: item.meta.description,
+            releaseInfo = jsonString(info, "releaseDate")?.take(4) ?: item.meta.releaseInfo,
+            imdbRating = jsonString(info, "rating")?.takeIf { it.isNotBlank() } ?: item.meta.imdbRating,
+            videos = episodes
+        )
+        return item.copy(meta = enriched)
+    }
+
+    fun resolveXtreamEpisodeUrl(videoId: String): String? {
+        if (!videoId.startsWith("xtream:episode:")) return null
+        val cfg = config()
+        if (!cfg.hasXtream) return null
+
+        val raw = videoId.removePrefix("xtream:episode:")
+        val separator = raw.lastIndexOf(':')
+        if (separator <= 0) return null
+        val episodeId = raw.substring(0, separator).takeIf { it.isNotBlank() } ?: return null
+        val extension = raw.substring(separator + 1)
+            .lowercase()
+            .takeIf { it.matches(Regex("[a-z0-9]{2,6}")) }
+            ?: "mkv"
+        return xtreamStreamUrl(cfg, "series", episodeId, extension)
+    }
+
+    private suspend fun loadXtreamCategories(
+        cfg: IptvConfig,
+        action: String,
+        fallback: String
+    ): Map<String, String> {
+        return runCatching {
+            loadXtreamArray(cfg, action, "Loading Xtream categories")
+                .mapNotNull { element ->
+                    val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+                    val id = jsonString(obj, "category_id") ?: return@mapNotNull null
+                    id to (jsonString(obj, "category_name")?.takeIf { it.isNotBlank() } ?: fallback)
+                }
+                .toMap()
+        }.getOrDefault(emptyMap())
+    }
+
+    private suspend fun loadXtreamArray(
+        cfg: IptvConfig,
+        action: String,
+        label: String
+    ): JsonArray {
+        val user = SimpleHttp.encode(cfg.xtreamUsername)
+        val pass = SimpleHttp.encode(cfg.xtreamPassword)
+        val url = "${cfg.xtreamServer}/player_api.php?username=$user&password=$pass&action=$action"
+        val body = SimpleHttp.requireSuccess(SimpleHttp.get(url), label)
+        return gson.fromJson(body, JsonArray::class.java)
+    }
+
+    private fun xtreamStreamUrl(
+        cfg: IptvConfig,
+        kind: String,
+        id: String,
+        extension: String
+    ): String {
+        val user = SimpleHttp.encode(cfg.xtreamUsername)
+        val pass = SimpleHttp.encode(cfg.xtreamPassword)
+        return "${cfg.xtreamServer}/$kind/$user/$pass/$id.$extension"
+    }
+
+    private fun jsonString(obj: JsonObject?, key: String): String? =
+        obj?.get(key)?.takeUnless { it.isJsonNull }?.let { value ->
+            runCatching { value.asString }.getOrNull()
+        }
+
+    private fun jsonInt(obj: JsonObject?, key: String): Int? =
+        jsonString(obj, key)?.toIntOrNull()
 
     private data class ParsedGuide(
         val channelNames: MutableMap<String, String> = mutableMapOf(),
