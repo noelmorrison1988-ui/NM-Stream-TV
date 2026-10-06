@@ -629,6 +629,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             addons.storedManifestUrls(),
                             nmAccount.playbackPreferences()
                         )
+                        nmAccount.pushAllServiceAuth(
+                            trakt.exportAuth(),
+                            realDebrid.exportAuth()
+                        )
+                        lastTraktAuthFingerprint = trakt.exportAuth()?.hashCode() ?: 0
+                        lastRdAuthFingerprint = realDebrid.exportAuth()?.hashCode() ?: 0
                         applyNmAccountSync(force = true)
                     }.onFailure { error ->
                         _uiState.value = _uiState.value.copy(
@@ -702,10 +708,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         nmSyncJob = viewModelScope.launch {
             while (true) {
                 if (nmAccount.isLinked()) {
-                    runCatching { applyNmAccountSync(force = false) }
-                        .onFailure {
-                            _uiState.value = _uiState.value.copy(nmSyncStatus = "Waiting to sync")
-                        }
+                    runCatching {
+                        applyNmAccountSync(force = false)
+                        pushChangedServiceAuthIfNeeded()
+                    }.onFailure {
+                        _uiState.value = _uiState.value.copy(nmSyncStatus = "Waiting to sync")
+                    }
                 }
                 delay(15_000)
             }
@@ -723,7 +731,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             addons.syncManifestUrls(remote.settings.addonManifests)
 
             if (remote.settings.syncIptv) {
-                remote.settings.iptv?.let { cloud ->
+                val cloud = remote.settings.iptv
+                if (cloud == null) {
+                    iptv.clear()
+                } else {
                     iptv.replaceConfig(
                         IptvConfig(
                             m3uUrl = cloud.m3uUrl,
@@ -736,6 +747,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
+            if (remote.settings.traktAuthInitialized) {
+                trakt.importAuth(remote.settings.traktAuth)
+                lastTraktAuthFingerprint = trakt.exportAuth()?.hashCode() ?: 0
+            } else if (trakt.exportAuth() != null) {
+                nmAccount.pushTraktAuth(trakt.exportAuth())
+                lastTraktAuthFingerprint = trakt.exportAuth()?.hashCode() ?: 0
+            }
+
+            if (remote.settings.realDebridAuthInitialized) {
+                realDebrid.importAuth(remote.settings.realDebridAuth)
+                lastRdAuthFingerprint = realDebrid.exportAuth()?.hashCode() ?: 0
+            } else if (realDebrid.exportAuth() != null) {
+                nmAccount.pushRealDebridAuth(realDebrid.exportAuth())
+                lastRdAuthFingerprint = realDebrid.exportAuth()?.hashCode() ?: 0
+            }
+
             val prefs = nmAccount.playbackPreferences()
             _uiState.value = _uiState.value.copy(
                 nmAccountLinked = true,
@@ -743,6 +770,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 nmSyncStatus = "Synced",
                 preferredQuality = prefs.preferredQuality,
                 preferHttpDebrid = prefs.preferHttpDebrid,
+                preferredAudioLanguage = prefs.preferredAudioLanguage,
                 preferredSubtitleLanguage = prefs.subtitleLanguage
             )
             refreshEverything()
@@ -754,6 +782,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         return changed
+    }
+
+    private suspend fun pushChangedServiceAuthIfNeeded() {
+        if (!nmAccount.isLinked()) return
+
+        val traktAuth = trakt.exportAuth()
+        val traktFingerprint = traktAuth?.hashCode() ?: 0
+        if (lastTraktAuthFingerprint == null) {
+            lastTraktAuthFingerprint = traktFingerprint
+        } else if (traktFingerprint != lastTraktAuthFingerprint) {
+            nmAccount.pushTraktAuth(traktAuth)
+            lastTraktAuthFingerprint = traktFingerprint
+        }
+
+        val rdAuth = realDebrid.exportAuth()
+        val rdFingerprint = rdAuth?.hashCode() ?: 0
+        if (lastRdAuthFingerprint == null) {
+            lastRdAuthFingerprint = rdFingerprint
+        } else if (rdFingerprint != lastRdAuthFingerprint) {
+            nmAccount.pushRealDebridAuth(rdAuth)
+            lastRdAuthFingerprint = rdFingerprint
+        }
     }
 
     fun resumePosition(item: AppMedia, videoId: String): Long = playback.resumePosition(item, videoId)
