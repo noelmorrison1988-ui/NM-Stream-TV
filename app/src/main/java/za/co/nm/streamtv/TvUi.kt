@@ -377,7 +377,10 @@ private fun HomeScreen(
         CenterText("Loading NM Stream TV…")
         return
     }
-    val hero = state.movies.firstOrNull() ?: state.series.firstOrNull()
+    val hero = state.movies.firstOrNull()
+        ?: state.series.firstOrNull()
+        ?: state.xtreamMovies.firstOrNull()
+        ?: state.xtreamSeries.firstOrNull()
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         item { if (hero != null) Hero(hero, onOpen) else EmptyHero(state.addons.isEmpty()) }
 
@@ -405,6 +408,8 @@ private fun HomeScreen(
 
         if (state.traktWatchlist.isNotEmpty()) item { MediaRow("My Trakt Watchlist", state.traktWatchlist, onOpen) }
         if (state.iptvSports.isNotEmpty()) item { MediaRow("Live Sports · Rugby · F1 · Soccer · Cricket", state.iptvSports.take(40), onOpen) }
+        if (state.xtreamMovies.isNotEmpty()) item { MediaRow("Xtream Movies", state.xtreamMovies, onOpen) }
+        if (state.xtreamSeries.isNotEmpty()) item { MediaRow("Xtream Series", state.xtreamSeries, onOpen) }
         if (state.movies.isNotEmpty()) item { MediaRow("Movies", state.movies, onOpen) }
         if (state.series.isNotEmpty()) item { MediaRow("Series", state.series, onOpen) }
         if (state.debridItems.isNotEmpty()) item { MediaRow("My Real-Debrid Library", state.debridItems, onOpen) }
@@ -1049,7 +1054,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
         item { CardBox {
             Text("Live TV / IPTV", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text("Status: " + state.iptvStatus, color = if (state.iptvConfigured) NmGreen else NmMuted)
-            Text("Use an IPTV source you are authorized to access. M3U/M3U8 and Xtream live TV are supported; sports are automatically prioritised.", color = NmMuted)
+            Text("Use an IPTV source you are authorized to access. M3U/M3U8 supports Live TV. Xtream Codes loads Live TV plus provider Movies and Series; Xtream VOD appears in separate Home rows.", color = NmMuted)
             Text("M3U / XMLTV", color = Color.White, fontWeight = FontWeight.Bold)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.fillMaxWidth()) { InputBox(m3uUrl, "M3U / M3U8 playlist URL") { m3uUrl = it } }
@@ -1071,7 +1076,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
                         xtreamServer = ""
                         xtreamUser = ""
                         xtreamPass = ""
-                    }) { Text("Save Xtream") }
+                    }) { Text("Save Xtream · Live + Movies + Series") }
                     if (state.iptvConfigured) Button(onClick = vm::clearIptv) { Text("Remove IPTV") }
                 }
             }
