@@ -39,6 +39,8 @@ data class NmRemoteSettings(
     val iptv: NmSyncedIptv? = null,
     val traktAuth: TraktStoredAuth? = null,
     val realDebridAuth: RdStoredAuth? = null,
+    val traktAuthInitialized: Boolean = false,
+    val realDebridAuthInitialized: Boolean = false,
     val settingsVersion: Long = 0L,
     val updatedAt: String = ""
 )
