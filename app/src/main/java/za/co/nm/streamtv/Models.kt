@@ -48,6 +48,7 @@ data class MetaItem(
     val description: String? = null,
     val releaseInfo: String? = null,
     val imdbRating: String? = null,
+    val tmdbId: Int? = null,
     val contentRating: String? = null,
     val contentAdvisories: List<String> = emptyList(),
     val genres: List<String> = emptyList(),
