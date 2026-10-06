@@ -38,8 +38,7 @@ internal fun SportsHubScreen(
     onOpen: (AppMedia) -> Unit
 ) {
     val live = state.sportsCatalog.filter { item ->
-        item.meta.genres.any { it.equals("Live", true) } ||
-            item.originAddonName?.contains("IPTV", true) == true
+        item.meta.genres.any { it.equals("Live", true) }
     }
     val replays = state.sportsCatalog.filter { item ->
         item.meta.genres.any { it.equals("Replay", true) } ||
@@ -71,7 +70,7 @@ internal fun SportsHubScreen(
                 Text("NM SPORTS", color = PremiumGold, fontSize = 12.sp, fontWeight = FontWeight.Black)
                 Text("Live. Replay. One catalogue.", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Black)
                 Text(
-                    "IPTV/Xtream + compatible manually installed NM sources.",
+                    "Compatible manually installed NM sources.",
                     color = PremiumMuted,
                     fontSize = 15.sp
                 )
@@ -91,7 +90,7 @@ internal fun SportsHubScreen(
             item {
                 PremiumInfoCard(
                     title = "No sports catalogue loaded yet",
-                    body = "IPTV/Xtream sports appear automatically. Compatible manually installed add-ons can also contribute sports catalogues."
+                    body = "Compatible manually installed add-ons can contribute sports catalogues."
                 )
             }
         }
@@ -147,8 +146,7 @@ private fun SportsCard(item: AppMedia, onClick: () -> Unit) {
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
-            val isLive = item.meta.genres.any { it.equals("Live", true) } ||
-                item.originAddonName?.contains("IPTV", true) == true
+            val isLive = item.meta.genres.any { it.equals("Live", true) }
             Text(
                 if (isLive) "LIVE" else "REPLAY",
                 color = if (isLive) PremiumGreen else PremiumGold,
