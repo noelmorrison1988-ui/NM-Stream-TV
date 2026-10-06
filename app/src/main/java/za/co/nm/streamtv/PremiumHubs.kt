@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -148,7 +149,6 @@ private fun SportsCard(item: AppMedia, onClick: () -> Unit) {
                 shape = RoundedCornerShape(14.dp)
             )
             .onFocusChanged { focused = it.isFocused }
-            .then(Modifier)
             .focusable()
             .premiumActivation(onClick)
             .padding(bottom = 12.dp)
@@ -362,7 +362,7 @@ private fun PremiumInfoCard(title: String, body: String) {
 }
 
 private fun Modifier.premiumActivation(onClick: () -> Unit): Modifier =
-    androidx.compose.foundation.clickable(onClick = onClick)
+    this.clickable(onClick = onClick)
 
 private fun launchFirstInstalled(context: Context, packages: List<String>, fallbackUrl: String) {
     packages.firstNotNullOfOrNull { packageName ->
