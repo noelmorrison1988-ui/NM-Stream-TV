@@ -46,6 +46,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -271,6 +273,8 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     subtitles = emptyList(),
                     resumeMs = 0L,
                     resumePercent = null,
+                    preferredAudioLanguage = state.preferredAudioLanguage,
+                    preferredSubtitleLanguage = state.preferredSubtitleLanguage,
                     onStarted = { _, _ -> },
                     onProgress = { _, _ -> },
                     onStopped = { _, _ -> }
@@ -284,6 +288,8 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     subtitles = state.subtitleOptions,
                     resumeMs = viewModel.resumePosition(current.item, current.videoId),
                     resumePercent = viewModel.resumeCloudPercent(current.item, current.videoId),
+                    preferredAudioLanguage = state.preferredAudioLanguage,
+                    preferredSubtitleLanguage = state.preferredSubtitleLanguage,
                     onStarted = { p, d -> viewModel.onPlaybackStarted(current.item, current.videoId, p, d) },
                     onProgress = { p, d -> viewModel.onPlaybackProgress(current.item, current.videoId, current.title, p, d) },
                     onStopped = { p, d -> viewModel.onPlaybackStopped(current.item, current.videoId, current.title, p, d) }
