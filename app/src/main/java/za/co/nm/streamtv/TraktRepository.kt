@@ -44,7 +44,7 @@ class TraktRepository(context: Context) {
         val clientId = effectiveClientId()
         val payload = gson.toJson(mapOf("client_id" to clientId))
         val body = SimpleHttp.requireSuccess(
-            SimpleHttp.postJson("$API/oauth/device/code", payload),
+            SimpleHttp.postJson("$API/oauth/device/code", payload, appHeaders(clientId)),
             "Starting Trakt sign-in"
         )
         return gson.fromJson(body, TraktDeviceCode::class.java)
@@ -58,7 +58,7 @@ class TraktRepository(context: Context) {
         )
         legacyClientSecret()?.let { values["client_secret"] = it }
         val payload = gson.toJson(values)
-        val result = SimpleHttp.postJson("$API/oauth/device/token", payload)
+        val result = SimpleHttp.postJson("$API/oauth/device/token", payload, appHeaders(clientId))
         when (result.code) {
             400, 429 -> return null
             401, 403 -> error("Trakt rejected the app credentials. Reconnect using the NM Stream TV Trakt app.")
@@ -469,7 +469,7 @@ class TraktRepository(context: Context) {
         )
         legacyClientSecret()?.let { values["client_secret"] = it }
         val payload = gson.toJson(values)
-        val result = SimpleHttp.postJson("$TOKEN_API/oauth/token", payload)
+        val result = SimpleHttp.postJson("$TOKEN_API/oauth/token", payload, appHeaders(auth.clientId))
         if (result.code !in 200..299) {
             if (result.code == 400 || result.code == 401) disconnect()
             return null
@@ -520,6 +520,11 @@ class TraktRepository(context: Context) {
                 originAddonName = "Trakt Watchlist"
             )
         }
+
+    private fun appHeaders(clientId: String): Map<String, String> = mapOf(
+        "trakt-api-version" to API_VERSION,
+        "trakt-api-key" to clientId
+    )
 
     private fun headers(auth: TraktStoredAuth): Map<String, String> = mapOf(
         "Authorization" to "Bearer ${auth.accessToken}",
