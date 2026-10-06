@@ -1044,10 +1044,6 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
     var xtreamServer by remember { mutableStateOf("") }
     var xtreamUser by remember { mutableStateOf("") }
     var xtreamPass by remember { mutableStateOf("") }
-    var kodiHost by remember { mutableStateOf("127.0.0.1") }
-    var kodiPort by remember { mutableStateOf("8080") }
-    var kodiUser by remember { mutableStateOf("") }
-    var kodiPass by remember { mutableStateOf("") }
     var quality by remember(state.preferredQuality) { mutableStateOf(state.preferredQuality) }
     var preferHttp by remember(state.preferHttpDebrid) { mutableStateOf(state.preferHttpDebrid) }
     var audioLang by remember(state.preferredAudioLanguage) { mutableStateOf(state.preferredAudioLanguage) }
@@ -1170,22 +1166,29 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             }
         } }
         item { CardBox {
-            Text("Kodi · The Crew Sports", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            Text(state.kodiCrewStatus, color = if (state.kodiCrewConnected) NmGreen else NmMuted)
+            Text("Kodi Core", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text(
-                "NM Stream reads only The Crew's sports catalogue through Kodi's local JSON-RPC interface. In Kodi enable Settings → Services → Control → Allow remote control via HTTP.",
+                state.kodiCrewStatus,
+                color = if (state.kodiCrewConnected) NmGreen else NmMuted
+            )
+            Text(
+                "Kodi runs inside the NM Stream TV package. Use Kodi's own Add-ons and Settings screens for compatible Kodi add-ons and any account authorization those add-ons support.",
                 color = NmMuted
             )
-            Box(Modifier.fillMaxWidth()) { InputBox(kodiHost, "Kodi host/IP · 127.0.0.1 if same box") { kodiHost = it } }
-            Box(Modifier.fillMaxWidth()) { InputBox(kodiPort, "Kodi HTTP port · usually 8080") { kodiPort = it } }
-            Box(Modifier.fillMaxWidth()) { InputBox(kodiUser, "Kodi web username · optional") { kodiUser = it } }
-            Box(Modifier.fillMaxWidth()) { InputBox(kodiPass, "Kodi web password · optional", password = true) { kodiPass = it } }
-            Button(onClick = {
-                vm.saveKodiCrewSettings(kodiHost, kodiPort.toIntOrNull() ?: 8080, kodiUser, kodiPass)
-                kodiPass = ""
-            }) { Text("Save Kodi bridge & refresh sports") }
+            Button(
+                onClick = {
+                    if (!KodiCore.open(context)) {
+                        android.widget.Toast.makeText(
+                            context,
+                            "Kodi Core is not included in this build.",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                },
+                enabled = state.kodiCrewConnected
+            ) { Text("Open Kodi") }
             Text(
-                "Kodi must be running on this Android box for the local bridge to answer. Playback is handed back to The Crew; NM Stream does not extract its stream URLs.",
+                "No host, port, username or HTTP remote-control setup is required.",
                 color = NmMuted,
                 fontSize = 12.sp
             )
@@ -1216,7 +1219,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV v0.14.1 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV v0.15.0 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
