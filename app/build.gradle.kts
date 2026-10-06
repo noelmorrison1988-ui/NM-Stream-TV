@@ -12,8 +12,8 @@ android {
         applicationId = "za.co.nm.streamtv"
         minSdk = 23
         targetSdk = 36
-        versionCode = 18
-        versionName = "0.14.1"
+        versionCode = 19
+        versionName = "0.15.0"
     }
 
     buildFeatures {
@@ -28,6 +28,9 @@ android {
 
     packaging {
         resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}")
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 }
 
@@ -54,4 +57,10 @@ dependencies {
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
     implementation("com.google.code.gson:gson:2.14.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+
+    val kodiRuntime = file("libs/kodi-runtime.aar")
+    if (kodiRuntime.exists()) {
+        implementation(files(kodiRuntime))
+        implementation("androidx.tvprovider:tvprovider:1.1.0-alpha01")
+    }
 }
