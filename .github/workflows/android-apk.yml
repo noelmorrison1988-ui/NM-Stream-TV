@@ -59,6 +59,32 @@ jobs:
           test -s app/libs/kodi-runtime.aar
           ls -lh app/libs/kodi-runtime.aar
 
+      - name: Diagnose Trakt device-code registration
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          CLIENT_ID='M9OjJrpO3YS2XXpA1_oyvs9v0mnWakH8OJoPSpxeFMO'
+          HTTP_CODE=$(curl -sS -o /tmp/trakt-device.json -w '%{http_code}' \
+            -X POST 'https://api.trakt.tv/oauth/device/code' \
+            -H 'Content-Type: application/json' \
+            -H 'trakt-api-version: 2' \
+            -H "trakt-api-key: $CLIENT_ID" \
+            --data "{\"client_id\":\"$CLIENT_ID\"}")
+          echo "Trakt device-code HTTP status: $HTTP_CODE"
+          python3 - <<'PY'
+          import json
+          p='/tmp/trakt-device.json'
+          try:
+              d=json.load(open(p))
+              safe={k:d.get(k) for k in ('verification_url','expires_in','interval','error','error_description') if k in d}
+              safe['has_device_code']=bool(d.get('device_code'))
+              safe['has_user_code']=bool(d.get('user_code'))
+              print(json.dumps(safe,indent=2))
+          except Exception as e:
+              print(open(p).read()[:500])
+          PY
+          test "$HTTP_CODE" -ge 200 -a "$HTTP_CODE" -lt 300
+
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace assembleDebug
 
