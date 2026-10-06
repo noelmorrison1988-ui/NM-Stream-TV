@@ -77,8 +77,6 @@ private sealed interface Screen {
     data object Search : Screen
     data object Sports : Screen
     data object LiveTv : Screen
-    data object YouTube : Screen
-    data object Services : Screen
     data object Addons : Screen
     data class AddonConfig(val preset: AddonPreset) : Screen
     data object Settings : Screen
@@ -165,12 +163,6 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         viewModel.loadDetails(it)
                         screen = Screen.Details(it)
                     }
-                }
-                Screen.YouTube -> Shell("YouTube", { screen = it }) {
-                    YouTubeHubScreen()
-                }
-                Screen.Services -> Shell("Services", { screen = it }) {
-                    ServicesHubScreen()
                 }
                 Screen.Addons -> Shell("Add-ons", { screen = it }) {
                     AddonsScreen(
@@ -349,8 +341,6 @@ private fun Shell(selected: String, navigate: (Screen) -> Unit, content: @Compos
                 "Home" to Screen.Home,
                 "Sports" to Screen.Sports,
                 "Live TV" to Screen.LiveTv,
-                "YouTube" to Screen.YouTube,
-                "Services" to Screen.Services,
                 "Search" to Screen.Search,
                 "Add-ons" to Screen.Addons,
                 "Settings" to Screen.Settings
