@@ -30,7 +30,6 @@ private val PremiumPanelRaised = Color(0xFF1A1D21)
 private val PremiumGold = Color(0xFFD6A84B)
 private val PremiumPlatinum = Color(0xFFD8DCE3)
 private val PremiumMuted = Color(0xFF9EA5AF)
-private val PremiumGreen = Color(0xFF71D6A0)
 
 @Composable
 internal fun SportsHubScreen(
@@ -71,14 +70,9 @@ internal fun SportsHubScreen(
                 Text("NM SPORTS", color = PremiumGold, fontSize = 12.sp, fontWeight = FontWeight.Black)
                 Text("Live. Replay. One catalogue.", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Black)
                 Text(
-                    "IPTV/Xtream + compatible NM sources. Integrated Kodi Core is available from Settings.",
+                    "IPTV/Xtream + compatible manually installed NM sources.",
                     color = PremiumMuted,
                     fontSize = 15.sp
-                )
-                Text(
-                    state.kodiCrewStatus,
-                    color = if (state.kodiCrewConnected) PremiumGreen else PremiumMuted,
-                    fontSize = 13.sp
                 )
             }
         }
@@ -96,7 +90,7 @@ internal fun SportsHubScreen(
             item {
                 PremiumInfoCard(
                     title = "No sports catalogue loaded yet",
-                    body = "IPTV/Xtream sports appear automatically. Open Kodi Core from Settings for Kodi add-ons."
+                    body = "IPTV/Xtream sports appear automatically. Compatible manually installed add-ons can also contribute sports catalogues."
                 )
             }
         }
