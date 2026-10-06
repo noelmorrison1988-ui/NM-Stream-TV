@@ -62,17 +62,22 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val NmBg = Color(0xFF050609)
-private val NmPanel = Color(0xFF15171D)
-private val NmPanelFocus = Color(0xFF252830)
+private val NmBg = Color(0xFF050607)
+private val NmPanel = Color(0xFF121417)
+private val NmPanelFocus = Color(0xFF1D2025)
 private val NmRed = Color(0xFFE2182D)
-private val NmMuted = Color(0xFFB6BBC5)
-private val NmGreen = Color(0xFF69D39A)
+private val NmGold = Color(0xFFD6A84B)
+private val NmPlatinum = Color(0xFFD8DCE3)
+private val NmMuted = Color(0xFF9EA5AF)
+private val NmGreen = Color(0xFF71D6A0)
 
 private sealed interface Screen {
     data object Home : Screen
     data object Search : Screen
+    data object Sports : Screen
     data object LiveTv : Screen
+    data object YouTube : Screen
+    data object Services : Screen
     data object Addons : Screen
     data class AddonConfig(val preset: AddonPreset) : Screen
     data object Settings : Screen
@@ -144,11 +149,27 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         screen = Screen.Details(it)
                     }
                 }
+                Screen.Sports -> Shell("Sports", { screen = it }) {
+                    SportsHubScreen(
+                        state = state,
+                        onOpen = {
+                            viewModel.loadDetails(it)
+                            screen = Screen.Details(it)
+                        },
+                        onCrew = viewModel::playKodiCrew
+                    )
+                }
                 Screen.LiveTv -> Shell("Live TV", { screen = it }) {
                     LiveTvScreen(state) {
                         viewModel.loadDetails(it)
                         screen = Screen.Details(it)
                     }
+                }
+                Screen.YouTube -> Shell("YouTube", { screen = it }) {
+                    YouTubeHubScreen()
+                }
+                Screen.Services -> Shell("Services", { screen = it }) {
+                    ServicesHubScreen()
                 }
                 Screen.Addons -> Shell("Add-ons", { screen = it }) {
                     AddonsScreen(
@@ -308,16 +329,36 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
 @Composable
 private fun Shell(selected: String, navigate: (Screen) -> Unit, content: @Composable () -> Unit) {
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().height(70.dp).background(Color(0xFF090A0E)).padding(horizontal = 34.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("NM", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Black)
-            Text(" STREAM", color = NmRed, fontSize = 25.sp, fontWeight = FontWeight.Black)
-            Spacer(Modifier.width(28.dp))
-            listOf("Home" to Screen.Home, "Search" to Screen.Search, "Live TV" to Screen.LiveTv, "Add-ons" to Screen.Addons, "Settings" to Screen.Settings).forEach { (label, target) ->
+        Row(
+            Modifier.fillMaxWidth()
+                .height(74.dp)
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(Color(0xFF111317), Color(0xFF08090B), Color(0xFF050607))
+                    )
+                )
+                .border(0.5.dp, NmGold.copy(alpha = .22f))
+                .padding(horizontal = 30.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("NM", color = NmPlatinum, fontSize = 25.sp, fontWeight = FontWeight.Black)
+            Text(" STREAM", color = NmGold, fontSize = 25.sp, fontWeight = FontWeight.Black)
+            Spacer(Modifier.width(24.dp))
+            listOf(
+                "Home" to Screen.Home,
+                "Sports" to Screen.Sports,
+                "Live TV" to Screen.LiveTv,
+                "YouTube" to Screen.YouTube,
+                "Services" to Screen.Services,
+                "Search" to Screen.Search,
+                "Add-ons" to Screen.Addons,
+                "Settings" to Screen.Settings
+            ).forEach { (label, target) ->
                 NavChip(label, selected == label) { navigate(target) }
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(5.dp))
             }
             Spacer(Modifier.weight(1f))
-            Text("NM DIGITAL", color = NmMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text("MORRISON ENTERTAINMENT", color = NmMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
         }
         Box(Modifier.fillMaxSize()) { content() }
     }
@@ -337,14 +378,14 @@ private fun Button(
             .clip(RoundedCornerShape(8.dp))
             .background(
                 when {
-                    !enabled -> Color(0xFF343841)
-                    focused -> Color(0xFFFF2948)
-                    else -> NmRed
+                    !enabled -> Color(0xFF2B2E33)
+                    focused -> NmGold
+                    else -> Color(0xFF22252A)
                 }
             )
             .border(
                 if (focused && enabled) 2.dp else 1.dp,
-                if (focused && enabled) Color.White else Color(0xFF444955),
+                if (focused && enabled) NmPlatinum else Color.White.copy(alpha = .12f),
                 RoundedCornerShape(8.dp)
             )
             .onFocusChanged { focused = it.isFocused }
@@ -360,9 +401,31 @@ private fun Button(
 @Composable
 private fun NavChip(label: String, selected: Boolean, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    Box(Modifier.clip(RoundedCornerShape(7.dp)).background(if (selected) NmRed else if (focused) NmPanelFocus else Color.Transparent)
-        .onFocusChanged { focused = it.isFocused }.clickable(onClick = onClick).focusable().padding(horizontal = 14.dp, vertical = 9.dp)) {
-        Text(label, color = Color.White, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
+    Box(
+        Modifier.clip(RoundedCornerShape(20.dp))
+            .background(
+                when {
+                    selected -> NmGold.copy(alpha = .18f)
+                    focused -> Color.White.copy(alpha = .08f)
+                    else -> Color.Transparent
+                }
+            )
+            .border(
+                if (selected || focused) 1.dp else 0.dp,
+                if (selected) NmGold.copy(alpha = .75f) else Color.White.copy(alpha = .18f),
+                RoundedCornerShape(20.dp)
+            )
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(onClick = onClick)
+            .focusable()
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        Text(
+            label,
+            color = if (selected) NmGold else NmPlatinum,
+            fontWeight = if (selected) FontWeight.Black else FontWeight.Medium,
+            fontSize = 13.sp
+        )
     }
 }
 
