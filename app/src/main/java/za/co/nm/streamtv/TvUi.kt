@@ -949,12 +949,15 @@ private fun AddonConfiguratorScreen(
 @Composable
 private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
     var tmdb by remember { mutableStateOf("") }
-    var traktId by remember { mutableStateOf("") }
     var m3uUrl by remember { mutableStateOf("") }
     var epgUrl by remember { mutableStateOf("") }
     var xtreamServer by remember { mutableStateOf("") }
     var xtreamUser by remember { mutableStateOf("") }
     var xtreamPass by remember { mutableStateOf("") }
+    var quality by remember(state.preferredQuality) { mutableStateOf(state.preferredQuality) }
+    var preferHttp by remember(state.preferHttpDebrid) { mutableStateOf(state.preferHttpDebrid) }
+    var audioLang by remember(state.preferredAudioLanguage) { mutableStateOf(state.preferredAudioLanguage) }
+    var subtitleLang by remember(state.preferredSubtitleLanguage) { mutableStateOf(state.preferredSubtitleLanguage) }
     val context = LocalContext.current
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 24.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 55.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text("Settings", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black) }
@@ -997,6 +1000,39 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
                     )
                 }
             }) { Text("Open phone control panel") }
+        } }
+        item { CardBox {
+            Text("Playback & language", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text("These preferences sync to every linked NM Stream TV device.", color = NmMuted)
+
+            Text("Preferred quality", color = Color.White, fontWeight = FontWeight.Bold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(480, 720, 1080, 2160).forEach { value ->
+                    Button(onClick = { quality = value }) {
+                        Text(if (quality == value) "✓ ${value}p" else "${value}p")
+                    }
+                }
+            }
+
+            Button(onClick = { preferHttp = !preferHttp }) {
+                Text(if (preferHttp) "✓ Prefer HTTP / Debrid over P2P" else "Prefer HTTP / Debrid over P2P")
+            }
+
+            Text("Preferred audio language", color = Color.White, fontWeight = FontWeight.Bold)
+            Box(Modifier.fillMaxWidth()) { InputBox(audioLang, "en") { audioLang = it } }
+            Text("Examples: en, de, fr, es. The player will still let you switch tracks manually.", color = NmMuted, fontSize = 12.sp)
+
+            Text("Preferred subtitle language", color = Color.White, fontWeight = FontWeight.Bold)
+            Box(Modifier.fillMaxWidth()) { InputBox(subtitleLang, "en") { subtitleLang = it } }
+
+            Button(onClick = {
+                vm.savePlaybackPreferences(
+                    quality,
+                    preferHttp,
+                    audioLang,
+                    subtitleLang
+                )
+            }) { Text("Save & sync playback preferences") }
         } }
         item { CardBox {
             Text("TMDB artwork", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
@@ -1042,42 +1078,30 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
         item { CardBox {
             Text("Trakt", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text(
-                if (state.traktConnected) "Connected"
-                else if (state.traktConfigured) "Client ID saved"
-                else "Client ID required",
+                state.traktUser?.let { "Connected as " + (it.name.ifBlank { it.username }) } ?: "Not connected",
                 color = if (state.traktConnected) NmGreen else NmMuted
             )
-            Text("Native Trakt: TV device sign-in using your Client ID only, automatic token refresh, cloud Continue Watching, Up Next episodes and personal list sync. New Trakt apps no longer need a Client Secret for user sign-in.", color = NmMuted)
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.fillMaxWidth()) { InputBox(traktId, "Trakt Client ID") { traktId = it } }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(
-                        onClick = {
-                            vm.saveTraktClientId(traktId)
-                            traktId = ""
-                        },
-                        enabled = traktId.isNotBlank()
-                    ) { Text("Save Client ID") }
-                    if (state.traktConfigured) Button(onClick = vm::clearTraktCredentials) { Text("Remove") }
-                }
-            }
+            Text(
+                "Simple TV sign-in: choose Connect Trakt, then enter the code in Trakt on your phone. No Client ID or developer setup is required.",
+                color = NmMuted
+            )
             if (state.traktConnected) {
-                Button(onClick = vm::disconnectTrakt) { Text("Disconnect Trakt") }
+                Button(onClick = vm::disconnectTrakt) { Text("Disconnect Trakt everywhere") }
             } else {
                 Button(
                     onClick = vm::beginTraktSignIn,
-                    enabled = state.traktConfigured && !state.traktConnecting
-                ) { Text(if (state.traktConnecting) "Waiting…" else "Connect Trakt") }
+                    enabled = !state.traktConnecting
+                ) { Text(if (state.traktConnecting) "Waiting for authorization…" else "Connect Trakt") }
             }
             state.traktDeviceCode?.let { DeviceCode("Trakt", it.userCode, it.verificationUrl) }
         } }
         item { CardBox {
             Text("Real-Debrid", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text(state.rdUser?.let { "Connected as " + it.username } ?: "Not connected", color = if (state.rdUser != null) NmGreen else NmMuted)
-            if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
+            if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV v0.11.1 · an NM Digital product", color = NmMuted) }
+        item { Text("NM Stream TV v0.12.0 · an NM Digital product", color = NmMuted) }
     }
 }
 
