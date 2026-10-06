@@ -44,6 +44,7 @@ class KodiCrewRepository(context: Context) {
             .removePrefix("http://")
             .removePrefix("https://")
             .substringBefore('/')
+            .substringBefore(':')
         require(cleanHost.isNotBlank()) { "Enter the Kodi host or IP address" }
         store.put(
             CONFIG_KEY,
