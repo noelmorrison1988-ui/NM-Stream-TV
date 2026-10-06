@@ -44,6 +44,8 @@ data class MainUiState(
     val traktConnecting: Boolean = false,
     val iptvChannels: List<AppMedia> = emptyList(),
     val iptvSports: List<AppMedia> = emptyList(),
+    val xtreamMovies: List<AppMedia> = emptyList(),
+    val xtreamSeries: List<AppMedia> = emptyList(),
     val iptvCategories: List<LiveTvCategory> = emptyList(),
     val iptvGuide: Map<String, List<EpgProgramme>> = emptyMap(),
     val iptvConfigured: Boolean = false,
@@ -115,6 +117,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val iptvDeferred = async {
                 if (iptv.configured()) runCatching { iptv.loadChannels() }.getOrDefault(emptyList()) else emptyList()
             }
+            val xtreamMoviesDeferred = async {
+                if (iptv.config().hasXtream) runCatching { iptv.loadXtreamMovies() }.getOrDefault(emptyList()) else emptyList()
+            }
+            val xtreamSeriesDeferred = async {
+                if (iptv.config().hasXtream) runCatching { iptv.loadXtreamSeries() }.getOrDefault(emptyList()) else emptyList()
+            }
 
             val (rawMovies, rawSeries) = homeDeferred.await()
             val movies = if (tmdb.configured()) runCatching { tmdb.enrichBatch(rawMovies, 24) }.getOrDefault(rawMovies) else rawMovies
@@ -149,6 +157,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else rawSarahList
 
             val iptvChannels = iptvDeferred.await()
+            val xtreamMovies = xtreamMoviesDeferred.await()
+            val xtreamSeries = xtreamSeriesDeferred.await()
             val iptvSports = iptv.sportsOnly(iptvChannels)
             val iptvCategories = iptv.categoryRows(iptvChannels)
             val iptvGuide = if (iptvChannels.isNotEmpty()) {
@@ -179,6 +189,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 traktConnecting = false,
                 iptvChannels = iptvChannels,
                 iptvSports = iptvSports,
+                xtreamMovies = xtreamMovies,
+                xtreamSeries = xtreamSeries,
                 iptvCategories = iptvCategories,
                 iptvGuide = iptvGuide,
                 iptvConfigured = iptv.configured(),
@@ -255,8 +267,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun loadDetails(item: AppMedia) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(selectedMedia = item, detailsLoading = true, message = null)
-            val addonMeta = runCatching { addons.loadMeta(item, _uiState.value.addons) }.getOrDefault(item)
-            val loaded = if (tmdb.configured()) runCatching { tmdb.enrich(addonMeta) }.getOrDefault(addonMeta) else addonMeta
+            val sourceMeta = when {
+                item.meta.id.startsWith("xtream:series:") ->
+                    runCatching { iptv.loadXtreamSeriesDetails(item) }.getOrDefault(item)
+                else ->
+                    runCatching { addons.loadMeta(item, _uiState.value.addons) }.getOrDefault(item)
+            }
+            val loaded = if (tmdb.configured()) {
+                runCatching { tmdb.enrich(sourceMeta) }.getOrDefault(sourceMeta)
+            } else sourceMeta
             _uiState.value = _uiState.value.copy(selectedMedia = loaded, detailsLoading = false)
         }
     }
@@ -272,20 +291,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 message = null
             )
             val streamsDeferred = async {
-                if (!item.directUrl.isNullOrBlank()) {
-                    listOf(
+                val xtreamEpisodeUrl = iptv.resolveXtreamEpisodeUrl(videoId)
+                when {
+                    xtreamEpisodeUrl != null -> listOf(
                         StreamOption(
-                            addonName = item.originAddonName ?: "Real-Debrid",
+                            addonName = "NM IPTV · Xtream Series",
+                            stream = AddonStream(
+                                name = item.meta.name,
+                                title = "Xtream · ${item.meta.name}",
+                                url = xtreamEpisodeUrl
+                            )
+                        )
+                    )
+                    !item.directUrl.isNullOrBlank() -> listOf(
+                        StreamOption(
+                            addonName = item.originAddonName ?: "Direct source",
                             stream = AddonStream(name = item.meta.name, title = item.meta.name, url = item.directUrl)
                         )
                     )
-                } else {
-                    runCatching { addons.loadStreams(_uiState.value.addons, item.meta.type, videoId) }.getOrDefault(emptyList())
+                    else -> runCatching {
+                        addons.loadStreams(_uiState.value.addons, item.meta.type, videoId)
+                    }.getOrDefault(emptyList())
                 }
             }
             val subtitlesDeferred = async {
-                if (item.meta.type == "rd") emptyList()
-                else runCatching { addons.loadSubtitles(_uiState.value.addons, item.meta.type, videoId) }.getOrDefault(emptyList())
+                if (item.meta.type == "rd" || videoId.startsWith("xtream:episode:") || item.meta.id.startsWith("xtream:vod:")) {
+                    emptyList()
+                } else {
+                    runCatching {
+                        addons.loadSubtitles(_uiState.value.addons, item.meta.type, videoId)
+                    }.getOrDefault(emptyList())
+                }
             }
             val prefs = nmAccount.playbackPreferences()
             val sortedStreams = streamsDeferred.await()
@@ -544,6 +580,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             iptvChannels = emptyList(),
             iptvSports = emptyList(),
+            xtreamMovies = emptyList(),
+            xtreamSeries = emptyList(),
             iptvCategories = emptyList(),
             iptvGuide = emptyMap(),
             iptvConfigured = false,
