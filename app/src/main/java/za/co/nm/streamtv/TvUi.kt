@@ -2,11 +2,6 @@ package za.co.nm.streamtv
 
 import android.content.Intent
 import android.net.Uri
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -80,7 +75,6 @@ private sealed interface Screen {
     data object Sports : Screen
     data object LiveTv : Screen
     data object Addons : Screen
-    data class AddonConfig(val preset: AddonPreset) : Screen
     data object Settings : Screen
     data class Details(val item: AppMedia) : Screen
     data class Sources(val item: AppMedia, val videoId: String, val title: String) : Screen
@@ -110,7 +104,6 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
             is Screen.AutoPlay -> Screen.Details(current.item)
             is Screen.Trailer -> Screen.Details(current.item)
             is Screen.Sources -> Screen.Details(current.item)
-            is Screen.AddonConfig -> Screen.Addons
             else -> Screen.Home
         }
     }
@@ -177,16 +170,9 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     AddonsScreen(
                         state = state,
                         install = viewModel::installAddon,
-                        remove = viewModel::removeAddon,
-                        configure = { preset -> screen = Screen.AddonConfig(preset) }
+                        remove = viewModel::removeAddon
                     )
                 }
-                is Screen.AddonConfig -> AddonConfiguratorScreen(
-                    preset = current.preset,
-                    state = state,
-                    install = viewModel::installAddon,
-                    close = { screen = Screen.Addons }
-                )
                 Screen.Settings -> Shell("Settings", { screen = it }) {
                     SettingsScreen(state, viewModel)
                 }
@@ -811,8 +797,7 @@ private fun SearchScreen(state: MainUiState, onSearch: (String) -> Unit, onOpen:
 private fun AddonsScreen(
     state: MainUiState,
     install: (String) -> Unit,
-    remove: (String) -> Unit,
-    configure: (AddonPreset) -> Unit
+    remove: (String) -> Unit
 ) {
     var url by remember { mutableStateOf("") }
 
@@ -820,18 +805,30 @@ private fun AddonsScreen(
         if (state.addonInstallStatus?.startsWith("Installed ") == true) url = ""
     }
 
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 42.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 42.dp),
+        contentPadding = PaddingValues(top = 26.dp, bottom = 48.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
         item {
             Text("Add-ons", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black)
-            Text("Paste an https:// or stremio:// manifest link. NM Stream TV will validate it before saving.", color = NmMuted)
+            Text(
+                "Manual installation only. Paste the manifest URL for the add-on you want to use.",
+                color = NmMuted
+            )
             Spacer(Modifier.height(14.dp))
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.fillMaxWidth()) { InputBox(url, "https://example.com/manifest.json") { url = it } }
+                Box(Modifier.fillMaxWidth()) {
+                    InputBox(url, "https://example.com/manifest.json") { url = it }
+                }
                 Button(
                     onClick = { install(url) },
                     enabled = url.isNotBlank() && !state.addonInstalling
-                ) { Text(if (state.addonInstalling) "Installing…" else "Install") }
+                ) {
+                    Text(if (state.addonInstalling) "Installing…" else "Install add-on")
+                }
             }
+
             state.addonInstallStatus?.let { status ->
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -846,202 +843,36 @@ private fun AddonsScreen(
                 )
             }
         }
-        item {
-            Text("Curated add-on catalog", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
-            Text("Core add-ons plus SportStream/Sports Streams, StremVerse and IPTV options. Configurable services open their setup page; paste the generated manifest above.", color = NmMuted)
-        }
-        items(AddonCatalog.presets) { preset ->
-            CardBox {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Column(Modifier.weight(1f)) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(preset.name, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-                            Text(preset.category.uppercase(), color = if (preset.sports) NmGreen else NmRed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Text(preset.description, color = NmMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        preset.note?.let { Text(it, color = NmMuted.copy(alpha = .8f), fontSize = 12.sp) }
-                    }
-                    preset.manifestUrl?.let { manifest ->
-                        Button(onClick = { install(manifest) }) { Text("Install") }
-                    }
-                    preset.setupUrl?.let {
-                        Button(onClick = { configure(preset) }) { Text("Configure in app") }
-                    }
-                }
-            }
-        }
+
         item {
             Text("Installed add-ons", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+            Text(
+                if (state.addons.isEmpty()) "No add-ons installed."
+                else "Only add-ons you manually install appear here.",
+                color = NmMuted
+            )
         }
+
         items(state.addons) { addon ->
             CardBox {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
                     Column(Modifier.weight(1f)) {
                         Text(addon.manifest.name, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                        Text(addon.manifest.description ?: addon.manifestUrl, color = NmMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            addon.manifest.description ?: addon.manifestUrl,
+                            color = NmMuted,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(addon.manifestUrl, color = NmMuted.copy(alpha = .72f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Button(onClick = { remove(addon.manifestUrl) }) { Text("Remove") }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun AddonConfiguratorScreen(
-    preset: AddonPreset,
-    state: MainUiState,
-    install: (String) -> Unit,
-    close: () -> Unit
-) {
-    var installTriggered by remember(preset.name) { mutableStateOf(false) }
-    var currentUrl by remember(preset.name) { mutableStateOf(preset.setupUrl.orEmpty()) }
-    var canGoBack by remember { mutableStateOf(false) }
-    var webView by remember { mutableStateOf<WebView?>(null) }
-
-    LaunchedEffect(state.addonInstallStatus, installTriggered) {
-        if (installTriggered && state.addonInstallStatus?.startsWith("Installed ") == true) {
-            close()
-        }
-    }
-
-    BackHandler {
-        val view = webView
-        if (view?.canGoBack() == true) {
-            view.goBack()
-        } else {
-            close()
-        }
-    }
-
-    Column(Modifier.fillMaxSize().background(NmBg)) {
-        Row(
-            Modifier.fillMaxWidth().height(70.dp).background(Color(0xFF090A0E)).padding(horizontal = 28.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Button(onClick = {
-                val view = webView
-                if (view?.canGoBack() == true) view.goBack() else close()
-            }) { Text(if (canGoBack) "← Back" else "← Add-ons") }
-
-            Column(Modifier.weight(1f)) {
-                Text("Configure · ${preset.name}", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Black)
-                Text(
-                    if (installTriggered) "Installing generated manifest…"
-                    else "Complete setup here. NM Stream TV will capture the generated install link.",
-                    color = if (installTriggered) NmGreen else NmMuted,
-                    fontSize = 12.sp
-                )
-            }
-            Text("NM STREAM", color = NmRed, fontWeight = FontWeight.Black)
-        }
-
-        Box(Modifier.fillMaxSize()) {
-            AndroidView(
-                factory = { context ->
-                    WebView(context).apply {
-                        webView = this
-                        isFocusable = true
-                        isFocusableInTouchMode = true
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.databaseEnabled = true
-                        settings.cacheMode = WebSettings.LOAD_DEFAULT
-                        settings.setSupportMultipleWindows(false)
-                        settings.javaScriptCanOpenWindowsAutomatically = false
-                        settings.mediaPlaybackRequiresUserGesture = true
-                        settings.allowFileAccess = false
-                        settings.allowContentAccess = false
-                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                        settings.userAgentString = settings.userAgentString + " NMStreamTV/0.11"
-
-                        webChromeClient = WebChromeClient()
-                        webViewClient = object : WebViewClient() {
-                            private fun intercept(url: String): Boolean {
-                                val clean = url.trim()
-                                val isManifest = clean.startsWith("stremio://", true) ||
-                                    clean.contains("/manifest.json", true)
-
-                                if (isManifest) {
-                                    installTriggered = true
-                                    install(clean)
-                                    return true
-                                }
-                                currentUrl = clean
-                                return false
-                            }
-
-                            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                                val handled = request?.url?.toString()?.let(::intercept) ?: false
-                                canGoBack = view?.canGoBack() == true
-                                return handled
-                            }
-
-                            @Suppress("DEPRECATION")
-                            override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
-                                val handled = url?.let(::intercept) ?: false
-                                canGoBack = view?.canGoBack() == true
-                                return handled
-                            }
-
-                            override fun onPageFinished(view: WebView?, url: String?) {
-                                currentUrl = url.orEmpty()
-                                canGoBack = view?.canGoBack() == true
-                            }
-                        }
-
-                        preset.setupUrl?.let { loadUrl(it) }
-                    }
-                },
-                update = {
-                    webView = it
-                    canGoBack = it.canGoBack()
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-
-            if (installTriggered || state.addonInstalling) {
-                Box(
-                    Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(22.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color(0xEE111319))
-                        .padding(horizontal = 20.dp, vertical = 14.dp)
-                ) {
-                    Text(
-                        state.addonInstallStatus ?: "Installing add-on…",
-                        color = when {
-                            state.addonInstallStatus?.startsWith("Installed ") == true -> NmGreen
-                            state.addonInstallStatus == "Checking manifest…" -> NmMuted
-                            else -> Color.White
-                        },
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-
-            if (!installTriggered && currentUrl.contains("stremio-addons.net", true)) {
-                Text(
-                    "You are still inside NM Stream TV. Choose the add-on's Configure/Install option on this page.",
-                    color = NmMuted,
-                    fontSize = 12.sp,
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(18.dp)
-                        .background(Color(0xDD050609))
-                        .padding(10.dp)
-                )
-            }
-        }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            webView?.stopLoading()
-            webView?.destroy()
-            webView = null
         }
     }
 }
