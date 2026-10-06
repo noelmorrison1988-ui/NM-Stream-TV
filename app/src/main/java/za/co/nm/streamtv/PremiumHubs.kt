@@ -30,6 +30,7 @@ private val PremiumPanelRaised = Color(0xFF1A1D21)
 private val PremiumGold = Color(0xFFD6A84B)
 private val PremiumPlatinum = Color(0xFFD8DCE3)
 private val PremiumMuted = Color(0xFF9EA5AF)
+private val PremiumGreen = Color(0xFF71D6A0)
 
 @Composable
 internal fun SportsHubScreen(
