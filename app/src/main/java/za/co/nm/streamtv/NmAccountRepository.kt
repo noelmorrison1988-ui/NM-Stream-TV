@@ -58,6 +58,9 @@ data class NmPlaybackPreferences(
     val subtitleLanguage: String = "en"
 )
 
+class NmDeviceBlockedException : IllegalStateException("Device Blocked by NM")
+class NmDeviceUnpairedException : IllegalStateException("NM Account link expired. Link this TV again.")
+
 class NmAccountRepository(context: Context) {
     companion object {
         const val DASHBOARD_URL = "https://nm-stream-tv-account.floot.app"
@@ -169,9 +172,12 @@ class NmAccountRepository(context: Context) {
             "$API/device/state",
             mapOf("Authorization" to "Bearer $token")
         )
+        if (response.code == 423) {
+            throw NmDeviceBlockedException()
+        }
         if (response.code == 401) {
             unlink()
-            error("NM Account link expired. Link this TV again.")
+            throw NmDeviceUnpairedException()
         }
         return gson.fromJson(
             SimpleHttp.requireSuccess(response, "Syncing NM Account"),
@@ -263,6 +269,13 @@ class NmAccountRepository(context: Context) {
             gson.toJson(payload),
             mapOf("Authorization" to "Bearer $token")
         )
+        if (response.code == 423) {
+            throw NmDeviceBlockedException()
+        }
+        if (response.code == 401) {
+            unlink()
+            throw NmDeviceUnpairedException()
+        }
         val body = SimpleHttp.requireSuccess(response, "Syncing changes to NM Account")
         val version = JsonParser.parseString(body).asJsonObject
             .get("settingsVersion")?.asLong

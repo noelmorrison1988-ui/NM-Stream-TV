@@ -120,9 +120,16 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
         }
     }
 
+    LaunchedEffect(state.nmDeviceBlocked) {
+        if (state.nmDeviceBlocked) screen = Screen.Home
+    }
+
     MaterialTheme {
         Box(Modifier.fillMaxSize().background(NmBg)) {
-            when (val current = screen) {
+            if (state.nmDeviceBlocked) {
+                DeviceBlockedScreen()
+            } else {
+                when (val current = screen) {
                 Screen.Home -> Shell("Home", { screen = it }) {
                     HomeScreen(state,
                         onOpen = {
@@ -310,12 +317,43 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     onStopped = { p, d -> viewModel.onPlaybackStopped(current.item, current.videoId, current.title, p, d) }
                 )
             }
-            state.message?.let {
-                Box(Modifier.align(Alignment.BottomCenter).padding(24.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xEE22252B)).padding(horizontal = 18.dp, vertical = 10.dp)) {
-                    Text(it, color = Color.White)
+                state.message?.let {
+                    Box(Modifier.align(Alignment.BottomCenter).padding(24.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xEE22252B)).padding(horizontal = 18.dp, vertical = 10.dp)) {
+                        Text(it, color = Color.White)
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun DeviceBlockedScreen() {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(48.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("NM STREAM TV", color = NmGold, fontSize = 24.sp, fontWeight = FontWeight.Black)
+        Spacer(Modifier.height(28.dp))
+        Text(
+            "Device Blocked by NM",
+            color = Color.White,
+            fontSize = 44.sp,
+            fontWeight = FontWeight.Black
+        )
+        Spacer(Modifier.height(14.dp))
+        Text(
+            "Access to this device has been paused from NM Account.",
+            color = NmMuted,
+            fontSize = 18.sp
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Resume this TV from ${NmAccountRepository.DASHBOARD_URL}",
+            color = NmMuted,
+            fontSize = 14.sp
+        )
     }
 }
 
