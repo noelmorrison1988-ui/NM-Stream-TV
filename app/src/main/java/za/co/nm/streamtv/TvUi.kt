@@ -2,6 +2,9 @@ package za.co.nm.streamtv
 
 import android.content.Intent
 import android.net.Uri
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -87,6 +90,7 @@ private sealed interface Screen {
         val returnToSources: Boolean = true
     ) : Screen
     data class Trailer(val item: AppMedia, val title: String, val source: StreamOption) : Screen
+    data class YouTubeTrailer(val item: AppMedia, val title: String, val youtubeId: String) : Screen
 }
 
 @Composable
@@ -103,6 +107,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
             }
             is Screen.AutoPlay -> Screen.Details(current.item)
             is Screen.Trailer -> Screen.Details(current.item)
+            is Screen.YouTubeTrailer -> Screen.Details(current.item)
             is Screen.Sources -> Screen.Details(current.item)
             else -> Screen.Home
         }
@@ -200,9 +205,11 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         playTrailer = { source ->
                             when {
                                 source.playableUrl != null -> screen = Screen.Trailer(detailItem, "Trailer · ${detailItem.meta.name}", source)
-                                source.youtubeUrl != null -> runCatching {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(source.youtubeUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                                }
+                                !source.stream.ytId.isNullOrBlank() -> screen = Screen.YouTubeTrailer(
+                                    detailItem,
+                                    "Trailer · ${detailItem.meta.name}",
+                                    source.stream.ytId.orEmpty()
+                                )
                                 !source.stream.externalUrl.isNullOrBlank() -> runCatching {
                                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(source.stream.externalUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                                 }
@@ -274,6 +281,10 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         }
                     }
                 }
+                is Screen.YouTubeTrailer -> YouTubeTrailerScreen(
+                    title = current.title,
+                    youtubeId = current.youtubeId
+                )
                 is Screen.Trailer -> PlayerScreen(
                     item = current.item,
                     videoId = "trailer:${current.item.meta.id}",
@@ -310,6 +321,154 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         Text(it, color = Color.White)
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun YouTubeTrailerScreen(
+    title: String,
+    youtubeId: String
+) {
+    var webView by remember(youtubeId) { mutableStateOf<WebView?>(null) }
+    var playing by remember(youtubeId) { mutableStateOf(true) }
+    val playFocus = remember(youtubeId) { FocusRequester() }
+
+    val safeYoutubeId = remember(youtubeId) { youtubeId.replace("'", "\\'") }
+    val html = remember(safeYoutubeId) {
+        """
+        <!doctype html>
+        <html>
+        <head>
+          <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+          <style>
+            html,body,#player { width:100%; height:100%; margin:0; padding:0; overflow:hidden; background:#000; }
+          </style>
+        </head>
+        <body>
+          <div id="player"></div>
+          <script src="https://www.youtube.com/iframe_api"></script>
+          <script>
+            var player;
+            function onYouTubeIframeAPIReady() {
+              player = new YT.Player('player', {
+                videoId: '$safeYoutubeId',
+                playerVars: {
+                  autoplay: 1,
+                  controls: 0,
+                  rel: 0,
+                  modestbranding: 1,
+                  playsinline: 1,
+                  fs: 0
+                },
+                events: {
+                  onReady: function(e) {
+                    e.target.setPlaybackQuality('hd720');
+                    e.target.playVideo();
+                  }
+                }
+              });
+            }
+            function nmPlay(){ if(player){ player.playVideo(); } }
+            function nmPause(){ if(player){ player.pauseVideo(); } }
+            function nmSeek(delta){
+              if(player && player.getCurrentTime){
+                player.seekTo(Math.max(0, player.getCurrentTime() + delta), true);
+              }
+            }
+          </script>
+        </body>
+        </html>
+        """.trimIndent()
+    }
+
+    DisposableEffect(youtubeId) {
+        onDispose {
+            webView?.stopLoading()
+            webView?.loadUrl("about:blank")
+            webView?.destroy()
+            webView = null
+        }
+    }
+
+    LaunchedEffect(youtubeId) {
+        delay(350)
+        runCatching { playFocus.requestFocus() }
+    }
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        AndroidView(
+            factory = { context ->
+                WebView(context).apply {
+                    webView = this
+                    setBackgroundColor(android.graphics.Color.BLACK)
+                    isFocusable = false
+                    isFocusableInTouchMode = false
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.mediaPlaybackRequiresUserGesture = false
+                    settings.cacheMode = WebSettings.LOAD_DEFAULT
+                    settings.allowFileAccess = false
+                    settings.allowContentAccess = false
+                    webChromeClient = WebChromeClient()
+                    loadDataWithBaseURL(
+                        "https://www.youtube.com",
+                        html,
+                        "text/html",
+                        "UTF-8",
+                        null
+                    )
+                }
+            },
+            update = { webView = it },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.Black.copy(alpha = .12f),
+                        Color.Transparent,
+                        Color.Transparent,
+                        Color.Black.copy(alpha = .78f)
+                    )
+                )
+            )
+        )
+
+        Column(
+            Modifier.align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 34.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(title, color = NmPlatinum, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                PlayerControl(
+                    label = "↶ 10",
+                    onClick = { webView?.evaluateJavascript("nmSeek(-10)", null) }
+                )
+                PlayerControl(
+                    label = if (playing) "❚❚" else "▶",
+                    primary = true,
+                    modifier = Modifier.focusRequester(playFocus),
+                    onClick = {
+                        playing = !playing
+                        webView?.evaluateJavascript(if (playing) "nmPlay()" else "nmPause()", null)
+                    }
+                )
+                PlayerControl(
+                    label = "10 ↷",
+                    onClick = { webView?.evaluateJavascript("nmSeek(10)", null) }
+                )
+                Spacer(Modifier.weight(1f))
+                Text("TRAILER · YOUTUBE", color = NmGold, fontSize = 11.sp, fontWeight = FontWeight.Black)
             }
         }
     }
