@@ -13,7 +13,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 180
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
@@ -38,6 +38,26 @@ jobs:
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platforms;android-37.1" "build-tools;36.0.0" "platform-tools"
+
+      - name: Restore Kodi Core runtime
+        id: kodi-cache
+        uses: actions/cache@v4
+        with:
+          path: app/libs/kodi-runtime.aar
+          key: kodi-core-21.3-omega-arm64-v1
+
+      - name: Build integrated Kodi Core
+        if: steps.kodi-cache.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
+        env:
+          KODI_BRANCH: Omega
+          KODI_JOBS: '2'
+        run: bash .github/scripts/build-kodi-aar.sh
+
+      - name: Verify integrated Kodi Core
+        if: github.event_name != 'pull_request'
+        run: |
+          test -s app/libs/kodi-runtime.aar
+          ls -lh app/libs/kodi-runtime.aar
 
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace assembleDebug
