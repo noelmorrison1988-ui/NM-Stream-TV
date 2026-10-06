@@ -53,6 +53,7 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -1527,11 +1528,29 @@ private fun PlayerScreen(
     var trackRevision by remember(player) { mutableIntStateOf(0) }
     var showAudioMenu by remember { mutableStateOf(false) }
     var showSubtitleMenu by remember { mutableStateOf(false) }
+    var controlsVisible by remember(player) { mutableStateOf(true) }
+    var controlsRevision by remember(player) { mutableLongStateOf(System.currentTimeMillis()) }
+    var playerPositionMs by remember(player) { mutableLongStateOf(0L) }
+    var playerDurationMs by remember(player) { mutableLongStateOf(0L) }
+    var isPlaying by remember(player) { mutableStateOf(false) }
+    var fillVideo by remember(player) { mutableStateOf(false) }
+    val advisoryItems = remember(item.meta.contentRating, item.meta.contentAdvisories) {
+        buildList {
+            item.meta.contentRating?.takeIf { it.isNotBlank() }?.let { add("Rated " + it) }
+            addAll(item.meta.contentAdvisories.filter { it.isNotBlank() })
+        }.distinct()
+    }
+    var showAdvisory by remember(videoId) { mutableStateOf(advisoryItems.isNotEmpty()) }
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onTracksChanged(tracks: Tracks) {
                 trackRevision += 1
+            }
+
+            override fun onIsPlayingChanged(value: Boolean) {
+                isPlaying = value
+                controlsRevision = System.currentTimeMillis()
             }
         }
         player.addListener(listener)
@@ -1606,6 +1625,32 @@ private fun PlayerScreen(
         }
     }
 
+    LaunchedEffect(player) {
+        while (true) {
+            delay(500)
+            playerPositionMs = player.currentPosition.coerceAtLeast(0L)
+            playerDurationMs = player.duration.takeIf { it > 0 } ?: 0L
+            isPlaying = player.isPlaying
+        }
+    }
+
+    LaunchedEffect(controlsRevision, controlsVisible) {
+        if (controlsVisible) {
+            delay(6_000)
+            controlsVisible = false
+            showAudioMenu = false
+            showSubtitleMenu = false
+        }
+    }
+
+    LaunchedEffect(videoId, advisoryItems) {
+        showAdvisory = advisoryItems.isNotEmpty()
+        if (showAdvisory) {
+            delay(7_000)
+            showAdvisory = false
+        }
+    }
+
     DisposableEffect(player) {
         onDispose {
             val duration = player.duration.takeIf { it > 0 } ?: 0L
@@ -1615,47 +1660,159 @@ private fun PlayerScreen(
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(
+        Modifier.fillMaxSize()
+            .background(Color.Black)
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) {
+                    false
+                } else if (!controlsVisible) {
+                    controlsVisible = true
+                    controlsRevision = System.currentTimeMillis()
+                    true
+                } else {
+                    false
+                }
+            }
+    ) {
         AndroidView(
             factory = {
                 PlayerView(it).apply {
-                    useController = true
+                    useController = false
                     keepScreenOn = true
+                    resizeMode = if (fillVideo) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
                     this.player = player
                 }
             },
             update = {
                 it.player = player
                 it.keepScreenOn = true
+                it.useController = false
+                it.resizeMode = if (fillVideo) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
             },
             modifier = Modifier.fillMaxSize()
         )
 
-        Text(
-            title,
-            color = Color.White,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier
-                .padding(24.dp)
-                .background(Color.Black.copy(alpha = .55f))
-                .padding(10.dp)
-        )
-
-        Row(
-            Modifier.align(Alignment.TopEnd).padding(24.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Button(onClick = {
-                showAudioMenu = !showAudioMenu
-                showSubtitleMenu = false
-            }) {
-                Text("Audio")
+        if (showAdvisory) {
+            Column(
+                Modifier.align(Alignment.TopStart)
+                    .padding(start = 30.dp, top = 28.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.Black.copy(alpha = .78f))
+                    .border(1.dp, Color.White.copy(alpha = .14f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 15.dp, vertical = 11.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Text("CONTENT ADVISORY", color = NmGold, fontSize = 10.sp, fontWeight = FontWeight.Black)
+                Text(advisoryItems.joinToString("  ·  "), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
-            Button(onClick = {
-                showSubtitleMenu = !showSubtitleMenu
-                showAudioMenu = false
-            }) {
-                Text("Subtitles")
+        }
+
+        if (controlsVisible) {
+            Box(
+                Modifier.fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.Black.copy(alpha = .28f),
+                                Color.Transparent,
+                                Color.Transparent,
+                                Color.Black.copy(alpha = .86f)
+                            )
+                        )
+                    )
+            )
+
+            Column(
+                Modifier.align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 34.dp, vertical = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(11.dp)
+            ) {
+                Text(title, color = NmPlatinum, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+
+                val progress = if (playerDurationMs > 0) {
+                    (playerPositionMs.toFloat() / playerDurationMs.toFloat()).coerceIn(0f, 1f)
+                } else 0f
+
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(formatPlayerTime(playerPositionMs), color = NmMuted, fontSize = 12.sp)
+                    Box(
+                        Modifier.weight(1f)
+                            .height(5.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(Color.White.copy(alpha = .20f))
+                    ) {
+                        Box(
+                            Modifier.fillMaxHeight()
+                                .fillMaxWidth(progress)
+                                .background(Brush.horizontalGradient(listOf(NmGold, NmPlatinum)))
+                        )
+                    }
+                    Text(formatPlayerTime(playerDurationMs), color = NmMuted, fontSize = 12.sp)
+                }
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    PlayerControl(
+                        label = "↶ 10",
+                        onClick = {
+                            player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                            controlsRevision = System.currentTimeMillis()
+                        }
+                    )
+                    PlayerControl(
+                        label = if (isPlaying) "❚❚" else "▶",
+                        primary = true,
+                        onClick = {
+                            if (player.isPlaying) player.pause() else player.play()
+                            controlsRevision = System.currentTimeMillis()
+                        }
+                    )
+                    PlayerControl(
+                        label = "10 ↷",
+                        onClick = {
+                            val limit = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
+                            player.seekTo((player.currentPosition + 10_000L).coerceAtMost(limit))
+                            controlsRevision = System.currentTimeMillis()
+                        }
+                    )
+                    PlayerControl(
+                        label = "CC",
+                        active = showSubtitleMenu,
+                        onClick = {
+                            showSubtitleMenu = !showSubtitleMenu
+                            showAudioMenu = false
+                            controlsRevision = System.currentTimeMillis()
+                        }
+                    )
+                    PlayerControl(
+                        label = "AUDIO",
+                        active = showAudioMenu,
+                        onClick = {
+                            showAudioMenu = !showAudioMenu
+                            showSubtitleMenu = false
+                            controlsRevision = System.currentTimeMillis()
+                        }
+                    )
+                    PlayerControl(
+                        label = if (fillVideo) "FIT" else "FILL",
+                        onClick = {
+                            fillVideo = !fillVideo
+                            controlsRevision = System.currentTimeMillis()
+                        }
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "NM STREAM",
+                        color = NmGold,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                }
             }
         }
 
@@ -1750,6 +1907,61 @@ private fun PlayerScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PlayerControl(
+    label: String,
+    primary: Boolean = false,
+    active: Boolean = false,
+    onClick: () -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    Box(
+        Modifier.height(if (primary) 52.dp else 44.dp)
+            .widthIn(min = if (primary) 58.dp else 54.dp)
+            .clip(RoundedCornerShape(40.dp))
+            .background(
+                when {
+                    focused -> NmGold
+                    active -> NmGold.copy(alpha = .22f)
+                    else -> Color(0xCC16181C)
+                }
+            )
+            .border(
+                1.dp,
+                when {
+                    focused -> NmPlatinum
+                    active -> NmGold
+                    else -> Color.White.copy(alpha = .14f)
+                },
+                RoundedCornerShape(40.dp)
+            )
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(onClick = onClick)
+            .focusable()
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            label,
+            color = if (focused) Color.Black else if (active) NmGold else NmPlatinum,
+            fontWeight = FontWeight.Black,
+            fontSize = if (primary) 18.sp else 12.sp
+        )
+    }
+}
+
+private fun formatPlayerTime(valueMs: Long): String {
+    val totalSeconds = (valueMs.coerceAtLeast(0L) / 1000L)
+    val hours = totalSeconds / 3600L
+    val minutes = (totalSeconds % 3600L) / 60L
+    val seconds = totalSeconds % 60L
+    return if (hours > 0L) {
+        String.format(Locale.getDefault(), "%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
     }
 }
 
