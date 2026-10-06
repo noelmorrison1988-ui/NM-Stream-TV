@@ -1165,34 +1165,6 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             }
         } }
         item { CardBox {
-            Text("Kodi Core", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            Text(
-                state.kodiCrewStatus,
-                color = if (state.kodiCrewConnected) NmGreen else NmMuted
-            )
-            Text(
-                "Kodi runs inside the NM Stream TV package. Use Kodi's own Add-ons and Settings screens for compatible Kodi add-ons and any account authorization those add-ons support.",
-                color = NmMuted
-            )
-            Button(
-                onClick = {
-                    if (!KodiCore.open(context)) {
-                        android.widget.Toast.makeText(
-                            context,
-                            "Kodi Core is not included in this build.",
-                            android.widget.Toast.LENGTH_LONG
-                        ).show()
-                    }
-                },
-                enabled = state.kodiCrewConnected
-            ) { Text("Open Kodi") }
-            Text(
-                "No host, port, username or HTTP remote-control setup is required.",
-                color = NmMuted,
-                fontSize = 12.sp
-            )
-        } }
-        item { CardBox {
             Text("Trakt", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text(
                 state.traktUser?.let { "Connected as " + (it.name.ifBlank { it.username }) } ?: "Not connected",
