@@ -60,6 +60,7 @@ data class MainUiState(
     val nmPairCode: String? = null,
     val nmPairing: Boolean = false,
     val nmSyncStatus: String = "Not linked",
+    val nmDeviceBlocked: Boolean = false,
     val preferredQuality: Int = 720,
     val preferHttpDebrid: Boolean = true,
     val preferredAudioLanguage: String = "en",
@@ -735,6 +736,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         nmPairCode = null,
                         nmPairing = false,
                         nmSyncStatus = "Synced",
+                        nmDeviceBlocked = false,
                         message = "NM Account linked to this TV"
                     )
                     refreshEverything()
@@ -765,14 +767,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .onSuccess {
                     _uiState.value = _uiState.value.copy(
                         nmSyncStatus = "Synced",
+                        nmDeviceBlocked = false,
                         message = "NM Account settings are up to date"
                     )
                 }
                 .onFailure { error ->
-                    _uiState.value = _uiState.value.copy(
-                        nmSyncStatus = "Sync failed",
-                        message = error.message ?: "NM Account sync failed"
-                    )
+                    _uiState.value = when (error) {
+                        is NmDeviceBlockedException -> _uiState.value.copy(
+                            nmSyncStatus = "Blocked",
+                            nmDeviceBlocked = true,
+                            message = "Device Blocked by NM"
+                        )
+                        is NmDeviceUnpairedException -> _uiState.value.copy(
+                            nmAccountLinked = false,
+                            nmAccountName = null,
+                            nmSyncStatus = "Not linked",
+                            nmDeviceBlocked = false,
+                            message = "This device was unpaired from NM Account"
+                        )
+                        else -> _uiState.value.copy(
+                            nmSyncStatus = "Sync failed",
+                            message = error.message ?: "NM Account sync failed"
+                        )
+                    }
                 }
         }
     }
@@ -786,6 +803,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             nmPairCode = null,
             nmPairing = false,
             nmSyncStatus = "Not linked",
+            nmDeviceBlocked = false,
             message = "This TV was unlinked from NM Account"
         )
     }
@@ -798,8 +816,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     runCatching {
                         applyNmAccountSync(force = false)
                         pushChangedServiceAuthIfNeeded()
-                    }.onFailure {
-                        _uiState.value = _uiState.value.copy(nmSyncStatus = "Waiting to sync")
+                    }.onFailure { error ->
+                        _uiState.value = when (error) {
+                            is NmDeviceBlockedException -> _uiState.value.copy(
+                                nmSyncStatus = "Blocked",
+                                nmDeviceBlocked = true,
+                                message = "Device Blocked by NM"
+                            )
+                            is NmDeviceUnpairedException -> _uiState.value.copy(
+                                nmAccountLinked = false,
+                                nmAccountName = null,
+                                nmSyncStatus = "Not linked",
+                                nmDeviceBlocked = false,
+                                message = "This device was unpaired from NM Account"
+                            )
+                            else -> _uiState.value.copy(nmSyncStatus = "Waiting to sync")
+                        }
                     }
                 }
                 delay(15_000)
@@ -855,6 +887,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 nmAccountLinked = true,
                 nmAccountName = remote.accountName,
                 nmSyncStatus = "Synced",
+                nmDeviceBlocked = false,
                 preferredQuality = prefs.preferredQuality,
                 preferHttpDebrid = prefs.preferHttpDebrid,
                 preferredAudioLanguage = prefs.preferredAudioLanguage,
@@ -865,7 +898,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.value = _uiState.value.copy(
                 nmAccountLinked = true,
                 nmAccountName = remote.accountName,
-                nmSyncStatus = "Synced"
+                nmSyncStatus = "Synced",
+                nmDeviceBlocked = false
             )
         }
         return changed
