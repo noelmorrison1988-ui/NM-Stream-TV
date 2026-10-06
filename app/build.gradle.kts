@@ -58,9 +58,4 @@ dependencies {
     implementation("com.google.code.gson:gson:2.14.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
-    val kodiRuntime = file("libs/kodi-runtime.aar")
-    if (kodiRuntime.exists()) {
-        implementation(files(kodiRuntime))
-        implementation("androidx.tvprovider:tvprovider:1.1.0-alpha01")
-    }
 }
