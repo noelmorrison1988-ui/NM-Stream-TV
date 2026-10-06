@@ -391,56 +391,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshEverything()
     }
 
-    fun saveTraktClientId(clientId: String) {
-        traktAuthJob?.cancel()
-        runCatching { trakt.saveClientId(clientId) }
-            .onSuccess {
-                traktCloudPlayback = emptyList()
-                traktUpNext = emptyList()
-                _uiState.value = _uiState.value.copy(
-                    traktConfigured = trakt.credentialsConfigured(),
-                    traktConnected = false,
-                    traktUser = null,
-                    traktWatchlist = emptyList(),
-                    noelList = emptyList(),
-                    sarahList = emptyList(),
-                    continueWatching = playback.load(),
-                    traktDeviceCode = null,
-                    traktConnecting = false,
-                    message = "Trakt Client ID saved"
-                )
-            }
-            .onFailure { error ->
-                _uiState.value = _uiState.value.copy(
-                    traktConfigured = trakt.credentialsConfigured(),
-                    traktConnected = false,
-                    traktUser = null,
-                    traktDeviceCode = null,
-                    traktConnecting = false,
-                    message = error.message ?: "Could not save Trakt Client ID"
-                )
-            }
-    }
-
-    fun clearTraktCredentials() {
-        traktAuthJob?.cancel()
-        trakt.clearCredentials()
-        traktCloudPlayback = emptyList()
-        traktUpNext = emptyList()
-        _uiState.value = _uiState.value.copy(
-            traktConfigured = false,
-            traktConnected = false,
-            traktUser = null,
-            traktWatchlist = emptyList(),
-            noelList = emptyList(),
-            sarahList = emptyList(),
-            continueWatching = playback.load(),
-            traktDeviceCode = null,
-            traktConnecting = false,
-            message = "Trakt configuration removed"
-        )
-    }
-
     fun beginRealDebridSignIn() {
         rdAuthJob?.cancel()
         rdAuthJob = viewModelScope.launch {
@@ -457,6 +407,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (credentials != null) {
                     val success = runCatching { realDebrid.exchangeDeviceCode(device.deviceCode, credentials); true }.getOrDefault(false)
                     if (success) {
+                        if (nmAccount.isLinked()) {
+                            runCatching { nmAccount.pushRealDebridAuth(realDebrid.exportAuth()) }
+                        }
+                        lastRdAuthFingerprint = realDebrid.exportAuth()?.hashCode() ?: 0
                         _uiState.value = _uiState.value.copy(rdConnecting = false, rdDeviceCode = null, message = "Real-Debrid connected")
                         refreshEverything()
                         return@launch
@@ -471,12 +425,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun disconnectRealDebrid() {
         rdAuthJob?.cancel()
         realDebrid.disconnect()
+        lastRdAuthFingerprint = 0
+        viewModelScope.launch {
+            if (nmAccount.isLinked()) runCatching { nmAccount.pushRealDebridAuth(null) }
+        }
         _uiState.value = _uiState.value.copy(
             rdUser = null,
             rdDeviceCode = null,
             rdConnecting = false,
             debridItems = emptyList(),
-            message = "Real-Debrid disconnected"
+            message = "Real-Debrid disconnected on all linked devices"
         )
     }
 
@@ -503,13 +461,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val auth = attempt.getOrNull()
                 if (auth != null) {
+                    if (nmAccount.isLinked()) {
+                        runCatching { nmAccount.pushTraktAuth(trakt.exportAuth()) }
+                    }
+                    lastTraktAuthFingerprint = trakt.exportAuth()?.hashCode() ?: 0
                     val user = runCatching { trakt.getUser() }.getOrNull()
                     _uiState.value = _uiState.value.copy(
                         traktConnecting = false,
                         traktDeviceCode = null,
                         traktConnected = true,
                         traktUser = user,
-                        message = "Trakt connected"
+                        message = "Trakt connected and synced"
                     )
                     refreshEverything()
                     return@launch
@@ -523,8 +485,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun disconnectTrakt() {
         traktAuthJob?.cancel()
         trakt.disconnect()
+        lastTraktAuthFingerprint = 0
         traktCloudPlayback = emptyList()
         traktUpNext = emptyList()
+        viewModelScope.launch {
+            if (nmAccount.isLinked()) runCatching { nmAccount.pushTraktAuth(null) }
+        }
         _uiState.value = _uiState.value.copy(
             traktConnected = false,
             traktUser = null,
@@ -534,7 +500,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             continueWatching = playback.load(),
             traktDeviceCode = null,
             traktConnecting = false,
-            message = "Trakt disconnected"
+            message = "Trakt disconnected on all linked devices"
         )
     }
 
