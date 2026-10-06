@@ -23,6 +23,8 @@ data class MainUiState(
     val sarahList: List<AppMedia> = emptyList(),
     val debridItems: List<AppMedia> = emptyList(),
     val continueWatching: List<PlaybackProgress> = emptyList(),
+    val watchHistory: List<PlaybackProgress> = emptyList(),
+    val recommendations: List<AppMedia> = emptyList(),
     val searchResults: List<AppMedia> = emptyList(),
     val searchLoading: Boolean = false,
     val selectedMedia: AppMedia? = null,
@@ -68,8 +70,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val addons = AddonRepository(application)
     private val realDebrid = RealDebridRepository(application)
     private val tmdb = TmdbRepository(application)
-    private val trakt = TraktRepository(application)
-    private val iptv = IptvRepository(application)
     private val playback = PlaybackStore(application)
     private val nmAccount = NmAccountRepository(application)
 
@@ -77,12 +77,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     private var rdAuthJob: Job? = null
-    private var traktAuthJob: Job? = null
     private var nmPairJob: Job? = null
     private var nmSyncJob: Job? = null
-    private var traktCloudPlayback: List<PlaybackProgress> = emptyList()
-    private var traktUpNext: List<PlaybackProgress> = emptyList()
-    private var lastTraktAuthFingerprint: Int? = null
     private var lastRdAuthFingerprint: Int? = null
 
     init {
@@ -125,7 +121,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             } else emptyList()
 
-            val addonSports = sportsFromExistingAddons(rawMovies + rawSeries)
+            val rawHistory = playback.history().filter { MediaPolicy.allows(it.media) }
+            val watchHistory = if (tmdb.configured()) {
+                enrichProgress(rawHistory, 15)
+            } else rawHistory
+            val recommendations = if (tmdb.configured()) {
+                runCatching { tmdb.recommendationsFor(watchHistory.map { it.media }, 24) }
+                    .getOrDefault(emptyList())
+            } else emptyList()
             val nmPrefs = nmAccount.playbackPreferences()
 
             _uiState.value = _uiState.value.copy(
@@ -138,6 +141,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 rdUser = rdUser,
                 debridItems = rdItems,
                 continueWatching = playback.load().filter { MediaPolicy.allows(it.media) }.take(30),
+                watchHistory = watchHistory,
+                recommendations = recommendations,
                 rdDeviceCode = null,
                 rdConnecting = false,
                 tmdbConfigured = tmdb.configured(),
@@ -150,7 +155,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 traktConnecting = false,
                 iptvChannels = emptyList(),
                 iptvSports = emptyList(),
-                sportsCatalog = mergeSportsCatalog(emptyList(), addonSports),
+                sportsCatalog = emptyList(),
                 xtreamMovies = emptyList(),
                 xtreamSeries = emptyList(),
                 iptvCategories = emptyList(),
@@ -239,9 +244,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             _uiState.value = _uiState.value.copy(selectedMedia = item, detailsLoading = true, message = null)
+            val resolvedItem = if (item.meta.id.startsWith("tmdb:")) {
+                val matches = runCatching {
+                    addons.search(_uiState.value.addons, item.meta.name)
+                }.getOrDefault(emptyList())
+                    .filter { it.meta.type == item.meta.type }
+
+                val wanted = mediaTitleKey(item.meta.name)
+                matches.firstOrNull { mediaTitleKey(it.meta.name) == wanted }
+                    ?: matches.firstOrNull()
+                    ?: item
+            } else item
+
             val sourceMeta = runCatching {
-                addons.loadMeta(item, _uiState.value.addons)
-            }.getOrDefault(item)
+                addons.loadMeta(resolvedItem, _uiState.value.addons)
+            }.getOrDefault(resolvedItem)
             val loaded = if (tmdb.configured()) {
                 runCatching { tmdb.enrich(sourceMeta) }.getOrDefault(sourceMeta)
             } else sourceMeta
@@ -322,41 +339,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun sourceRequestKey(item: AppMedia, videoId: String): String =
         "${item.meta.id}|${videoId}"
 
-    fun addToPersonalList(name: String, item: AppMedia) {
-        viewModelScope.launch {
-            if (!_uiState.value.traktConnected) {
-                _uiState.value = _uiState.value.copy(message = "Connect Trakt first")
-                return@launch
-            }
-
-            _uiState.value = _uiState.value.copy(message = "Adding ${item.meta.name} to $name…")
-            runCatching { trakt.addToPersonalList(name, item) }
-                .onSuccess {
-                    val raw = runCatching { trakt.personalList(name) }.getOrDefault(emptyList())
-                    val refreshed = if (tmdb.configured()) {
-                        runCatching { tmdb.enrichBatch(raw, 40) }.getOrDefault(raw)
-                    } else raw
-
-                    _uiState.value = when (name.lowercase()) {
-                        "noel" -> _uiState.value.copy(
-                            noelList = refreshed,
-                            message = "Added ${item.meta.name} to Noel"
-                        )
-                        "sarah" -> _uiState.value.copy(
-                            sarahList = refreshed,
-                            message = "Added ${item.meta.name} to Sarah"
-                        )
-                        else -> _uiState.value.copy(message = "Added ${item.meta.name} to $name")
-                    }
-                }
-                .onFailure { error ->
-                    _uiState.value = _uiState.value.copy(
-                        message = error.message ?: "Could not add item to $name"
-                    )
-                }
-        }
-    }
-
     fun bestTrailer(item: AppMedia): StreamOption? =
         item.meta.trailers
             .mapNotNull { trailer ->
@@ -393,7 +375,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             tmdbConfigured = tmdb.configured(),
             tmdbStatus = tmdb.maskedToken(),
-            message = if (token.isBlank()) "TMDB token removed" else "TMDB artwork enabled"
+            message = if (token.isBlank()) "TMDB token removed" else "TMDB metadata and recommendations enabled"
         )
         refreshEverything()
     }
@@ -442,123 +424,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             rdConnecting = false,
             debridItems = emptyList(),
             message = "Real-Debrid disconnected on all linked devices"
-        )
-    }
-
-    fun beginTraktSignIn() {
-        traktAuthJob?.cancel()
-        traktAuthJob = viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(traktConnecting = true, traktDeviceCode = null, message = null)
-            val device = runCatching { trakt.startDeviceAuth() }.getOrElse {
-                _uiState.value = _uiState.value.copy(traktConnecting = false, message = it.message)
-                return@launch
-            }
-            _uiState.value = _uiState.value.copy(traktDeviceCode = device, traktConnecting = true)
-            val deadline = System.currentTimeMillis() + device.expiresIn * 1000L
-            while (System.currentTimeMillis() < deadline) {
-                val attempt = runCatching { trakt.pollDeviceToken(device.deviceCode) }
-                val error = attempt.exceptionOrNull()
-                if (error != null) {
-                    _uiState.value = _uiState.value.copy(
-                        traktConnecting = false,
-                        traktDeviceCode = null,
-                        message = error.message ?: "Trakt sign-in failed"
-                    )
-                    return@launch
-                }
-                val auth = attempt.getOrNull()
-                if (auth != null) {
-                    if (nmAccount.isLinked()) {
-                        runCatching { nmAccount.pushTraktAuth(trakt.exportAuth()) }
-                    }
-                    lastTraktAuthFingerprint = trakt.exportAuth()?.hashCode() ?: 0
-                    val user = runCatching { trakt.getUser() }.getOrNull()
-                    _uiState.value = _uiState.value.copy(
-                        traktConnecting = false,
-                        traktDeviceCode = null,
-                        traktConnected = true,
-                        traktUser = user,
-                        message = "Trakt connected and synced"
-                    )
-                    refreshEverything()
-                    return@launch
-                }
-                delay(device.interval.coerceAtLeast(6) * 1000L)
-            }
-            _uiState.value = _uiState.value.copy(traktConnecting = false, traktDeviceCode = null, message = "Trakt sign-in code expired")
-        }
-    }
-
-    fun disconnectTrakt() {
-        traktAuthJob?.cancel()
-        trakt.disconnect()
-        lastTraktAuthFingerprint = 0
-        traktCloudPlayback = emptyList()
-        traktUpNext = emptyList()
-        viewModelScope.launch {
-            if (nmAccount.isLinked()) runCatching { nmAccount.pushTraktAuth(null) }
-        }
-        _uiState.value = _uiState.value.copy(
-            traktConnected = false,
-            traktUser = null,
-            traktWatchlist = emptyList(),
-            noelList = emptyList(),
-            sarahList = emptyList(),
-            continueWatching = playback.load(),
-            traktDeviceCode = null,
-            traktConnecting = false,
-            message = "Trakt disconnected on all linked devices"
-        )
-    }
-
-    fun saveIptvM3u(m3uUrl: String, epgUrl: String) {
-        viewModelScope.launch {
-            runCatching { iptv.saveM3u(m3uUrl, epgUrl) }
-                .onSuccess {
-                    if (nmAccount.isLinked()) {
-                        runCatching { nmAccount.pushIptv(true, iptv.config()) }
-                    }
-                    _uiState.value = _uiState.value.copy(message = "IPTV playlist saved and synced")
-                    refreshEverything()
-                }
-                .onFailure { error ->
-                    _uiState.value = _uiState.value.copy(message = error.message ?: "Could not save IPTV playlist")
-                }
-        }
-    }
-
-    fun saveIptvXtream(server: String, username: String, password: String) {
-        viewModelScope.launch {
-            runCatching { iptv.saveXtream(server, username, password) }
-                .onSuccess {
-                    if (nmAccount.isLinked()) {
-                        runCatching { nmAccount.pushIptv(true, iptv.config()) }
-                    }
-                    _uiState.value = _uiState.value.copy(message = "Xtream IPTV saved and synced")
-                    refreshEverything()
-                }
-                .onFailure { error ->
-                    _uiState.value = _uiState.value.copy(message = error.message ?: "Could not save Xtream IPTV")
-                }
-        }
-    }
-
-    fun clearIptv() {
-        iptv.clear()
-        viewModelScope.launch {
-            if (nmAccount.isLinked()) runCatching { nmAccount.pushIptv(true, null) }
-        }
-        _uiState.value = _uiState.value.copy(
-            iptvChannels = emptyList(),
-            iptvSports = emptyList(),
-            sportsCatalog = mergeSportsCatalog(emptyList(), sportsFromExistingAddons(_uiState.value.movies + _uiState.value.series)),
-            xtreamMovies = emptyList(),
-            xtreamSeries = emptyList(),
-            iptvCategories = emptyList(),
-            iptvGuide = emptyMap(),
-            iptvConfigured = false,
-            iptvStatus = "Not configured",
-            message = "IPTV configuration removed from all linked devices"
         )
     }
 
@@ -823,12 +688,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val progress = PlaybackProgress(item, videoId, title, positionMs, durationMs, System.currentTimeMillis())
         if (durationMs > 0 && progress.percent >= 95) playback.complete(item, videoId) else playback.save(progress)
         _uiState.value = _uiState.value.copy(
-            continueWatching = playback.load().filter { MediaPolicy.allows(it.media) }.take(30)
+            continueWatching = playback.load().filter { MediaPolicy.allows(it.media) }.take(30),
+            watchHistory = playback.history().filter { MediaPolicy.allows(it.media) }.take(60)
         )
     }
 
     fun onPlaybackStopped(item: AppMedia, videoId: String, title: String, positionMs: Long, durationMs: Long) {
         onPlaybackProgress(item, videoId, title, positionMs, durationMs)
+        refreshTmdbRecommendations()
+    }
+
+    private fun refreshTmdbRecommendations() {
+        if (!tmdb.configured()) return
+        viewModelScope.launch {
+            val rawHistory = playback.history().filter { MediaPolicy.allows(it.media) }
+            val history = enrichProgress(rawHistory, 15)
+            val recommended = runCatching {
+                tmdb.recommendationsFor(history.map { it.media }, 24)
+            }.getOrDefault(emptyList())
+            _uiState.value = _uiState.value.copy(
+                watchHistory = history,
+                recommendations = recommended
+            )
+        }
     }
 
     fun clearMessage() {
@@ -901,6 +783,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
             .take(300)
     }
+
+    private fun mediaTitleKey(value: String): String =
+        value.lowercase()
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
 
     private fun RdDownload.toAppMedia(): AppMedia? {
         val playable = download?.takeIf { it.startsWith("https://", true) || it.startsWith("http://", true) } ?: return null
