@@ -285,7 +285,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     compareBy<StreamOption> {
                         it.preferenceScore(
                             preferredQuality = prefs.preferredQuality,
-                            preferHttpDebrid = prefs.preferHttpDebrid
+                            preferHttpDebrid = prefs.preferHttpDebrid,
+                            preferredAudioLanguage = prefs.preferredAudioLanguage
                         )
                     }.thenBy { it.stream.behaviorHints?.videoSize ?: Long.MAX_VALUE }
                 )
