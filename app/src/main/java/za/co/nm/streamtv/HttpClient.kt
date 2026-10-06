@@ -13,7 +13,7 @@ import java.nio.charset.StandardCharsets
 data class HttpResult(val code: Int, val body: String)
 
 object SimpleHttp {
-    private const val USER_AGENT = "NMStreamTV/0.13"
+    private const val USER_AGENT = "NMStreamTV/0.14.1"
 
     suspend fun get(url: String, headers: Map<String, String> = emptyMap()): HttpResult =
         request("GET", url, headers = headers)
