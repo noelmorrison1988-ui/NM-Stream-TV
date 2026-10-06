@@ -48,6 +48,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -1337,6 +1338,20 @@ private fun SourcesScreen(title: String, loading: Boolean, sources: List<StreamO
     }
 }
 
+private data class PlayerTrackChoice(
+    val group: Tracks.Group,
+    val trackIndex: Int,
+    val label: String,
+    val language: String?
+)
+
+private fun trackChoiceLabel(group: Tracks.Group, index: Int, fallback: String): String {
+    val format = group.getTrackFormat(index)
+    val label = format.label?.takeIf { it.isNotBlank() }
+    val language = format.language?.takeIf { it.isNotBlank() && it != "und" }
+    return listOfNotNull(label, language?.uppercase()).joinToString(" · ").ifBlank { fallback }
+}
+
 @Composable
 private fun PlayerScreen(
     item: AppMedia,
@@ -1347,13 +1362,14 @@ private fun PlayerScreen(
     subtitles: List<SubtitleOption>,
     resumeMs: Long,
     resumePercent: Double?,
+    preferredAudioLanguage: String,
+    preferredSubtitleLanguage: String,
     onStarted: (Long, Long) -> Unit,
     onProgress: (Long, Long) -> Unit,
     onStopped: (Long, Long) -> Unit
 ) {
     val context = LocalContext.current
 
-    // Resume is captured once. Progress updates must never rebuild the player.
     val initialResumeMs = remember(url, videoId) { resumeMs }
     val initialResumePercent = remember(url, videoId) { resumePercent }
 
@@ -1387,7 +1403,7 @@ private fun PlayerScreen(
                         .setLabel(option.subtitle.lang.uppercase() + " · " + option.addonName)
                         .setMimeType(subtitleMime(option.subtitle.url))
                         .setSelectionFlags(
-                            if (index == 0 && option.subtitle.lang.startsWith("en", true)) {
+                            if (index == 0 && option.subtitle.lang.startsWith(preferredSubtitleLanguage, true)) {
                                 C.SELECTION_FLAG_DEFAULT
                             } else {
                                 0
@@ -1395,6 +1411,13 @@ private fun PlayerScreen(
                         )
                         .build()
                 }
+
+                trackSelectionParameters = trackSelectionParameters
+                    .buildUpon()
+                    .setPreferredAudioLanguage(preferredAudioLanguage)
+                    .setPreferredTextLanguage(preferredSubtitleLanguage)
+                    .build()
+
                 setMediaItem(
                     MediaItem.Builder()
                         .setUri(url)
@@ -1409,6 +1432,57 @@ private fun PlayerScreen(
     var started by remember(player) { mutableStateOf(false) }
     var resumeApplied by remember(player) {
         mutableStateOf(initialResumeMs <= 0 && initialResumePercent == null)
+    }
+    var trackRevision by remember(player) { mutableIntStateOf(0) }
+    var showAudioMenu by remember { mutableStateOf(false) }
+    var showSubtitleMenu by remember { mutableStateOf(false) }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onTracksChanged(tracks: Tracks) {
+                trackRevision += 1
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+
+    LaunchedEffect(player, preferredAudioLanguage, preferredSubtitleLanguage) {
+        player.trackSelectionParameters = player.trackSelectionParameters
+            .buildUpon()
+            .setPreferredAudioLanguage(preferredAudioLanguage)
+            .setPreferredTextLanguage(preferredSubtitleLanguage)
+            .build()
+    }
+
+    val audioTracks = remember(player, trackRevision) {
+        player.currentTracks.groups
+            .filter { it.type == C.TRACK_TYPE_AUDIO }
+            .flatMapIndexed { groupIndex, group ->
+                (0 until group.length).map { trackIndex ->
+                    PlayerTrackChoice(
+                        group = group,
+                        trackIndex = trackIndex,
+                        label = trackChoiceLabel(group, trackIndex, "Audio ${groupIndex + 1}.${trackIndex + 1}"),
+                        language = group.getTrackFormat(trackIndex).language
+                    )
+                }
+            }
+    }
+
+    val textTracks = remember(player, trackRevision) {
+        player.currentTracks.groups
+            .filter { it.type == C.TRACK_TYPE_TEXT }
+            .flatMapIndexed { groupIndex, group ->
+                (0 until group.length).map { trackIndex ->
+                    PlayerTrackChoice(
+                        group = group,
+                        trackIndex = trackIndex,
+                        label = trackChoiceLabel(group, trackIndex, "Subtitle ${groupIndex + 1}.${trackIndex + 1}"),
+                        language = group.getTrackFormat(trackIndex).language
+                    )
+                }
+            }
     }
 
     LaunchedEffect(player) {
@@ -1455,12 +1529,17 @@ private fun PlayerScreen(
             factory = {
                 PlayerView(it).apply {
                     useController = true
+                    keepScreenOn = true
                     this.player = player
                 }
             },
-            update = { it.player = player },
+            update = {
+                it.player = player
+                it.keepScreenOn = true
+            },
             modifier = Modifier.fillMaxSize()
         )
+
         Text(
             title,
             color = Color.White,
@@ -1470,6 +1549,116 @@ private fun PlayerScreen(
                 .background(Color.Black.copy(alpha = .55f))
                 .padding(10.dp)
         )
+
+        Row(
+            Modifier.align(Alignment.TopEnd).padding(24.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(onClick = {
+                showAudioMenu = !showAudioMenu
+                showSubtitleMenu = false
+            }) {
+                Text("Audio")
+            }
+            Button(onClick = {
+                showSubtitleMenu = !showSubtitleMenu
+                showAudioMenu = false
+            }) {
+                Text("Subtitles")
+            }
+        }
+
+        if (showAudioMenu) {
+            LazyColumn(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 82.dp, end = 24.dp)
+                    .widthIn(min = 280.dp, max = 440.dp)
+                    .heightIn(max = 520.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xEE101218))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item {
+                    Text(
+                        "Audio tracks · preferred ${preferredAudioLanguage.uppercase()}",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                if (audioTracks.isEmpty()) {
+                    item { Text("This source exposes only one/default audio track.", color = NmMuted) }
+                } else {
+                    items(audioTracks) { choice ->
+                        Button(onClick = {
+                            val override = TrackSelectionOverride(
+                                choice.group.mediaTrackGroup,
+                                listOf(choice.trackIndex)
+                            )
+                            player.trackSelectionParameters = player.trackSelectionParameters
+                                .buildUpon()
+                                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                                .setOverrideForType(override)
+                                .build()
+                            showAudioMenu = false
+                        }, modifier = Modifier.fillMaxWidth()) {
+                            Text(choice.label)
+                        }
+                    }
+                }
+            }
+        }
+
+        if (showSubtitleMenu) {
+            LazyColumn(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 82.dp, end = 24.dp)
+                    .widthIn(min = 280.dp, max = 440.dp)
+                    .heightIn(max = 520.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xEE101218))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item {
+                    Text(
+                        "Subtitle tracks · preferred ${preferredSubtitleLanguage.uppercase()}",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                item {
+                    Button(onClick = {
+                        player.trackSelectionParameters = player.trackSelectionParameters
+                            .buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                            .build()
+                        showSubtitleMenu = false
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Off")
+                    }
+                }
+                items(textTracks) { choice ->
+                    Button(onClick = {
+                        val override = TrackSelectionOverride(
+                            choice.group.mediaTrackGroup,
+                            listOf(choice.trackIndex)
+                        )
+                        player.trackSelectionParameters = player.trackSelectionParameters
+                            .buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                            .setOverrideForType(override)
+                            .build()
+                        showSubtitleMenu = false
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Text(choice.label)
+                    }
+                }
+            }
+        }
     }
 }
 
