@@ -49,7 +49,7 @@ make -j"$JOBS"
 
 PACKAGING="$SRC/build/tools/android/packaging"
 cd "$PACKAGING"
-make sharedapk libs python java
+make DEPENDS_PATH="$PREFIX" PREFIX="$PREFIX" sharedapk libs python java
 
 python3 - <<'PY'
 from pathlib import Path
