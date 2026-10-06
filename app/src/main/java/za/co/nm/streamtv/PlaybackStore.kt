@@ -17,7 +17,7 @@ class PlaybackStore(context: Context) {
             .take(30)
 
     fun history(): List<PlaybackProgress> =
-        readList(historyKey)
+        (readList(historyKey) + readList(continueKey))
             .filter { it.positionMs > 5_000 }
             .sortedByDescending { it.updatedAtMs }
             .distinctBy {
