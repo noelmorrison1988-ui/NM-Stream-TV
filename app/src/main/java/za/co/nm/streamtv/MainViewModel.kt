@@ -617,7 +617,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             iptvChannels = emptyList(),
             iptvSports = emptyList(),
-            sportsCatalog = mergeSportsCatalog(_uiState.value.crewSports, emptyList(), sportsFromExistingAddons(_uiState.value.movies + _uiState.value.series)),
+            sportsCatalog = mergeSportsCatalog(emptyList(), sportsFromExistingAddons(_uiState.value.movies + _uiState.value.series)),
             xtreamMovies = emptyList(),
             xtreamSeries = emptyList(),
             iptvCategories = emptyList(),
