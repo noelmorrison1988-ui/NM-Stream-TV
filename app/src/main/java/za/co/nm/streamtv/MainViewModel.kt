@@ -55,6 +55,7 @@ data class MainUiState(
     val nmSyncStatus: String = "Not linked",
     val preferredQuality: Int = 720,
     val preferHttpDebrid: Boolean = true,
+    val preferredAudioLanguage: String = "en",
     val preferredSubtitleLanguage: String = "en",
     val message: String? = null
 )
@@ -77,6 +78,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var nmSyncJob: Job? = null
     private var traktCloudPlayback: List<PlaybackProgress> = emptyList()
     private var traktUpNext: List<PlaybackProgress> = emptyList()
+    private var lastTraktAuthFingerprint: Int? = null
+    private var lastRdAuthFingerprint: Int? = null
 
     init {
         refreshEverything()
@@ -185,6 +188,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 nmSyncStatus = if (nmAccount.isLinked()) _uiState.value.nmSyncStatus else "Not linked",
                 preferredQuality = nmPrefs.preferredQuality,
                 preferHttpDebrid = nmPrefs.preferHttpDebrid,
+                preferredAudioLanguage = nmPrefs.preferredAudioLanguage,
                 preferredSubtitleLanguage = nmPrefs.subtitleLanguage
             )
         }
