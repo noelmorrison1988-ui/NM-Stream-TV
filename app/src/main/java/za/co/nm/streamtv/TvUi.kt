@@ -53,6 +53,7 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -62,17 +63,22 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val NmBg = Color(0xFF050609)
-private val NmPanel = Color(0xFF15171D)
-private val NmPanelFocus = Color(0xFF252830)
+private val NmBg = Color(0xFF050607)
+private val NmPanel = Color(0xFF121417)
+private val NmPanelFocus = Color(0xFF1D2025)
 private val NmRed = Color(0xFFE2182D)
-private val NmMuted = Color(0xFFB6BBC5)
-private val NmGreen = Color(0xFF69D39A)
+private val NmGold = Color(0xFFD6A84B)
+private val NmPlatinum = Color(0xFFD8DCE3)
+private val NmMuted = Color(0xFF9EA5AF)
+private val NmGreen = Color(0xFF71D6A0)
 
 private sealed interface Screen {
     data object Home : Screen
     data object Search : Screen
+    data object Sports : Screen
     data object LiveTv : Screen
+    data object YouTube : Screen
+    data object Services : Screen
     data object Addons : Screen
     data class AddonConfig(val preset: AddonPreset) : Screen
     data object Settings : Screen
@@ -144,11 +150,27 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         screen = Screen.Details(it)
                     }
                 }
+                Screen.Sports -> Shell("Sports", { screen = it }) {
+                    SportsHubScreen(
+                        state = state,
+                        onOpen = {
+                            viewModel.loadDetails(it)
+                            screen = Screen.Details(it)
+                        },
+                        onCrew = viewModel::playKodiCrew
+                    )
+                }
                 Screen.LiveTv -> Shell("Live TV", { screen = it }) {
                     LiveTvScreen(state) {
                         viewModel.loadDetails(it)
                         screen = Screen.Details(it)
                     }
+                }
+                Screen.YouTube -> Shell("YouTube", { screen = it }) {
+                    YouTubeHubScreen()
+                }
+                Screen.Services -> Shell("Services", { screen = it }) {
+                    ServicesHubScreen()
                 }
                 Screen.Addons -> Shell("Add-ons", { screen = it }) {
                     AddonsScreen(
@@ -308,16 +330,36 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
 @Composable
 private fun Shell(selected: String, navigate: (Screen) -> Unit, content: @Composable () -> Unit) {
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().height(70.dp).background(Color(0xFF090A0E)).padding(horizontal = 34.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("NM", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Black)
-            Text(" STREAM", color = NmRed, fontSize = 25.sp, fontWeight = FontWeight.Black)
-            Spacer(Modifier.width(28.dp))
-            listOf("Home" to Screen.Home, "Search" to Screen.Search, "Live TV" to Screen.LiveTv, "Add-ons" to Screen.Addons, "Settings" to Screen.Settings).forEach { (label, target) ->
+        Row(
+            Modifier.fillMaxWidth()
+                .height(74.dp)
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(Color(0xFF111317), Color(0xFF08090B), Color(0xFF050607))
+                    )
+                )
+                .border(0.5.dp, NmGold.copy(alpha = .22f))
+                .padding(horizontal = 30.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("NM", color = NmPlatinum, fontSize = 25.sp, fontWeight = FontWeight.Black)
+            Text(" STREAM", color = NmGold, fontSize = 25.sp, fontWeight = FontWeight.Black)
+            Spacer(Modifier.width(24.dp))
+            listOf(
+                "Home" to Screen.Home,
+                "Sports" to Screen.Sports,
+                "Live TV" to Screen.LiveTv,
+                "YouTube" to Screen.YouTube,
+                "Services" to Screen.Services,
+                "Search" to Screen.Search,
+                "Add-ons" to Screen.Addons,
+                "Settings" to Screen.Settings
+            ).forEach { (label, target) ->
                 NavChip(label, selected == label) { navigate(target) }
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(5.dp))
             }
             Spacer(Modifier.weight(1f))
-            Text("NM DIGITAL", color = NmMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text("MORRISON ENTERTAINMENT", color = NmMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
         }
         Box(Modifier.fillMaxSize()) { content() }
     }
@@ -337,14 +379,14 @@ private fun Button(
             .clip(RoundedCornerShape(8.dp))
             .background(
                 when {
-                    !enabled -> Color(0xFF343841)
-                    focused -> Color(0xFFFF2948)
-                    else -> NmRed
+                    !enabled -> Color(0xFF2B2E33)
+                    focused -> NmGold
+                    else -> Color(0xFF22252A)
                 }
             )
             .border(
                 if (focused && enabled) 2.dp else 1.dp,
-                if (focused && enabled) Color.White else Color(0xFF444955),
+                if (focused && enabled) NmPlatinum else Color.White.copy(alpha = .12f),
                 RoundedCornerShape(8.dp)
             )
             .onFocusChanged { focused = it.isFocused }
@@ -360,9 +402,31 @@ private fun Button(
 @Composable
 private fun NavChip(label: String, selected: Boolean, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    Box(Modifier.clip(RoundedCornerShape(7.dp)).background(if (selected) NmRed else if (focused) NmPanelFocus else Color.Transparent)
-        .onFocusChanged { focused = it.isFocused }.clickable(onClick = onClick).focusable().padding(horizontal = 14.dp, vertical = 9.dp)) {
-        Text(label, color = Color.White, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
+    Box(
+        Modifier.clip(RoundedCornerShape(20.dp))
+            .background(
+                when {
+                    selected -> NmGold.copy(alpha = .18f)
+                    focused -> Color.White.copy(alpha = .08f)
+                    else -> Color.Transparent
+                }
+            )
+            .border(
+                if (selected || focused) 1.dp else 0.dp,
+                if (selected) NmGold.copy(alpha = .75f) else Color.White.copy(alpha = .18f),
+                RoundedCornerShape(20.dp)
+            )
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(onClick = onClick)
+            .focusable()
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        Text(
+            label,
+            color = if (selected) NmGold else NmPlatinum,
+            fontWeight = if (selected) FontWeight.Black else FontWeight.Medium,
+            fontSize = 13.sp
+        )
     }
 }
 
@@ -960,6 +1024,9 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
     var xtreamServer by remember { mutableStateOf("") }
     var xtreamUser by remember { mutableStateOf("") }
     var xtreamPass by remember { mutableStateOf("") }
+    var kodiPort by remember { mutableStateOf("8080") }
+    var kodiUser by remember { mutableStateOf("") }
+    var kodiPass by remember { mutableStateOf("") }
     var quality by remember(state.preferredQuality) { mutableStateOf(state.preferredQuality) }
     var preferHttp by remember(state.preferHttpDebrid) { mutableStateOf(state.preferHttpDebrid) }
     var audioLang by remember(state.preferredAudioLanguage) { mutableStateOf(state.preferredAudioLanguage) }
@@ -1082,6 +1149,26 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             }
         } }
         item { CardBox {
+            Text("Kodi · The Crew Sports", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text(state.kodiCrewStatus, color = if (state.kodiCrewConnected) NmGreen else NmMuted)
+            Text(
+                "NM Stream reads only The Crew's sports catalogue through Kodi's local JSON-RPC interface. In Kodi enable Settings → Services → Control → Allow remote control via HTTP.",
+                color = NmMuted
+            )
+            Box(Modifier.fillMaxWidth()) { InputBox(kodiPort, "Kodi HTTP port · usually 8080") { kodiPort = it } }
+            Box(Modifier.fillMaxWidth()) { InputBox(kodiUser, "Kodi web username · optional") { kodiUser = it } }
+            Box(Modifier.fillMaxWidth()) { InputBox(kodiPass, "Kodi web password · optional", password = true) { kodiPass = it } }
+            Button(onClick = {
+                vm.saveKodiCrewSettings(kodiPort.toIntOrNull() ?: 8080, kodiUser, kodiPass)
+                kodiPass = ""
+            }) { Text("Save Kodi bridge & refresh sports") }
+            Text(
+                "Kodi must be running on this Android box for the local bridge to answer. Playback is handed back to The Crew; NM Stream does not extract its stream URLs.",
+                color = NmMuted,
+                fontSize = 12.sp
+            )
+        } }
+        item { CardBox {
             Text("Trakt", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text(
                 state.traktUser?.let { "Connected as " + (it.name.ifBlank { it.username }) } ?: "Not connected",
@@ -1107,7 +1194,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV v0.12.0 · an NM Digital product", color = NmMuted) }
+        item { Text("NM Stream TV v0.13.0 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
@@ -1441,11 +1528,29 @@ private fun PlayerScreen(
     var trackRevision by remember(player) { mutableIntStateOf(0) }
     var showAudioMenu by remember { mutableStateOf(false) }
     var showSubtitleMenu by remember { mutableStateOf(false) }
+    var controlsVisible by remember(player) { mutableStateOf(true) }
+    var controlsRevision by remember(player) { mutableLongStateOf(System.currentTimeMillis()) }
+    var playerPositionMs by remember(player) { mutableLongStateOf(0L) }
+    var playerDurationMs by remember(player) { mutableLongStateOf(0L) }
+    var isPlaying by remember(player) { mutableStateOf(false) }
+    var fillVideo by remember(player) { mutableStateOf(false) }
+    val advisoryItems = remember(item.meta.contentRating, item.meta.contentAdvisories) {
+        buildList {
+            item.meta.contentRating?.takeIf { it.isNotBlank() }?.let { add("Rated " + it) }
+            addAll(item.meta.contentAdvisories.filter { it.isNotBlank() })
+        }.distinct()
+    }
+    var showAdvisory by remember(videoId) { mutableStateOf(advisoryItems.isNotEmpty()) }
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onTracksChanged(tracks: Tracks) {
                 trackRevision += 1
+            }
+
+            override fun onIsPlayingChanged(value: Boolean) {
+                isPlaying = value
+                controlsRevision = System.currentTimeMillis()
             }
         }
         player.addListener(listener)
@@ -1520,6 +1625,32 @@ private fun PlayerScreen(
         }
     }
 
+    LaunchedEffect(player) {
+        while (true) {
+            delay(500)
+            playerPositionMs = player.currentPosition.coerceAtLeast(0L)
+            playerDurationMs = player.duration.takeIf { it > 0 } ?: 0L
+            isPlaying = player.isPlaying
+        }
+    }
+
+    LaunchedEffect(controlsRevision, controlsVisible) {
+        if (controlsVisible) {
+            delay(6_000)
+            controlsVisible = false
+            showAudioMenu = false
+            showSubtitleMenu = false
+        }
+    }
+
+    LaunchedEffect(videoId, advisoryItems) {
+        showAdvisory = advisoryItems.isNotEmpty()
+        if (showAdvisory) {
+            delay(7_000)
+            showAdvisory = false
+        }
+    }
+
     DisposableEffect(player) {
         onDispose {
             val duration = player.duration.takeIf { it > 0 } ?: 0L
@@ -1529,47 +1660,159 @@ private fun PlayerScreen(
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(
+        Modifier.fillMaxSize()
+            .background(Color.Black)
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) {
+                    false
+                } else if (!controlsVisible) {
+                    controlsVisible = true
+                    controlsRevision = System.currentTimeMillis()
+                    true
+                } else {
+                    false
+                }
+            }
+    ) {
         AndroidView(
             factory = {
                 PlayerView(it).apply {
-                    useController = true
+                    useController = false
                     keepScreenOn = true
+                    resizeMode = if (fillVideo) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
                     this.player = player
                 }
             },
             update = {
                 it.player = player
                 it.keepScreenOn = true
+                it.useController = false
+                it.resizeMode = if (fillVideo) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
             },
             modifier = Modifier.fillMaxSize()
         )
 
-        Text(
-            title,
-            color = Color.White,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier
-                .padding(24.dp)
-                .background(Color.Black.copy(alpha = .55f))
-                .padding(10.dp)
-        )
-
-        Row(
-            Modifier.align(Alignment.TopEnd).padding(24.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Button(onClick = {
-                showAudioMenu = !showAudioMenu
-                showSubtitleMenu = false
-            }) {
-                Text("Audio")
+        if (showAdvisory) {
+            Column(
+                Modifier.align(Alignment.TopStart)
+                    .padding(start = 30.dp, top = 28.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.Black.copy(alpha = .78f))
+                    .border(1.dp, Color.White.copy(alpha = .14f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 15.dp, vertical = 11.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Text("CONTENT ADVISORY", color = NmGold, fontSize = 10.sp, fontWeight = FontWeight.Black)
+                Text(advisoryItems.joinToString("  ·  "), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
-            Button(onClick = {
-                showSubtitleMenu = !showSubtitleMenu
-                showAudioMenu = false
-            }) {
-                Text("Subtitles")
+        }
+
+        if (controlsVisible) {
+            Box(
+                Modifier.fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.Black.copy(alpha = .28f),
+                                Color.Transparent,
+                                Color.Transparent,
+                                Color.Black.copy(alpha = .86f)
+                            )
+                        )
+                    )
+            )
+
+            Column(
+                Modifier.align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 34.dp, vertical = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(11.dp)
+            ) {
+                Text(title, color = NmPlatinum, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+
+                val progress = if (playerDurationMs > 0) {
+                    (playerPositionMs.toFloat() / playerDurationMs.toFloat()).coerceIn(0f, 1f)
+                } else 0f
+
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(formatPlayerTime(playerPositionMs), color = NmMuted, fontSize = 12.sp)
+                    Box(
+                        Modifier.weight(1f)
+                            .height(5.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(Color.White.copy(alpha = .20f))
+                    ) {
+                        Box(
+                            Modifier.fillMaxHeight()
+                                .fillMaxWidth(progress)
+                                .background(Brush.horizontalGradient(listOf(NmGold, NmPlatinum)))
+                        )
+                    }
+                    Text(formatPlayerTime(playerDurationMs), color = NmMuted, fontSize = 12.sp)
+                }
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    PlayerControl(
+                        label = "↶ 10",
+                        onClick = {
+                            player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                            controlsRevision = System.currentTimeMillis()
+                        }
+                    )
+                    PlayerControl(
+                        label = if (isPlaying) "❚❚" else "▶",
+                        primary = true,
+                        onClick = {
+                            if (player.isPlaying) player.pause() else player.play()
+                            controlsRevision = System.currentTimeMillis()
+                        }
+                    )
+                    PlayerControl(
+                        label = "10 ↷",
+                        onClick = {
+                            val limit = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
+                            player.seekTo((player.currentPosition + 10_000L).coerceAtMost(limit))
+                            controlsRevision = System.currentTimeMillis()
+                        }
+                    )
+                    PlayerControl(
+                        label = "CC",
+                        active = showSubtitleMenu,
+                        onClick = {
+                            showSubtitleMenu = !showSubtitleMenu
+                            showAudioMenu = false
+                            controlsRevision = System.currentTimeMillis()
+                        }
+                    )
+                    PlayerControl(
+                        label = "AUDIO",
+                        active = showAudioMenu,
+                        onClick = {
+                            showAudioMenu = !showAudioMenu
+                            showSubtitleMenu = false
+                            controlsRevision = System.currentTimeMillis()
+                        }
+                    )
+                    PlayerControl(
+                        label = if (fillVideo) "FIT" else "FILL",
+                        onClick = {
+                            fillVideo = !fillVideo
+                            controlsRevision = System.currentTimeMillis()
+                        }
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        "NM STREAM",
+                        color = NmGold,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                }
             }
         }
 
@@ -1664,6 +1907,61 @@ private fun PlayerScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PlayerControl(
+    label: String,
+    primary: Boolean = false,
+    active: Boolean = false,
+    onClick: () -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    Box(
+        Modifier.height(if (primary) 52.dp else 44.dp)
+            .widthIn(min = if (primary) 58.dp else 54.dp)
+            .clip(RoundedCornerShape(40.dp))
+            .background(
+                when {
+                    focused -> NmGold
+                    active -> NmGold.copy(alpha = .22f)
+                    else -> Color(0xCC16181C)
+                }
+            )
+            .border(
+                1.dp,
+                when {
+                    focused -> NmPlatinum
+                    active -> NmGold
+                    else -> Color.White.copy(alpha = .14f)
+                },
+                RoundedCornerShape(40.dp)
+            )
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(onClick = onClick)
+            .focusable()
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            label,
+            color = if (focused) Color.Black else if (active) NmGold else NmPlatinum,
+            fontWeight = FontWeight.Black,
+            fontSize = if (primary) 18.sp else 12.sp
+        )
+    }
+}
+
+private fun formatPlayerTime(valueMs: Long): String {
+    val totalSeconds = (valueMs.coerceAtLeast(0L) / 1000L)
+    val hours = totalSeconds / 3600L
+    val minutes = (totalSeconds % 3600L) / 60L
+    val seconds = totalSeconds % 60L
+    return if (hours > 0L) {
+        String.format(Locale.getDefault(), "%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
     }
 }
 

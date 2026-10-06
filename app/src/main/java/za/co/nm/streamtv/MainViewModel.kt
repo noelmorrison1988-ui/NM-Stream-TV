@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class MainUiState(
     val loading: Boolean = true,
@@ -44,6 +45,10 @@ data class MainUiState(
     val traktConnecting: Boolean = false,
     val iptvChannels: List<AppMedia> = emptyList(),
     val iptvSports: List<AppMedia> = emptyList(),
+    val crewSports: List<AppMedia> = emptyList(),
+    val sportsCatalog: List<AppMedia> = emptyList(),
+    val kodiCrewConnected: Boolean = false,
+    val kodiCrewStatus: String = "Kodi bridge not connected",
     val xtreamMovies: List<AppMedia> = emptyList(),
     val xtreamSeries: List<AppMedia> = emptyList(),
     val iptvCategories: List<LiveTvCategory> = emptyList(),
@@ -68,6 +73,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val tmdb = TmdbRepository(application)
     private val trakt = TraktRepository(application)
     private val iptv = IptvRepository(application)
+    private val kodiCrew = KodiCrewRepository(application)
     private val playback = PlaybackStore(application)
     private val nmAccount = NmAccountRepository(application)
 
@@ -117,6 +123,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val iptvDeferred = async {
                 if (iptv.configured()) runCatching { iptv.loadChannels() }.getOrDefault(emptyList()) else emptyList()
             }
+            val crewDeferred = async {
+                withTimeoutOrNull(5_000) {
+                    runCatching { kodiCrew.loadSports() }.getOrDefault(emptyList())
+                }.orEmpty()
+            }
             val xtreamMoviesDeferred = async {
                 if (iptv.config().hasXtream) runCatching { iptv.loadXtreamMovies() }.getOrDefault(emptyList()) else emptyList()
             }
@@ -157,9 +168,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else rawSarahList
 
             val iptvChannels = iptvDeferred.await()
+            val crewSports = crewDeferred.await()
             val xtreamMovies = xtreamMoviesDeferred.await()
             val xtreamSeries = xtreamSeriesDeferred.await()
             val iptvSports = iptv.sportsOnly(iptvChannels)
+            val addonSports = sportsFromExistingAddons(rawMovies + rawSeries)
+            val sportsCatalog = mergeSportsCatalog(crewSports, iptvSports, addonSports)
             val iptvCategories = iptv.categoryRows(iptvChannels)
             val iptvGuide = if (iptvChannels.isNotEmpty()) {
                 runCatching { iptv.loadGuide(iptvChannels) }.getOrDefault(emptyMap())
@@ -189,6 +203,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 traktConnecting = false,
                 iptvChannels = iptvChannels,
                 iptvSports = iptvSports,
+                crewSports = crewSports,
+                sportsCatalog = sportsCatalog,
+                kodiCrewConnected = crewSports.isNotEmpty(),
+                kodiCrewStatus = if (crewSports.isNotEmpty()) {
+                    kodiCrew.statusLabel() + " · " + crewSports.size + " sports items"
+                } else {
+                    "Start Kodi and enable HTTP remote control to load The Crew sports"
+                },
                 xtreamMovies = xtreamMovies,
                 xtreamSeries = xtreamSeries,
                 iptvCategories = iptvCategories,
@@ -580,6 +602,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             iptvChannels = emptyList(),
             iptvSports = emptyList(),
+            sportsCatalog = mergeSportsCatalog(_uiState.value.crewSports, emptyList(), sportsFromExistingAddons(_uiState.value.movies + _uiState.value.series)),
             xtreamMovies = emptyList(),
             xtreamSeries = emptyList(),
             iptvCategories = emptyList(),
@@ -588,6 +611,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             iptvStatus = "Not configured",
             message = "IPTV configuration removed from all linked devices"
         )
+    }
+
+    fun playKodiCrew(item: AppMedia) {
+        val path = item.directUrl
+        if (path.isNullOrBlank() || item.originAddonName != "Kodi · The Crew") {
+            _uiState.value = _uiState.value.copy(message = "This is not a The Crew item")
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(message = "Opening in Kodi · The Crew…")
+            val opened = runCatching { kodiCrew.play(path) }.getOrDefault(false)
+            _uiState.value = _uiState.value.copy(
+                message = if (opened) "Sent to Kodi · The Crew" else "Could not reach Kodi. Start Kodi and enable HTTP remote control."
+            )
+        }
+    }
+
+    fun saveKodiCrewSettings(port: Int, username: String, password: String) {
+        runCatching { kodiCrew.saveConfig(port, username, password) }
+            .onSuccess {
+                _uiState.value = _uiState.value.copy(message = "Kodi bridge settings saved")
+                refreshEverything()
+            }
+            .onFailure {
+                _uiState.value = _uiState.value.copy(message = it.message ?: "Could not save Kodi settings")
+            }
     }
 
     fun savePlaybackPreferences(
@@ -902,6 +951,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 else "movie|${it.media.meta.id}|${it.videoId}"
             }
             .take(30)
+
+    private fun sportsFromExistingAddons(items: List<AppMedia>): List<AppMedia> {
+        val terms = listOf(
+            "sport", "rugby", "football", "soccer", "cricket", "formula 1", "f1", "motorsport",
+            "ufc", "mma", "boxing", "wwe", "tennis", "golf", "nfl", "nba", "nhl"
+        )
+        return items.filter { item ->
+            val text = buildString {
+                append(item.meta.name)
+                append(' ')
+                append(item.meta.description.orEmpty())
+                append(' ')
+                append(item.meta.genres.joinToString(" "))
+            }.lowercase()
+            terms.any(text::contains)
+        }
+    }
+
+    private fun mergeSportsCatalog(
+        crew: List<AppMedia>,
+        iptvItems: List<AppMedia>,
+        addonItems: List<AppMedia>
+    ): List<AppMedia> {
+        fun key(item: AppMedia): String = item.meta.name
+            .lowercase()
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim() + "|" + item.meta.genres.firstOrNull().orEmpty().lowercase()
+
+        return (crew + iptvItems + addonItems)
+            .distinctBy(::key)
+            .sortedWith(
+                compareBy<AppMedia> {
+                    when {
+                        it.meta.genres.any { genre -> genre.equals("Live", true) } -> 0
+                        it.meta.genres.any { genre -> genre.equals("Replay", true) } -> 2
+                        else -> 1
+                    }
+                }.thenBy { it.meta.name.lowercase() }
+            )
+            .take(300)
+    }
 
     private fun RdDownload.toAppMedia(): AppMedia? {
         val playable = download?.takeIf { it.startsWith("https://", true) || it.startsWith("http://", true) } ?: return null
