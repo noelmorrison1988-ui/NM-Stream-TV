@@ -59,6 +59,7 @@ class TmdbRepository(context: Context) {
             releaseInfo = item.meta.releaseInfo?.takeIf { it.isNotBlank() } ?: release?.take(4),
             imdbRating = item.meta.imdbRating?.takeIf { it.isNotBlank() }
                 ?: rating?.takeIf { it > 0.0 }?.let { String.format("%.1f", it) },
+            tmdbId = tmdbId ?: item.meta.tmdbId,
             contentRating = contentRating,
             isAnime = animeDetected,
             trailers = trailers
@@ -70,6 +71,89 @@ class TmdbRepository(context: Context) {
         val selected = items.take(limit)
         val enriched = selected.map { item -> async { runCatching { enrich(item) }.getOrDefault(item) } }.awaitAll()
         enriched + items.drop(limit)
+    }
+
+    suspend fun recommendationsFor(history: List<AppMedia>, limit: Int = 24): List<AppMedia> = supervisorScope {
+        val token = secureStore.get(TOKEN_KEY)?.trim().orEmpty()
+        if (token.isBlank()) return@supervisorScope emptyList()
+        val headers = mapOf("Authorization" to "Bearer $token")
+
+        val seeds = history
+            .filter { it.meta.type == "movie" || it.meta.type == "series" }
+            .filter { it.meta.tmdbId != null }
+            .distinctBy { "${it.meta.type}:${it.meta.tmdbId}" }
+            .take(4)
+
+        val recommended = seeds.map { seed ->
+            async {
+                runCatching { recommendationsForSeed(seed, headers) }.getOrDefault(emptyList())
+            }
+        }.awaitAll().flatten()
+
+        val seedIds = seeds.mapNotNull { it.meta.tmdbId }.toSet()
+        recommended
+            .filter { it.meta.tmdbId !in seedIds }
+            .filter(MediaPolicy::allows)
+            .distinctBy { "${it.meta.type}:${it.meta.tmdbId ?: it.meta.id}" }
+            .take(limit)
+    }
+
+    private suspend fun recommendationsForSeed(
+        item: AppMedia,
+        headers: Map<String, String>
+    ): List<AppMedia> {
+        val tmdbId = item.meta.tmdbId ?: return emptyList()
+        val endpoint = if (item.meta.type == "series") "tv" else "movie"
+        val result = SimpleHttp.get(
+            "$API/$endpoint/$tmdbId/recommendations?language=en-US&page=1",
+            headers
+        )
+        if (result.code !in 200..299) return emptyList()
+
+        val root = JsonParser.parseString(result.body).asJsonObject
+        return root.getAsJsonArray("results")
+            ?.mapNotNull { element ->
+                val candidate = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+                tmdbCandidateToAppMedia(candidate, item.meta.type)
+            }
+            .orEmpty()
+    }
+
+    private fun tmdbCandidateToAppMedia(candidate: JsonObject, type: String): AppMedia? {
+        val id = candidate.get("id")?.takeUnless { it.isJsonNull }?.asInt ?: return null
+        val name = if (type == "series") {
+            candidate.get("name")?.takeUnless { it.isJsonNull }?.asString
+        } else {
+            candidate.get("title")?.takeUnless { it.isJsonNull }?.asString
+        }?.takeIf { it.isNotBlank() } ?: return null
+
+        val posterPath = candidate.get("poster_path")?.takeUnless { it.isJsonNull }?.asString
+        val backdropPath = candidate.get("backdrop_path")?.takeUnless { it.isJsonNull }?.asString
+        val overview = candidate.get("overview")?.takeUnless { it.isJsonNull }?.asString
+        val release = candidate.get("release_date")?.takeUnless { it.isJsonNull }?.asString
+            ?: candidate.get("first_air_date")?.takeUnless { it.isJsonNull }?.asString
+        val rating = candidate.get("vote_average")?.takeUnless { it.isJsonNull }?.asDouble
+        val originalLanguage = candidate.get("original_language")?.takeUnless { it.isJsonNull }?.asString
+        val genreIds = candidate.getAsJsonArray("genre_ids")
+            ?.mapNotNull { runCatching { it.asInt }.getOrNull() }
+            .orEmpty()
+        val animeDetected = originalLanguage.equals("ja", true) && 16 in genreIds
+
+        return AppMedia(
+            meta = MetaItem(
+                id = "tmdb:$type:$id",
+                type = type,
+                name = name,
+                poster = posterPath?.let { "$IMG/w500$it" },
+                background = backdropPath?.let { "$IMG/w1280$it" },
+                description = overview,
+                releaseInfo = release?.take(4),
+                imdbRating = rating?.takeIf { it > 0.0 }?.let { String.format("%.1f", it) },
+                tmdbId = id,
+                isAnime = animeDetected
+            ),
+            originAddonName = "TMDB recommendation"
+        )
     }
 
     private suspend fun fetchContentRating(
