@@ -50,7 +50,7 @@ jobs:
         if: steps.kodi-cache.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
         env:
           KODI_BRANCH: Omega
-          KODI_JOBS: '2'
+          KODI_JOBS: '4'
         run: bash .github/scripts/build-kodi-aar.sh
 
       - name: Verify integrated Kodi Core
