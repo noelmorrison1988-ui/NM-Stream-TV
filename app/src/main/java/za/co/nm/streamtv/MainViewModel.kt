@@ -44,10 +44,7 @@ data class MainUiState(
     val traktConnecting: Boolean = false,
     val iptvChannels: List<AppMedia> = emptyList(),
     val iptvSports: List<AppMedia> = emptyList(),
-    val crewSports: List<AppMedia> = emptyList(),
     val sportsCatalog: List<AppMedia> = emptyList(),
-    val kodiCrewConnected: Boolean = false,
-    val kodiCrewStatus: String = "Kodi Core not included in this build",
     val xtreamMovies: List<AppMedia> = emptyList(),
     val xtreamSeries: List<AppMedia> = emptyList(),
     val iptvCategories: List<LiveTvCategory> = emptyList(),
@@ -122,8 +119,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val iptvDeferred = async {
                 if (iptv.configured()) runCatching { iptv.loadChannels() }.getOrDefault(emptyList()) else emptyList()
             }
-            val kodiConnected = KodiCore.isAvailable()
-            val crewSports = emptyList<AppMedia>()
             val xtreamMoviesDeferred = async {
                 if (iptv.config().hasXtream) runCatching { iptv.loadXtreamMovies() }.getOrDefault(emptyList()) else emptyList()
             }
@@ -182,7 +177,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val xtreamSeries = MediaPolicy.filter(xtreamSeriesDeferred.await())
             val iptvSports = iptv.sportsOnly(iptvChannels)
             val addonSports = sportsFromExistingAddons(rawMovies + rawSeries)
-            val sportsCatalog = mergeSportsCatalog(crewSports, iptvSports, addonSports)
+            val sportsCatalog = mergeSportsCatalog(iptvSports, addonSports)
             val iptvCategories = iptv.categoryRows(iptvChannels)
             val iptvGuide = if (iptvChannels.isNotEmpty()) {
                 runCatching { iptv.loadGuide(iptvChannels) }.getOrDefault(emptyMap())
@@ -212,14 +207,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 traktConnecting = false,
                 iptvChannels = iptvChannels,
                 iptvSports = iptvSports,
-                crewSports = crewSports,
                 sportsCatalog = sportsCatalog,
-                kodiCrewConnected = kodiConnected,
-                kodiCrewStatus = if (kodiConnected) {
-                    "${KodiCore.VERSION_LABEL} · integrated"
-                } else {
-                    "Kodi Core is not included in this build"
-                },
                 xtreamMovies = xtreamMovies,
                 xtreamSeries = xtreamSeries,
                 iptvCategories = iptvCategories,
@@ -1005,7 +993,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun mergeSportsCatalog(
-        crew: List<AppMedia>,
         iptvItems: List<AppMedia>,
         addonItems: List<AppMedia>
     ): List<AppMedia> {
@@ -1014,7 +1001,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .replace(Regex("[^a-z0-9]+"), " ")
             .trim() + "|" + item.meta.genres.firstOrNull().orEmpty().lowercase()
 
-        return (crew + iptvItems + addonItems)
+        return (iptvItems + addonItems)
             .filter(MediaPolicy::allows)
             .distinctBy(::key)
             .sortedWith(
