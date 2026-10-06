@@ -10,7 +10,7 @@
         android:allowBackup="true"
         android:banner="@drawable/tv_banner"
         android:icon="@drawable/ic_launcher"
-        android:label="NM Stream TV"
+        android:label="NM Stream TV Lite"
         android:supportsRtl="true"
         android:theme="@style/Theme.NMStreamTV"
         android:usesCleartextTraffic="true">
