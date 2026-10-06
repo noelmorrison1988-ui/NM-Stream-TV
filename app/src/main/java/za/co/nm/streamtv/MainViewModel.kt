@@ -640,16 +640,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun playKodiCrew(item: AppMedia) {
-        _uiState.value = _uiState.value.copy(
-            message = if (KodiCore.isAvailable()) {
-                "Open Kodi Core from Settings to use Kodi add-ons."
-            } else {
-                "Kodi Core is not included in this build."
-            }
-        )
-    }
-
     fun savePlaybackPreferences(
         preferredQuality: Int,
         preferHttpDebrid: Boolean,
