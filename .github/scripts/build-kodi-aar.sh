@@ -48,8 +48,13 @@ cd "$SRC/build"
 make -j"$JOBS"
 
 PACKAGING="$SRC/build/tools/android/packaging"
+TARGET_PREFIX="$PREFIX/aarch64-linux-android-21-release"
+
+test -d "$TARGET_PREFIX/share/kodi"
+test -d "$TARGET_PREFIX/lib"
+
 cd "$PACKAGING"
-make DEPENDS_PATH="$PREFIX" PREFIX="$PREFIX" sharedapk libs python java
+make DEPENDS_PATH="$TARGET_PREFIX" PREFIX="$TARGET_PREFIX" sharedapk libs python java
 
 python3 - <<'PY'
 from pathlib import Path
