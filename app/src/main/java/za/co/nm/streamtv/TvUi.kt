@@ -1023,6 +1023,9 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
     var xtreamServer by remember { mutableStateOf("") }
     var xtreamUser by remember { mutableStateOf("") }
     var xtreamPass by remember { mutableStateOf("") }
+    var kodiPort by remember { mutableStateOf("8080") }
+    var kodiUser by remember { mutableStateOf("") }
+    var kodiPass by remember { mutableStateOf("") }
     var quality by remember(state.preferredQuality) { mutableStateOf(state.preferredQuality) }
     var preferHttp by remember(state.preferHttpDebrid) { mutableStateOf(state.preferHttpDebrid) }
     var audioLang by remember(state.preferredAudioLanguage) { mutableStateOf(state.preferredAudioLanguage) }
@@ -1145,6 +1148,26 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             }
         } }
         item { CardBox {
+            Text("Kodi · The Crew Sports", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text(state.kodiCrewStatus, color = if (state.kodiCrewConnected) NmGreen else NmMuted)
+            Text(
+                "NM Stream reads only The Crew's sports catalogue through Kodi's local JSON-RPC interface. In Kodi enable Settings → Services → Control → Allow remote control via HTTP.",
+                color = NmMuted
+            )
+            Box(Modifier.fillMaxWidth()) { InputBox(kodiPort, "Kodi HTTP port · usually 8080") { kodiPort = it } }
+            Box(Modifier.fillMaxWidth()) { InputBox(kodiUser, "Kodi web username · optional") { kodiUser = it } }
+            Box(Modifier.fillMaxWidth()) { InputBox(kodiPass, "Kodi web password · optional", password = true) { kodiPass = it } }
+            Button(onClick = {
+                vm.saveKodiCrewSettings(kodiPort.toIntOrNull() ?: 8080, kodiUser, kodiPass)
+                kodiPass = ""
+            }) { Text("Save Kodi bridge & refresh sports") }
+            Text(
+                "Kodi must be running on this Android box for the local bridge to answer. Playback is handed back to The Crew; NM Stream does not extract its stream URLs.",
+                color = NmMuted,
+                fontSize = 12.sp
+            )
+        } }
+        item { CardBox {
             Text("Trakt", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text(
                 state.traktUser?.let { "Connected as " + (it.name.ifBlank { it.username }) } ?: "Not connected",
@@ -1170,7 +1193,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV v0.12.0 · an NM Digital product", color = NmMuted) }
+        item { Text("NM Stream TV v0.13.0 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
