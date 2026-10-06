@@ -43,13 +43,18 @@ jobs:
         run: gradle --no-daemon --stacktrace assembleDebug
 
       - name: Rename APK
+        id: apk
+        shell: bash
         run: |
+          VERSION_NAME=$(sed -n 's/.*versionName = "\\(.*\\)"/\\1/p' app/build.gradle.kts | head -n 1)
+          APK_NAME="NM-Stream-TV-v${VERSION_NAME}-debug"
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/NM-Stream-TV-v0.13.1-debug.apk
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/${APK_NAME}.apk"
+          echo "apk_name=${APK_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: NM-Stream-TV-v0.13.1-debug
-          path: dist/NM-Stream-TV-v0.13.1-debug.apk
+          name: ${{ steps.apk.outputs.apk_name }}
+          path: dist/${{ steps.apk.outputs.apk_name }}.apk
           if-no-files-found: error
