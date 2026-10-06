@@ -26,6 +26,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -1052,6 +1054,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
     var xtreamServer by remember { mutableStateOf("") }
     var xtreamUser by remember { mutableStateOf("") }
     var xtreamPass by remember { mutableStateOf("") }
+    var kodiHost by remember { mutableStateOf("127.0.0.1") }
     var kodiPort by remember { mutableStateOf("8080") }
     var kodiUser by remember { mutableStateOf("") }
     var kodiPass by remember { mutableStateOf("") }
@@ -1183,11 +1186,12 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
                 "NM Stream reads only The Crew's sports catalogue through Kodi's local JSON-RPC interface. In Kodi enable Settings → Services → Control → Allow remote control via HTTP.",
                 color = NmMuted
             )
+            Box(Modifier.fillMaxWidth()) { InputBox(kodiHost, "Kodi host/IP · 127.0.0.1 if same box") { kodiHost = it } }
             Box(Modifier.fillMaxWidth()) { InputBox(kodiPort, "Kodi HTTP port · usually 8080") { kodiPort = it } }
             Box(Modifier.fillMaxWidth()) { InputBox(kodiUser, "Kodi web username · optional") { kodiUser = it } }
             Box(Modifier.fillMaxWidth()) { InputBox(kodiPass, "Kodi web password · optional", password = true) { kodiPass = it } }
             Button(onClick = {
-                vm.saveKodiCrewSettings(kodiPort.toIntOrNull() ?: 8080, kodiUser, kodiPass)
+                vm.saveKodiCrewSettings(kodiHost, kodiPort.toIntOrNull() ?: 8080, kodiUser, kodiPass)
                 kodiPass = ""
             }) { Text("Save Kodi bridge & refresh sports") }
             Text(
@@ -1222,7 +1226,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV v0.13.0 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV v0.14.1 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
@@ -1545,7 +1549,7 @@ private fun PlayerScreen(
                         .build()
                 )
                 prepare()
-                playWhenReady = initialResumeMs <= 0 && initialResumePercent == null
+                playWhenReady = true
             }
     }
 
@@ -1558,6 +1562,7 @@ private fun PlayerScreen(
     var showSubtitleMenu by remember { mutableStateOf(false) }
     var controlsVisible by remember(player) { mutableStateOf(true) }
     var controlsRevision by remember(player) { mutableLongStateOf(System.currentTimeMillis()) }
+    val playPauseFocus = remember(player) { FocusRequester() }
     var playerPositionMs by remember(player) { mutableLongStateOf(0L) }
     var playerDurationMs by remember(player) { mutableLongStateOf(0L) }
     var isPlaying by remember(player) { mutableStateOf(false) }
@@ -1662,13 +1667,13 @@ private fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(controlsRevision, controlsVisible) {
-        if (controlsVisible) {
-            delay(6_000)
-            controlsVisible = false
-            showAudioMenu = false
-            showSubtitleMenu = false
-        }
+    LaunchedEffect(player) {
+        delay(250)
+        runCatching { playPauseFocus.requestFocus() }
+    }
+
+    LaunchedEffect(controlsRevision) {
+        controlsVisible = true
     }
 
     LaunchedEffect(videoId, advisoryItems) {
@@ -1707,6 +1712,8 @@ private fun PlayerScreen(
             factory = {
                 PlayerView(it).apply {
                     useController = false
+                    isFocusable = false
+                    isFocusableInTouchMode = false
                     keepScreenOn = true
                     resizeMode = if (fillVideo) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
                     this.player = player
@@ -1714,6 +1721,8 @@ private fun PlayerScreen(
             },
             update = {
                 it.player = player
+                it.isFocusable = false
+                it.isFocusableInTouchMode = false
                 it.keepScreenOn = true
                 it.useController = false
                 it.resizeMode = if (fillVideo) AspectRatioFrameLayout.RESIZE_MODE_ZOOM else AspectRatioFrameLayout.RESIZE_MODE_FIT
@@ -1795,6 +1804,7 @@ private fun PlayerScreen(
                     PlayerControl(
                         label = if (isPlaying) "❚❚" else "▶",
                         primary = true,
+                        modifier = Modifier.focusRequester(playPauseFocus),
                         onClick = {
                             if (player.isPlaying) player.pause() else player.play()
                             controlsRevision = System.currentTimeMillis()
@@ -1943,11 +1953,12 @@ private fun PlayerControl(
     label: String,
     primary: Boolean = false,
     active: Boolean = false,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
     Box(
-        Modifier.height(if (primary) 52.dp else 44.dp)
+        modifier.height(if (primary) 52.dp else 44.dp)
             .widthIn(min = if (primary) 58.dp else 54.dp)
             .clip(RoundedCornerShape(40.dp))
             .background(
