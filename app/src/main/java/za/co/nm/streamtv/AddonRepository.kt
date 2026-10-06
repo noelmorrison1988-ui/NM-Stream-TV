@@ -45,11 +45,13 @@ class AddonRepository(context: Context) {
         saveManifestCache(cached.filterKeys { it in urls })
 
         return resolved.mapNotNull { it.second }
+            .filter(MediaPolicy::allowsAddon)
     }
 
     suspend fun install(inputUrl: String): InstalledAddon {
         val manifestUrl = SimpleHttp.normalizeManifestUrl(inputUrl)
         val addon = fetchManifest(manifestUrl)
+        require(MediaPolicy.allowsAddon(addon)) { "Anime add-ons are blocked by NM Stream TV" }
         require(addon.manifest.id.isNotBlank()) { "Manifest is missing an id" }
         require(addon.manifest.resources.isNotEmpty()) { "Manifest exposes no resources" }
         val urls = loadStoredUrls().toMutableList()
@@ -82,6 +84,7 @@ class AddonRepository(context: Context) {
                     }
             }
             return jobs.awaitAll().flatten()
+                .filter(MediaPolicy::allows)
                 .distinctBy { "${it.meta.type}:${it.meta.id}" }
                 .take(48)
         }
@@ -105,6 +108,7 @@ class AddonRepository(context: Context) {
                 }
         }
         jobs.awaitAll().flatten()
+            .filter(MediaPolicy::allows)
             .distinctBy { "${it.meta.type}:${it.meta.id}" }
             .take(96)
     }
@@ -188,7 +192,7 @@ class AddonRepository(context: Context) {
         val body = SimpleHttp.requireSuccess(SimpleHttp.get(url), "Loading ${catalog.name ?: catalog.id}")
         return gson.fromJson(body, CatalogResponse::class.java).metas.map { meta ->
             AppMedia(meta = meta, originManifestUrl = addon.manifestUrl, originAddonName = addon.manifest.name)
-        }
+        }.filter(MediaPolicy::allows)
     }
 
     private suspend fun fetchManifest(manifestUrl: String): InstalledAddon {
