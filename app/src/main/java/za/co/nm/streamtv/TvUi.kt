@@ -161,8 +161,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         onOpen = {
                             viewModel.loadDetails(it)
                             screen = Screen.Details(it)
-                        },
-                        onCrew = viewModel::playKodiCrew
+                        }
                     )
                 }
                 Screen.LiveTv -> Shell("Live TV", { screen = it }) {
