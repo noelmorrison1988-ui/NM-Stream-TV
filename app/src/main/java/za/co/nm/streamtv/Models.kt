@@ -200,7 +200,8 @@ data class StreamOption(
 
     fun preferenceScore(
         preferredQuality: Int = 720,
-        preferHttpDebrid: Boolean = true
+        preferHttpDebrid: Boolean = true,
+        preferredAudioLanguage: String = "en"
     ): Int {
         val transport = when {
             playableUrl != null && isDebrid -> 0
@@ -230,7 +231,32 @@ data class StreamOption(
             preferHttpDebrid -> 1000
             else -> 100
         }
-        return p2pPenalty + quality * 10 + transport
+
+        val lang = preferredAudioLanguage.lowercase()
+        val preferredTokens = when {
+            lang.startsWith("en") -> listOf(" english ", " eng ", "[eng]", ".eng.", " en ")
+            lang.startsWith("de") -> listOf(" german ", " ger ", " deutsch ", "[ger]")
+            lang.startsWith("fr") -> listOf(" french ", " fre ", " fra ", "[fre]")
+            lang.startsWith("es") -> listOf(" spanish ", " spa ", " esp ", "[spa]")
+            else -> listOf(" $lang ", "[$lang]")
+        }
+        val foreignTokens = when {
+            lang.startsWith("en") -> listOf(
+                " russian ", " rus ", "[rus]", " hindi ", " hin ", "[hin]",
+                " spanish ", " spa ", "[spa]", " italian ", " ita ", "[ita]",
+                " german ", " ger ", "[ger]", " french ", " fre ", "[fre]",
+                " polish ", " pol ", "[pol]"
+            )
+            else -> emptyList()
+        }
+        val padded = " $searchableText "
+        val languagePenalty = when {
+            preferredTokens.any { padded.contains(it) } -> 0
+            foreignTokens.any { padded.contains(it) } -> 120
+            else -> 20
+        }
+
+        return p2pPenalty + languagePenalty + quality * 10 + transport
     }
 
     fun statusText(): String = when {

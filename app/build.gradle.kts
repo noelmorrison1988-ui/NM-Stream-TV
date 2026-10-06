@@ -12,8 +12,8 @@ android {
         applicationId = "za.co.nm.streamtv"
         minSdk = 23
         targetSdk = 36
-        versionCode = 13
-        versionName = "0.11.1"
+        versionCode = 14
+        versionName = "0.12.0"
     }
 
     buildFeatures {

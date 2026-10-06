@@ -2,6 +2,9 @@ package za.co.nm.streamtv
 
 import android.content.Context
 import com.google.gson.Gson
+import com.google.gson.JsonNull
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 
 data class NmPairRequest(
     val code: String = "",
@@ -29,10 +32,15 @@ data class NmSyncedIptv(
 data class NmRemoteSettings(
     val preferredQuality: Int = 720,
     val preferHttpDebrid: Boolean = true,
+    val preferredAudioLanguage: String = "en",
     val subtitleLanguage: String = "en",
     val addonManifests: List<String> = emptyList(),
     val syncIptv: Boolean = false,
     val iptv: NmSyncedIptv? = null,
+    val traktAuth: TraktStoredAuth? = null,
+    val realDebridAuth: RdStoredAuth? = null,
+    val traktAuthInitialized: Boolean = false,
+    val realDebridAuthInitialized: Boolean = false,
     val settingsVersion: Long = 0L,
     val updatedAt: String = ""
 )
@@ -46,6 +54,7 @@ data class NmDeviceState(
 data class NmPlaybackPreferences(
     val preferredQuality: Int = 720,
     val preferHttpDebrid: Boolean = true,
+    val preferredAudioLanguage: String = "en",
     val subtitleLanguage: String = "en"
 )
 
@@ -60,6 +69,7 @@ class NmAccountRepository(context: Context) {
         private const val SETTINGS_VERSION_KEY = "nm_account_settings_version"
         private const val PREF_QUALITY_KEY = "nm_pref_quality"
         private const val PREF_HTTP_KEY = "nm_pref_http_debrid"
+        private const val PREF_AUDIO_KEY = "nm_pref_audio"
         private const val PREF_SUBTITLE_KEY = "nm_pref_subtitle"
     }
 
@@ -79,8 +89,16 @@ class NmAccountRepository(context: Context) {
                 it in setOf(360, 480, 576, 720, 1080, 1440, 2160)
             } ?: 720,
             preferHttpDebrid = store.get(PREF_HTTP_KEY)?.toBooleanStrictOrNull() ?: true,
+            preferredAudioLanguage = store.get(PREF_AUDIO_KEY)?.takeIf { it.isNotBlank() } ?: "en",
             subtitleLanguage = store.get(PREF_SUBTITLE_KEY)?.takeIf { it.isNotBlank() } ?: "en"
         )
+
+    fun savePlaybackPreferences(preferences: NmPlaybackPreferences) {
+        store.put(PREF_QUALITY_KEY, preferences.preferredQuality.toString())
+        store.put(PREF_HTTP_KEY, preferences.preferHttpDebrid.toString())
+        store.put(PREF_AUDIO_KEY, preferences.preferredAudioLanguage.ifBlank { "en" })
+        store.put(PREF_SUBTITLE_KEY, preferences.subtitleLanguage.ifBlank { "en" })
+    }
 
     suspend fun startPairing(deviceName: String, appVersion: String): NmPairRequest {
         val body = gson.toJson(
@@ -122,12 +140,12 @@ class NmAccountRepository(context: Context) {
         addonManifests: List<String>,
         preferences: NmPlaybackPreferences
     ) {
-        val token = store.get(DEVICE_TOKEN_KEY)?.takeIf { it.isNotBlank() }
-            ?: return
+        val token = deviceToken() ?: return
         val payload = gson.toJson(
             mapOf(
                 "preferredQuality" to preferences.preferredQuality,
                 "preferHttpDebrid" to preferences.preferHttpDebrid,
+                "preferredAudioLanguage" to preferences.preferredAudioLanguage,
                 "subtitleLanguage" to preferences.subtitleLanguage,
                 "addonManifests" to addonManifests
             )
@@ -137,11 +155,15 @@ class NmAccountRepository(context: Context) {
             payload,
             mapOf("Authorization" to "Bearer $token")
         )
-        SimpleHttp.requireSuccess(response, "Bootstrapping NM Account")
+        val body = SimpleHttp.requireSuccess(response, "Bootstrapping NM Account")
+        val version = runCatching {
+            JsonParser.parseString(body).asJsonObject.get("settingsVersion")?.asLong
+        }.getOrNull()
+        if (version != null) store.put(SETTINGS_VERSION_KEY, version.toString())
     }
 
     suspend fun fetchState(): NmDeviceState {
-        val token = store.get(DEVICE_TOKEN_KEY)?.takeIf { it.isNotBlank() }
+        val token = deviceToken()
             ?: error("This TV is not linked to an NM Account")
         val response = SimpleHttp.get(
             "$API/device/state",
@@ -157,11 +179,68 @@ class NmAccountRepository(context: Context) {
         )
     }
 
+    suspend fun pushPlaybackPreferences(preferences: NmPlaybackPreferences) {
+        val payload = JsonObject().apply {
+            addProperty("preferredQuality", preferences.preferredQuality)
+            addProperty("preferHttpDebrid", preferences.preferHttpDebrid)
+            addProperty("preferredAudioLanguage", preferences.preferredAudioLanguage)
+            addProperty("subtitleLanguage", preferences.subtitleLanguage)
+        }
+        pushPartial(payload)
+    }
+
+    suspend fun pushAddonManifests(manifests: List<String>) {
+        val payload = JsonObject().apply {
+            add("addonManifests", gson.toJsonTree(manifests))
+        }
+        pushPartial(payload)
+    }
+
+    suspend fun pushIptv(syncEnabled: Boolean, config: IptvConfig?) {
+        val payload = JsonObject().apply {
+            addProperty("syncIptv", syncEnabled)
+            if (syncEnabled) {
+                add("iptv", config?.let { gson.toJsonTree(it) } ?: JsonNull.INSTANCE)
+            }
+        }
+        pushPartial(payload)
+    }
+
+    suspend fun pushTraktAuth(auth: TraktStoredAuth?) {
+        val payload = JsonObject().apply {
+            add("traktAuth", auth?.let { gson.toJsonTree(it) } ?: JsonNull.INSTANCE)
+        }
+        pushPartial(payload)
+    }
+
+    suspend fun pushRealDebridAuth(auth: RdStoredAuth?) {
+        val payload = JsonObject().apply {
+            add("realDebridAuth", auth?.let { gson.toJsonTree(it) } ?: JsonNull.INSTANCE)
+        }
+        pushPartial(payload)
+    }
+
+    suspend fun pushAllServiceAuth(
+        traktAuth: TraktStoredAuth?,
+        realDebridAuth: RdStoredAuth?
+    ) {
+        val payload = JsonObject().apply {
+            add("traktAuth", traktAuth?.let { gson.toJsonTree(it) } ?: JsonNull.INSTANCE)
+            add("realDebridAuth", realDebridAuth?.let { gson.toJsonTree(it) } ?: JsonNull.INSTANCE)
+        }
+        pushPartial(payload)
+    }
+
     fun applyLocalPreferences(state: NmDeviceState) {
         store.put(ACCOUNT_NAME_KEY, state.accountName.ifBlank { "NM Account" })
-        store.put(PREF_QUALITY_KEY, state.settings.preferredQuality.toString())
-        store.put(PREF_HTTP_KEY, state.settings.preferHttpDebrid.toString())
-        store.put(PREF_SUBTITLE_KEY, state.settings.subtitleLanguage.ifBlank { "en" })
+        savePlaybackPreferences(
+            NmPlaybackPreferences(
+                preferredQuality = state.settings.preferredQuality,
+                preferHttpDebrid = state.settings.preferHttpDebrid,
+                preferredAudioLanguage = state.settings.preferredAudioLanguage.ifBlank { "en" },
+                subtitleLanguage = state.settings.subtitleLanguage.ifBlank { "en" }
+            )
+        )
         store.put(SETTINGS_VERSION_KEY, state.settings.settingsVersion.toString())
     }
 
@@ -172,5 +251,21 @@ class NmAccountRepository(context: Context) {
             ACCOUNT_NAME_KEY,
             SETTINGS_VERSION_KEY
         ).forEach(store::remove)
+    }
+
+    private fun deviceToken(): String? =
+        store.get(DEVICE_TOKEN_KEY)?.takeIf { it.isNotBlank() }
+
+    private suspend fun pushPartial(payload: JsonObject) {
+        val token = deviceToken() ?: return
+        val response = SimpleHttp.postJson(
+            "$API/device/state",
+            gson.toJson(payload),
+            mapOf("Authorization" to "Bearer $token")
+        )
+        val body = SimpleHttp.requireSuccess(response, "Syncing changes to NM Account")
+        val version = JsonParser.parseString(body).asJsonObject
+            .get("settingsVersion")?.asLong
+        if (version != null) store.put(SETTINGS_VERSION_KEY, version.toString())
     }
 }

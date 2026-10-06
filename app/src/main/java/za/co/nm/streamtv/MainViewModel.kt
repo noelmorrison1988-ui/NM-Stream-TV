@@ -44,6 +44,8 @@ data class MainUiState(
     val traktConnecting: Boolean = false,
     val iptvChannels: List<AppMedia> = emptyList(),
     val iptvSports: List<AppMedia> = emptyList(),
+    val xtreamMovies: List<AppMedia> = emptyList(),
+    val xtreamSeries: List<AppMedia> = emptyList(),
     val iptvCategories: List<LiveTvCategory> = emptyList(),
     val iptvGuide: Map<String, List<EpgProgramme>> = emptyMap(),
     val iptvConfigured: Boolean = false,
@@ -55,6 +57,7 @@ data class MainUiState(
     val nmSyncStatus: String = "Not linked",
     val preferredQuality: Int = 720,
     val preferHttpDebrid: Boolean = true,
+    val preferredAudioLanguage: String = "en",
     val preferredSubtitleLanguage: String = "en",
     val message: String? = null
 )
@@ -77,6 +80,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var nmSyncJob: Job? = null
     private var traktCloudPlayback: List<PlaybackProgress> = emptyList()
     private var traktUpNext: List<PlaybackProgress> = emptyList()
+    private var lastTraktAuthFingerprint: Int? = null
+    private var lastRdAuthFingerprint: Int? = null
 
     init {
         refreshEverything()
@@ -112,6 +117,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val iptvDeferred = async {
                 if (iptv.configured()) runCatching { iptv.loadChannels() }.getOrDefault(emptyList()) else emptyList()
             }
+            val xtreamMoviesDeferred = async {
+                if (iptv.config().hasXtream) runCatching { iptv.loadXtreamMovies() }.getOrDefault(emptyList()) else emptyList()
+            }
+            val xtreamSeriesDeferred = async {
+                if (iptv.config().hasXtream) runCatching { iptv.loadXtreamSeries() }.getOrDefault(emptyList()) else emptyList()
+            }
 
             val (rawMovies, rawSeries) = homeDeferred.await()
             val movies = if (tmdb.configured()) runCatching { tmdb.enrichBatch(rawMovies, 24) }.getOrDefault(rawMovies) else rawMovies
@@ -146,6 +157,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else rawSarahList
 
             val iptvChannels = iptvDeferred.await()
+            val xtreamMovies = xtreamMoviesDeferred.await()
+            val xtreamSeries = xtreamSeriesDeferred.await()
             val iptvSports = iptv.sportsOnly(iptvChannels)
             val iptvCategories = iptv.categoryRows(iptvChannels)
             val iptvGuide = if (iptvChannels.isNotEmpty()) {
@@ -176,6 +189,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 traktConnecting = false,
                 iptvChannels = iptvChannels,
                 iptvSports = iptvSports,
+                xtreamMovies = xtreamMovies,
+                xtreamSeries = xtreamSeries,
                 iptvCategories = iptvCategories,
                 iptvGuide = iptvGuide,
                 iptvConfigured = iptv.configured(),
@@ -185,6 +200,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 nmSyncStatus = if (nmAccount.isLinked()) _uiState.value.nmSyncStatus else "Not linked",
                 preferredQuality = nmPrefs.preferredQuality,
                 preferHttpDebrid = nmPrefs.preferHttpDebrid,
+                preferredAudioLanguage = nmPrefs.preferredAudioLanguage,
                 preferredSubtitleLanguage = nmPrefs.subtitleLanguage
             )
         }
@@ -207,6 +223,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         addonInstallStatus = "Installed ${installed.manifest.name}",
                         addons = (_uiState.value.addons + installed).distinctBy { it.manifestUrl }
                     )
+                    if (nmAccount.isLinked()) {
+                        runCatching { nmAccount.pushAddonManifests(addons.storedManifestUrls()) }
+                    }
                     refreshEverything()
                 }
                 .onFailure { error ->
@@ -221,7 +240,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun removeAddon(manifestUrl: String) {
         addons.remove(manifestUrl)
         _uiState.value = _uiState.value.copy(addonInstallStatus = "Add-on removed")
-        refreshEverything()
+        viewModelScope.launch {
+            if (nmAccount.isLinked()) {
+                runCatching { nmAccount.pushAddonManifests(addons.storedManifestUrls()) }
+            }
+            refreshEverything()
+        }
     }
 
     fun search(query: String) {
@@ -243,8 +267,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun loadDetails(item: AppMedia) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(selectedMedia = item, detailsLoading = true, message = null)
-            val addonMeta = runCatching { addons.loadMeta(item, _uiState.value.addons) }.getOrDefault(item)
-            val loaded = if (tmdb.configured()) runCatching { tmdb.enrich(addonMeta) }.getOrDefault(addonMeta) else addonMeta
+            val sourceMeta = when {
+                item.meta.id.startsWith("xtream:series:") ->
+                    runCatching { iptv.loadXtreamSeriesDetails(item) }.getOrDefault(item)
+                else ->
+                    runCatching { addons.loadMeta(item, _uiState.value.addons) }.getOrDefault(item)
+            }
+            val loaded = if (tmdb.configured()) {
+                runCatching { tmdb.enrich(sourceMeta) }.getOrDefault(sourceMeta)
+            } else sourceMeta
             _uiState.value = _uiState.value.copy(selectedMedia = loaded, detailsLoading = false)
         }
     }
@@ -260,20 +291,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 message = null
             )
             val streamsDeferred = async {
-                if (!item.directUrl.isNullOrBlank()) {
-                    listOf(
+                val xtreamEpisodeUrl = iptv.resolveXtreamEpisodeUrl(videoId)
+                when {
+                    xtreamEpisodeUrl != null -> listOf(
                         StreamOption(
-                            addonName = item.originAddonName ?: "Real-Debrid",
+                            addonName = "NM IPTV · Xtream Series",
+                            stream = AddonStream(
+                                name = item.meta.name,
+                                title = "Xtream · ${item.meta.name}",
+                                url = xtreamEpisodeUrl
+                            )
+                        )
+                    )
+                    !item.directUrl.isNullOrBlank() -> listOf(
+                        StreamOption(
+                            addonName = item.originAddonName ?: "Direct source",
                             stream = AddonStream(name = item.meta.name, title = item.meta.name, url = item.directUrl)
                         )
                     )
-                } else {
-                    runCatching { addons.loadStreams(_uiState.value.addons, item.meta.type, videoId) }.getOrDefault(emptyList())
+                    else -> runCatching {
+                        addons.loadStreams(_uiState.value.addons, item.meta.type, videoId)
+                    }.getOrDefault(emptyList())
                 }
             }
             val subtitlesDeferred = async {
-                if (item.meta.type == "rd") emptyList()
-                else runCatching { addons.loadSubtitles(_uiState.value.addons, item.meta.type, videoId) }.getOrDefault(emptyList())
+                if (item.meta.type == "rd" || videoId.startsWith("xtream:episode:") || item.meta.id.startsWith("xtream:vod:")) {
+                    emptyList()
+                } else {
+                    runCatching {
+                        addons.loadSubtitles(_uiState.value.addons, item.meta.type, videoId)
+                    }.getOrDefault(emptyList())
+                }
             }
             val prefs = nmAccount.playbackPreferences()
             val sortedStreams = streamsDeferred.await()
@@ -281,7 +329,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     compareBy<StreamOption> {
                         it.preferenceScore(
                             preferredQuality = prefs.preferredQuality,
-                            preferHttpDebrid = prefs.preferHttpDebrid
+                            preferHttpDebrid = prefs.preferHttpDebrid,
+                            preferredAudioLanguage = prefs.preferredAudioLanguage
                         )
                     }.thenBy { it.stream.behaviorHints?.videoSize ?: Long.MAX_VALUE }
                 )
@@ -378,56 +427,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshEverything()
     }
 
-    fun saveTraktClientId(clientId: String) {
-        traktAuthJob?.cancel()
-        runCatching { trakt.saveClientId(clientId) }
-            .onSuccess {
-                traktCloudPlayback = emptyList()
-                traktUpNext = emptyList()
-                _uiState.value = _uiState.value.copy(
-                    traktConfigured = trakt.credentialsConfigured(),
-                    traktConnected = false,
-                    traktUser = null,
-                    traktWatchlist = emptyList(),
-                    noelList = emptyList(),
-                    sarahList = emptyList(),
-                    continueWatching = playback.load(),
-                    traktDeviceCode = null,
-                    traktConnecting = false,
-                    message = "Trakt Client ID saved"
-                )
-            }
-            .onFailure { error ->
-                _uiState.value = _uiState.value.copy(
-                    traktConfigured = trakt.credentialsConfigured(),
-                    traktConnected = false,
-                    traktUser = null,
-                    traktDeviceCode = null,
-                    traktConnecting = false,
-                    message = error.message ?: "Could not save Trakt Client ID"
-                )
-            }
-    }
-
-    fun clearTraktCredentials() {
-        traktAuthJob?.cancel()
-        trakt.clearCredentials()
-        traktCloudPlayback = emptyList()
-        traktUpNext = emptyList()
-        _uiState.value = _uiState.value.copy(
-            traktConfigured = false,
-            traktConnected = false,
-            traktUser = null,
-            traktWatchlist = emptyList(),
-            noelList = emptyList(),
-            sarahList = emptyList(),
-            continueWatching = playback.load(),
-            traktDeviceCode = null,
-            traktConnecting = false,
-            message = "Trakt configuration removed"
-        )
-    }
-
     fun beginRealDebridSignIn() {
         rdAuthJob?.cancel()
         rdAuthJob = viewModelScope.launch {
@@ -444,6 +443,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (credentials != null) {
                     val success = runCatching { realDebrid.exchangeDeviceCode(device.deviceCode, credentials); true }.getOrDefault(false)
                     if (success) {
+                        if (nmAccount.isLinked()) {
+                            runCatching { nmAccount.pushRealDebridAuth(realDebrid.exportAuth()) }
+                        }
+                        lastRdAuthFingerprint = realDebrid.exportAuth()?.hashCode() ?: 0
                         _uiState.value = _uiState.value.copy(rdConnecting = false, rdDeviceCode = null, message = "Real-Debrid connected")
                         refreshEverything()
                         return@launch
@@ -458,12 +461,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun disconnectRealDebrid() {
         rdAuthJob?.cancel()
         realDebrid.disconnect()
+        lastRdAuthFingerprint = 0
+        viewModelScope.launch {
+            if (nmAccount.isLinked()) runCatching { nmAccount.pushRealDebridAuth(null) }
+        }
         _uiState.value = _uiState.value.copy(
             rdUser = null,
             rdDeviceCode = null,
             rdConnecting = false,
             debridItems = emptyList(),
-            message = "Real-Debrid disconnected"
+            message = "Real-Debrid disconnected on all linked devices"
         )
     }
 
@@ -490,13 +497,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val auth = attempt.getOrNull()
                 if (auth != null) {
+                    if (nmAccount.isLinked()) {
+                        runCatching { nmAccount.pushTraktAuth(trakt.exportAuth()) }
+                    }
+                    lastTraktAuthFingerprint = trakt.exportAuth()?.hashCode() ?: 0
                     val user = runCatching { trakt.getUser() }.getOrNull()
                     _uiState.value = _uiState.value.copy(
                         traktConnecting = false,
                         traktDeviceCode = null,
                         traktConnected = true,
                         traktUser = user,
-                        message = "Trakt connected"
+                        message = "Trakt connected and synced"
                     )
                     refreshEverything()
                     return@launch
@@ -510,8 +521,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun disconnectTrakt() {
         traktAuthJob?.cancel()
         trakt.disconnect()
+        lastTraktAuthFingerprint = 0
         traktCloudPlayback = emptyList()
         traktUpNext = emptyList()
+        viewModelScope.launch {
+            if (nmAccount.isLinked()) runCatching { nmAccount.pushTraktAuth(null) }
+        }
         _uiState.value = _uiState.value.copy(
             traktConnected = false,
             traktUser = null,
@@ -521,7 +536,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             continueWatching = playback.load(),
             traktDeviceCode = null,
             traktConnecting = false,
-            message = "Trakt disconnected"
+            message = "Trakt disconnected on all linked devices"
         )
     }
 
@@ -529,7 +544,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { iptv.saveM3u(m3uUrl, epgUrl) }
                 .onSuccess {
-                    _uiState.value = _uiState.value.copy(message = "IPTV playlist saved")
+                    if (nmAccount.isLinked()) {
+                        runCatching { nmAccount.pushIptv(true, iptv.config()) }
+                    }
+                    _uiState.value = _uiState.value.copy(message = "IPTV playlist saved and synced")
                     refreshEverything()
                 }
                 .onFailure { error ->
@@ -542,7 +560,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { iptv.saveXtream(server, username, password) }
                 .onSuccess {
-                    _uiState.value = _uiState.value.copy(message = "Xtream IPTV saved")
+                    if (nmAccount.isLinked()) {
+                        runCatching { nmAccount.pushIptv(true, iptv.config()) }
+                    }
+                    _uiState.value = _uiState.value.copy(message = "Xtream IPTV saved and synced")
                     refreshEverything()
                 }
                 .onFailure { error ->
@@ -553,15 +574,52 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearIptv() {
         iptv.clear()
+        viewModelScope.launch {
+            if (nmAccount.isLinked()) runCatching { nmAccount.pushIptv(true, null) }
+        }
         _uiState.value = _uiState.value.copy(
             iptvChannels = emptyList(),
             iptvSports = emptyList(),
+            xtreamMovies = emptyList(),
+            xtreamSeries = emptyList(),
             iptvCategories = emptyList(),
             iptvGuide = emptyMap(),
             iptvConfigured = false,
             iptvStatus = "Not configured",
-            message = "IPTV configuration removed"
+            message = "IPTV configuration removed from all linked devices"
         )
+    }
+
+    fun savePlaybackPreferences(
+        preferredQuality: Int,
+        preferHttpDebrid: Boolean,
+        audioLanguage: String,
+        subtitleLanguage: String
+    ) {
+        val prefs = NmPlaybackPreferences(
+            preferredQuality = preferredQuality,
+            preferHttpDebrid = preferHttpDebrid,
+            preferredAudioLanguage = audioLanguage.trim().ifBlank { "en" },
+            subtitleLanguage = subtitleLanguage.trim().ifBlank { "en" }
+        )
+        nmAccount.savePlaybackPreferences(prefs)
+        _uiState.value = _uiState.value.copy(
+            preferredQuality = prefs.preferredQuality,
+            preferHttpDebrid = prefs.preferHttpDebrid,
+            preferredAudioLanguage = prefs.preferredAudioLanguage,
+            preferredSubtitleLanguage = prefs.subtitleLanguage,
+            message = "Playback language and source preferences saved"
+        )
+        viewModelScope.launch {
+            if (nmAccount.isLinked()) {
+                runCatching { nmAccount.pushPlaybackPreferences(prefs) }
+                    .onFailure { error ->
+                        _uiState.value = _uiState.value.copy(
+                            message = error.message ?: "Saved locally, but cloud sync failed"
+                        )
+                    }
+            }
+        }
     }
 
     fun beginNmAccountPairing() {
@@ -609,6 +667,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             addons.storedManifestUrls(),
                             nmAccount.playbackPreferences()
                         )
+                        nmAccount.pushAllServiceAuth(
+                            trakt.exportAuth(),
+                            realDebrid.exportAuth()
+                        )
+                        lastTraktAuthFingerprint = trakt.exportAuth()?.hashCode() ?: 0
+                        lastRdAuthFingerprint = realDebrid.exportAuth()?.hashCode() ?: 0
                         applyNmAccountSync(force = true)
                     }.onFailure { error ->
                         _uiState.value = _uiState.value.copy(
@@ -682,10 +746,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         nmSyncJob = viewModelScope.launch {
             while (true) {
                 if (nmAccount.isLinked()) {
-                    runCatching { applyNmAccountSync(force = false) }
-                        .onFailure {
-                            _uiState.value = _uiState.value.copy(nmSyncStatus = "Waiting to sync")
-                        }
+                    runCatching {
+                        applyNmAccountSync(force = false)
+                        pushChangedServiceAuthIfNeeded()
+                    }.onFailure {
+                        _uiState.value = _uiState.value.copy(nmSyncStatus = "Waiting to sync")
+                    }
                 }
                 delay(15_000)
             }
@@ -703,7 +769,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             addons.syncManifestUrls(remote.settings.addonManifests)
 
             if (remote.settings.syncIptv) {
-                remote.settings.iptv?.let { cloud ->
+                val cloud = remote.settings.iptv
+                if (cloud == null) {
+                    iptv.clear()
+                } else {
                     iptv.replaceConfig(
                         IptvConfig(
                             m3uUrl = cloud.m3uUrl,
@@ -716,6 +785,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
+            if (remote.settings.traktAuthInitialized) {
+                trakt.importAuth(remote.settings.traktAuth)
+                lastTraktAuthFingerprint = trakt.exportAuth()?.hashCode() ?: 0
+            } else if (trakt.exportAuth() != null) {
+                nmAccount.pushTraktAuth(trakt.exportAuth())
+                lastTraktAuthFingerprint = trakt.exportAuth()?.hashCode() ?: 0
+            }
+
+            if (remote.settings.realDebridAuthInitialized) {
+                realDebrid.importAuth(remote.settings.realDebridAuth)
+                lastRdAuthFingerprint = realDebrid.exportAuth()?.hashCode() ?: 0
+            } else if (realDebrid.exportAuth() != null) {
+                nmAccount.pushRealDebridAuth(realDebrid.exportAuth())
+                lastRdAuthFingerprint = realDebrid.exportAuth()?.hashCode() ?: 0
+            }
+
             val prefs = nmAccount.playbackPreferences()
             _uiState.value = _uiState.value.copy(
                 nmAccountLinked = true,
@@ -723,6 +808,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 nmSyncStatus = "Synced",
                 preferredQuality = prefs.preferredQuality,
                 preferHttpDebrid = prefs.preferHttpDebrid,
+                preferredAudioLanguage = prefs.preferredAudioLanguage,
                 preferredSubtitleLanguage = prefs.subtitleLanguage
             )
             refreshEverything()
@@ -734,6 +820,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         return changed
+    }
+
+    private suspend fun pushChangedServiceAuthIfNeeded() {
+        if (!nmAccount.isLinked()) return
+
+        val traktAuth = trakt.exportAuth()
+        val traktFingerprint = traktAuth?.hashCode() ?: 0
+        if (lastTraktAuthFingerprint == null) {
+            lastTraktAuthFingerprint = traktFingerprint
+        } else if (traktFingerprint != lastTraktAuthFingerprint) {
+            nmAccount.pushTraktAuth(traktAuth)
+            lastTraktAuthFingerprint = traktFingerprint
+        }
+
+        val rdAuth = realDebrid.exportAuth()
+        val rdFingerprint = rdAuth?.hashCode() ?: 0
+        if (lastRdAuthFingerprint == null) {
+            lastRdAuthFingerprint = rdFingerprint
+        } else if (rdFingerprint != lastRdAuthFingerprint) {
+            nmAccount.pushRealDebridAuth(rdAuth)
+            lastRdAuthFingerprint = rdFingerprint
+        }
     }
 
     fun resumePosition(item: AppMedia, videoId: String): Long = playback.resumePosition(item, videoId)

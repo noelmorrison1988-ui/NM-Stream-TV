@@ -46,6 +46,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -271,6 +274,8 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     subtitles = emptyList(),
                     resumeMs = 0L,
                     resumePercent = null,
+                    preferredAudioLanguage = state.preferredAudioLanguage,
+                    preferredSubtitleLanguage = state.preferredSubtitleLanguage,
                     onStarted = { _, _ -> },
                     onProgress = { _, _ -> },
                     onStopped = { _, _ -> }
@@ -284,6 +289,8 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     subtitles = state.subtitleOptions,
                     resumeMs = viewModel.resumePosition(current.item, current.videoId),
                     resumePercent = viewModel.resumeCloudPercent(current.item, current.videoId),
+                    preferredAudioLanguage = state.preferredAudioLanguage,
+                    preferredSubtitleLanguage = state.preferredSubtitleLanguage,
                     onStarted = { p, d -> viewModel.onPlaybackStarted(current.item, current.videoId, p, d) },
                     onProgress = { p, d -> viewModel.onPlaybackProgress(current.item, current.videoId, current.title, p, d) },
                     onStopped = { p, d -> viewModel.onPlaybackStopped(current.item, current.videoId, current.title, p, d) }
@@ -370,7 +377,10 @@ private fun HomeScreen(
         CenterText("Loading NM Stream TV…")
         return
     }
-    val hero = state.movies.firstOrNull() ?: state.series.firstOrNull()
+    val hero = state.movies.firstOrNull()
+        ?: state.series.firstOrNull()
+        ?: state.xtreamMovies.firstOrNull()
+        ?: state.xtreamSeries.firstOrNull()
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         item { if (hero != null) Hero(hero, onOpen) else EmptyHero(state.addons.isEmpty()) }
 
@@ -398,6 +408,8 @@ private fun HomeScreen(
 
         if (state.traktWatchlist.isNotEmpty()) item { MediaRow("My Trakt Watchlist", state.traktWatchlist, onOpen) }
         if (state.iptvSports.isNotEmpty()) item { MediaRow("Live Sports · Rugby · F1 · Soccer · Cricket", state.iptvSports.take(40), onOpen) }
+        if (state.xtreamMovies.isNotEmpty()) item { MediaRow("Xtream Movies", state.xtreamMovies, onOpen) }
+        if (state.xtreamSeries.isNotEmpty()) item { MediaRow("Xtream Series", state.xtreamSeries, onOpen) }
         if (state.movies.isNotEmpty()) item { MediaRow("Movies", state.movies, onOpen) }
         if (state.series.isNotEmpty()) item { MediaRow("Series", state.series, onOpen) }
         if (state.debridItems.isNotEmpty()) item { MediaRow("My Real-Debrid Library", state.debridItems, onOpen) }
@@ -943,12 +955,15 @@ private fun AddonConfiguratorScreen(
 @Composable
 private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
     var tmdb by remember { mutableStateOf("") }
-    var traktId by remember { mutableStateOf("") }
     var m3uUrl by remember { mutableStateOf("") }
     var epgUrl by remember { mutableStateOf("") }
     var xtreamServer by remember { mutableStateOf("") }
     var xtreamUser by remember { mutableStateOf("") }
     var xtreamPass by remember { mutableStateOf("") }
+    var quality by remember(state.preferredQuality) { mutableStateOf(state.preferredQuality) }
+    var preferHttp by remember(state.preferHttpDebrid) { mutableStateOf(state.preferHttpDebrid) }
+    var audioLang by remember(state.preferredAudioLanguage) { mutableStateOf(state.preferredAudioLanguage) }
+    var subtitleLang by remember(state.preferredSubtitleLanguage) { mutableStateOf(state.preferredSubtitleLanguage) }
     val context = LocalContext.current
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 24.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 55.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text("Settings", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black) }
@@ -993,6 +1008,39 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             }) { Text("Open phone control panel") }
         } }
         item { CardBox {
+            Text("Playback & language", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text("These preferences sync to every linked NM Stream TV device.", color = NmMuted)
+
+            Text("Preferred quality", color = Color.White, fontWeight = FontWeight.Bold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(480, 720, 1080, 2160).forEach { value ->
+                    Button(onClick = { quality = value }) {
+                        Text(if (quality == value) "✓ ${value}p" else "${value}p")
+                    }
+                }
+            }
+
+            Button(onClick = { preferHttp = !preferHttp }) {
+                Text(if (preferHttp) "✓ Prefer HTTP / Debrid over P2P" else "Prefer HTTP / Debrid over P2P")
+            }
+
+            Text("Preferred audio language", color = Color.White, fontWeight = FontWeight.Bold)
+            Box(Modifier.fillMaxWidth()) { InputBox(audioLang, "en") { audioLang = it } }
+            Text("Examples: en, de, fr, es. The player will still let you switch tracks manually.", color = NmMuted, fontSize = 12.sp)
+
+            Text("Preferred subtitle language", color = Color.White, fontWeight = FontWeight.Bold)
+            Box(Modifier.fillMaxWidth()) { InputBox(subtitleLang, "en") { subtitleLang = it } }
+
+            Button(onClick = {
+                vm.savePlaybackPreferences(
+                    quality,
+                    preferHttp,
+                    audioLang,
+                    subtitleLang
+                )
+            }) { Text("Save & sync playback preferences") }
+        } }
+        item { CardBox {
             Text("TMDB artwork", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text("Status: " + state.tmdbStatus, color = if (state.tmdbConfigured) NmGreen else NmMuted)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1006,7 +1054,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
         item { CardBox {
             Text("Live TV / IPTV", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text("Status: " + state.iptvStatus, color = if (state.iptvConfigured) NmGreen else NmMuted)
-            Text("Use an IPTV source you are authorized to access. M3U/M3U8 and Xtream live TV are supported; sports are automatically prioritised.", color = NmMuted)
+            Text("Use an IPTV source you are authorized to access. M3U/M3U8 supports Live TV. Xtream Codes loads Live TV plus provider Movies and Series; Xtream VOD appears in separate Home rows.", color = NmMuted)
             Text("M3U / XMLTV", color = Color.White, fontWeight = FontWeight.Bold)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.fillMaxWidth()) { InputBox(m3uUrl, "M3U / M3U8 playlist URL") { m3uUrl = it } }
@@ -1028,7 +1076,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
                         xtreamServer = ""
                         xtreamUser = ""
                         xtreamPass = ""
-                    }) { Text("Save Xtream") }
+                    }) { Text("Save Xtream · Live + Movies + Series") }
                     if (state.iptvConfigured) Button(onClick = vm::clearIptv) { Text("Remove IPTV") }
                 }
             }
@@ -1036,42 +1084,30 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
         item { CardBox {
             Text("Trakt", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text(
-                if (state.traktConnected) "Connected"
-                else if (state.traktConfigured) "Client ID saved"
-                else "Client ID required",
+                state.traktUser?.let { "Connected as " + (it.name.ifBlank { it.username }) } ?: "Not connected",
                 color = if (state.traktConnected) NmGreen else NmMuted
             )
-            Text("Native Trakt: TV device sign-in using your Client ID only, automatic token refresh, cloud Continue Watching, Up Next episodes and personal list sync. New Trakt apps no longer need a Client Secret for user sign-in.", color = NmMuted)
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.fillMaxWidth()) { InputBox(traktId, "Trakt Client ID") { traktId = it } }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(
-                        onClick = {
-                            vm.saveTraktClientId(traktId)
-                            traktId = ""
-                        },
-                        enabled = traktId.isNotBlank()
-                    ) { Text("Save Client ID") }
-                    if (state.traktConfigured) Button(onClick = vm::clearTraktCredentials) { Text("Remove") }
-                }
-            }
+            Text(
+                "Simple TV sign-in: choose Connect Trakt, then enter the code in Trakt on your phone. No Client ID or developer setup is required.",
+                color = NmMuted
+            )
             if (state.traktConnected) {
-                Button(onClick = vm::disconnectTrakt) { Text("Disconnect Trakt") }
+                Button(onClick = vm::disconnectTrakt) { Text("Disconnect Trakt everywhere") }
             } else {
                 Button(
                     onClick = vm::beginTraktSignIn,
-                    enabled = state.traktConfigured && !state.traktConnecting
-                ) { Text(if (state.traktConnecting) "Waiting…" else "Connect Trakt") }
+                    enabled = !state.traktConnecting
+                ) { Text(if (state.traktConnecting) "Waiting for authorization…" else "Connect Trakt") }
             }
             state.traktDeviceCode?.let { DeviceCode("Trakt", it.userCode, it.verificationUrl) }
         } }
         item { CardBox {
             Text("Real-Debrid", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text(state.rdUser?.let { "Connected as " + it.username } ?: "Not connected", color = if (state.rdUser != null) NmGreen else NmMuted)
-            if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
+            if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV v0.11.1 · an NM Digital product", color = NmMuted) }
+        item { Text("NM Stream TV v0.12.0 · an NM Digital product", color = NmMuted) }
     }
 }
 
@@ -1307,6 +1343,20 @@ private fun SourcesScreen(title: String, loading: Boolean, sources: List<StreamO
     }
 }
 
+private data class PlayerTrackChoice(
+    val group: Tracks.Group,
+    val trackIndex: Int,
+    val label: String,
+    val language: String?
+)
+
+private fun trackChoiceLabel(group: Tracks.Group, index: Int, fallback: String): String {
+    val format = group.getTrackFormat(index)
+    val label = format.label?.takeIf { it.isNotBlank() }
+    val language = format.language?.takeIf { it.isNotBlank() && it != "und" }
+    return listOfNotNull(label, language?.uppercase()).joinToString(" · ").ifBlank { fallback }
+}
+
 @Composable
 private fun PlayerScreen(
     item: AppMedia,
@@ -1317,13 +1367,14 @@ private fun PlayerScreen(
     subtitles: List<SubtitleOption>,
     resumeMs: Long,
     resumePercent: Double?,
+    preferredAudioLanguage: String,
+    preferredSubtitleLanguage: String,
     onStarted: (Long, Long) -> Unit,
     onProgress: (Long, Long) -> Unit,
     onStopped: (Long, Long) -> Unit
 ) {
     val context = LocalContext.current
 
-    // Resume is captured once. Progress updates must never rebuild the player.
     val initialResumeMs = remember(url, videoId) { resumeMs }
     val initialResumePercent = remember(url, videoId) { resumePercent }
 
@@ -1357,7 +1408,7 @@ private fun PlayerScreen(
                         .setLabel(option.subtitle.lang.uppercase() + " · " + option.addonName)
                         .setMimeType(subtitleMime(option.subtitle.url))
                         .setSelectionFlags(
-                            if (index == 0 && option.subtitle.lang.startsWith("en", true)) {
+                            if (index == 0 && option.subtitle.lang.startsWith(preferredSubtitleLanguage, true)) {
                                 C.SELECTION_FLAG_DEFAULT
                             } else {
                                 0
@@ -1365,6 +1416,13 @@ private fun PlayerScreen(
                         )
                         .build()
                 }
+
+                trackSelectionParameters = trackSelectionParameters
+                    .buildUpon()
+                    .setPreferredAudioLanguage(preferredAudioLanguage)
+                    .setPreferredTextLanguage(preferredSubtitleLanguage)
+                    .build()
+
                 setMediaItem(
                     MediaItem.Builder()
                         .setUri(url)
@@ -1379,6 +1437,57 @@ private fun PlayerScreen(
     var started by remember(player) { mutableStateOf(false) }
     var resumeApplied by remember(player) {
         mutableStateOf(initialResumeMs <= 0 && initialResumePercent == null)
+    }
+    var trackRevision by remember(player) { mutableIntStateOf(0) }
+    var showAudioMenu by remember { mutableStateOf(false) }
+    var showSubtitleMenu by remember { mutableStateOf(false) }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onTracksChanged(tracks: Tracks) {
+                trackRevision += 1
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+
+    LaunchedEffect(player, preferredAudioLanguage, preferredSubtitleLanguage) {
+        player.trackSelectionParameters = player.trackSelectionParameters
+            .buildUpon()
+            .setPreferredAudioLanguage(preferredAudioLanguage)
+            .setPreferredTextLanguage(preferredSubtitleLanguage)
+            .build()
+    }
+
+    val audioTracks = remember(player, trackRevision) {
+        player.currentTracks.groups
+            .filter { it.type == C.TRACK_TYPE_AUDIO }
+            .flatMapIndexed { groupIndex, group ->
+                (0 until group.length).map { trackIndex ->
+                    PlayerTrackChoice(
+                        group = group,
+                        trackIndex = trackIndex,
+                        label = trackChoiceLabel(group, trackIndex, "Audio ${groupIndex + 1}.${trackIndex + 1}"),
+                        language = group.getTrackFormat(trackIndex).language
+                    )
+                }
+            }
+    }
+
+    val textTracks = remember(player, trackRevision) {
+        player.currentTracks.groups
+            .filter { it.type == C.TRACK_TYPE_TEXT }
+            .flatMapIndexed { groupIndex, group ->
+                (0 until group.length).map { trackIndex ->
+                    PlayerTrackChoice(
+                        group = group,
+                        trackIndex = trackIndex,
+                        label = trackChoiceLabel(group, trackIndex, "Subtitle ${groupIndex + 1}.${trackIndex + 1}"),
+                        language = group.getTrackFormat(trackIndex).language
+                    )
+                }
+            }
     }
 
     LaunchedEffect(player) {
@@ -1425,12 +1534,17 @@ private fun PlayerScreen(
             factory = {
                 PlayerView(it).apply {
                     useController = true
+                    keepScreenOn = true
                     this.player = player
                 }
             },
-            update = { it.player = player },
+            update = {
+                it.player = player
+                it.keepScreenOn = true
+            },
             modifier = Modifier.fillMaxSize()
         )
+
         Text(
             title,
             color = Color.White,
@@ -1440,6 +1554,116 @@ private fun PlayerScreen(
                 .background(Color.Black.copy(alpha = .55f))
                 .padding(10.dp)
         )
+
+        Row(
+            Modifier.align(Alignment.TopEnd).padding(24.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(onClick = {
+                showAudioMenu = !showAudioMenu
+                showSubtitleMenu = false
+            }) {
+                Text("Audio")
+            }
+            Button(onClick = {
+                showSubtitleMenu = !showSubtitleMenu
+                showAudioMenu = false
+            }) {
+                Text("Subtitles")
+            }
+        }
+
+        if (showAudioMenu) {
+            LazyColumn(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 82.dp, end = 24.dp)
+                    .widthIn(min = 280.dp, max = 440.dp)
+                    .heightIn(max = 520.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xEE101218))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item {
+                    Text(
+                        "Audio tracks · preferred ${preferredAudioLanguage.uppercase()}",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                if (audioTracks.isEmpty()) {
+                    item { Text("This source exposes only one/default audio track.", color = NmMuted) }
+                } else {
+                    items(audioTracks) { choice ->
+                        Button(onClick = {
+                            val override = TrackSelectionOverride(
+                                choice.group.mediaTrackGroup,
+                                listOf(choice.trackIndex)
+                            )
+                            player.trackSelectionParameters = player.trackSelectionParameters
+                                .buildUpon()
+                                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                                .setOverrideForType(override)
+                                .build()
+                            showAudioMenu = false
+                        }, modifier = Modifier.fillMaxWidth()) {
+                            Text(choice.label)
+                        }
+                    }
+                }
+            }
+        }
+
+        if (showSubtitleMenu) {
+            LazyColumn(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 82.dp, end = 24.dp)
+                    .widthIn(min = 280.dp, max = 440.dp)
+                    .heightIn(max = 520.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xEE101218))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item {
+                    Text(
+                        "Subtitle tracks · preferred ${preferredSubtitleLanguage.uppercase()}",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                item {
+                    Button(onClick = {
+                        player.trackSelectionParameters = player.trackSelectionParameters
+                            .buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                            .build()
+                        showSubtitleMenu = false
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Off")
+                    }
+                }
+                items(textTracks) { choice ->
+                    Button(onClick = {
+                        val override = TrackSelectionOverride(
+                            choice.group.mediaTrackGroup,
+                            listOf(choice.trackIndex)
+                        )
+                        player.trackSelectionParameters = player.trackSelectionParameters
+                            .buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                            .setOverrideForType(override)
+                            .build()
+                        showSubtitleMenu = false
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Text(choice.label)
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -75,6 +75,16 @@ class RealDebridRepository(context: Context) {
 
     fun disconnect() = secureStore.remove(AUTH_KEY)
 
+    fun exportAuth(): RdStoredAuth? = loadAuth()
+
+    fun importAuth(auth: RdStoredAuth?) {
+        if (auth == null) {
+            disconnect()
+        } else {
+            saveAuth(auth)
+        }
+    }
+
     private suspend fun validAuth(): RdStoredAuth? {
         val current = loadAuth() ?: return null
         if (current.expiresAtEpochMs > System.currentTimeMillis() + 60_000L) return current

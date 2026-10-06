@@ -2,7 +2,7 @@
 
 **NM Stream TV** is an Android TV / Android-box media front end branded as an **NM Digital** product. It provides a cinematic, remote-friendly interface for user-configured media sources without bundling third-party scraping providers.
 
-## v0.11.0 features
+## v0.12.0 features
 
 - Cinematic Netflix-inspired (but original) Android TV interface
 - **Clean native startup splash:** the previous glitch-prone embedded image decoder has been replaced by a native NM Stream TV / Morrison Entertainment splash
@@ -33,24 +33,26 @@
 - **Hold for manual sources:** holding OK/Play on a movie, episode or Continue Watching item opens the full source picker instead
 - **720p-first trailers:** Stremio/TMDB trailer metadata is ranked for 720p first; YouTube playback receives an HD720 preference hint when fixed-quality playback is not exposed
 - Local **Continue Watching** with resume position
+- **Audio language controls:** preferred spoken language plus in-player Audio track selector
+- **Subtitle language controls:** preferred subtitle language plus in-player Subtitle selector and Off control
 - External subtitles attached to the Media3 player
 - Media3 / ExoPlayer playback including HLS and DASH modules
 - Encrypted local storage for add-on URLs and service credentials
-- **NM Account sync:** link a TV with a 6-digit code, then manage synced add-on manifests, playback preferences and optional encrypted IPTV settings from `https://nm-stream-tv-account.floot.app`
+- **NM Account universal two-way sync:** add-ons, playback preferences, optional IPTV settings, and encrypted Trakt/Real-Debrid authorization can sync from any linked device to the others
 - GitHub Actions workflow that builds an installable debug APK
 
 ## Branding
 
 - Product name: **NM Stream TV**
 - Package/application ID: `za.co.nm.streamtv`
-- Version: `0.11.0`
+- Version: `0.12.0`
 - Product family label: **NM Digital**
 
 ## Build
 
 The repository contains `.github/workflows/android-apk.yml`. Every push to `main`, pull request to `main`, or manual workflow dispatch builds:
 
-`NM-Stream-TV-v0.11.0-debug.apk`
+`NM-Stream-TV-v0.12.0-debug.apk`
 
 The workflow uses JDK 17, Gradle 9.6, Android SDK 37 and Android Build Tools 36.0.0.
 
@@ -87,10 +89,12 @@ The token is stored locally using Android Keystore-backed AES-GCM encryption and
 
 ## Trakt
 
-1. Register your own Trakt API application and copy its **Client ID**.
-2. Open **Settings → Trakt** and save the Client ID. A Client Secret is not required.
-3. Choose **Connect Trakt**.
-4. Visit the displayed verification URL and enter the device code shown on the TV.
+1. Open **Settings → Trakt**.
+2. Choose **Connect Trakt**.
+3. NM Stream TV displays a Trakt device code.
+4. Open Trakt on your phone (or the displayed Trakt activation page), enter the code, and approve access.
+
+NM Stream TV contains its public Trakt application identifier, so users do not need to enter a Client ID or Client Secret.
 
 The app stores OAuth tokens locally, refreshes them automatically when needed, loads the user's Trakt watchlist, personal lists named **Noel** and **Sarah**, imports playback progress into Continue Watching, finds the next aired unwatched episode for recently watched shows, resumes cloud items by percentage, and scrobbles supported playback. Trakt integration is optional. Use it in accordance with Trakt's API terms and branding requirements.
 
