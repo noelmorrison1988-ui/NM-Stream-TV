@@ -9,11 +9,11 @@ android {
     compileSdkMinor = 1
 
     defaultConfig {
-        applicationId = "za.co.nm.streamtv"
+        applicationId = "za.co.nm.streamtv.lite"
         minSdk = 23
         targetSdk = 36
-        versionCode = 20
-        versionName = "0.15.1"
+        versionCode = 21
+        versionName = "0.15.1-lite.1"
     }
 
     buildFeatures {
