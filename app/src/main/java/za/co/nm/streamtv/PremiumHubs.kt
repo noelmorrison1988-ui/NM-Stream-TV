@@ -35,8 +35,7 @@ private val PremiumGreen = Color(0xFF71D6A0)
 @Composable
 internal fun SportsHubScreen(
     state: MainUiState,
-    onOpen: (AppMedia) -> Unit,
-    onCrew: (AppMedia) -> Unit
+    onOpen: (AppMedia) -> Unit
 ) {
     val live = state.sportsCatalog.filter { item ->
         item.meta.genres.any { it.equals("Live", true) } ||
@@ -72,7 +71,7 @@ internal fun SportsHubScreen(
                 Text("NM SPORTS", color = PremiumGold, fontSize = 12.sp, fontWeight = FontWeight.Black)
                 Text("Live. Replay. One catalogue.", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Black)
                 Text(
-                    "The Crew through your local Kodi install + IPTV/Xtream + compatible NM sources.",
+                    "IPTV/Xtream + compatible NM sources. Integrated Kodi Core is available from Settings.",
                     color = PremiumMuted,
                     fontSize = 15.sp
                 )
@@ -84,20 +83,20 @@ internal fun SportsHubScreen(
             }
         }
 
-        if (live.isNotEmpty()) item { SportsRow("● LIVE NOW", live.take(80), onOpen, onCrew) }
-        if (group("Rugby").isNotEmpty()) item { SportsRow("Rugby", group("Rugby"), onOpen, onCrew) }
-        if (group("Motorsport").isNotEmpty()) item { SportsRow("F1 & Motorsport", group("Motorsport"), onOpen, onCrew) }
-        if (group("Football").isNotEmpty()) item { SportsRow("Football", group("Football"), onOpen, onCrew) }
-        if (group("Cricket").isNotEmpty()) item { SportsRow("Cricket", group("Cricket"), onOpen, onCrew) }
-        if (group("Combat Sports").isNotEmpty()) item { SportsRow("Combat Sports", group("Combat Sports"), onOpen, onCrew) }
-        if (group("Tennis").isNotEmpty()) item { SportsRow("Tennis", group("Tennis"), onOpen, onCrew) }
-        if (replays.isNotEmpty()) item { SportsRow("Recent Replays", replays.take(100), onOpen, onCrew) }
+        if (live.isNotEmpty()) item { SportsRow("● LIVE NOW", live.take(80), onOpen) }
+        if (group("Rugby").isNotEmpty()) item { SportsRow("Rugby", group("Rugby"), onOpen) }
+        if (group("Motorsport").isNotEmpty()) item { SportsRow("F1 & Motorsport", group("Motorsport"), onOpen) }
+        if (group("Football").isNotEmpty()) item { SportsRow("Football", group("Football"), onOpen) }
+        if (group("Cricket").isNotEmpty()) item { SportsRow("Cricket", group("Cricket"), onOpen) }
+        if (group("Combat Sports").isNotEmpty()) item { SportsRow("Combat Sports", group("Combat Sports"), onOpen) }
+        if (group("Tennis").isNotEmpty()) item { SportsRow("Tennis", group("Tennis"), onOpen) }
+        if (replays.isNotEmpty()) item { SportsRow("Recent Replays", replays.take(100), onOpen) }
 
         if (state.sportsCatalog.isEmpty()) {
             item {
                 PremiumInfoCard(
                     title = "No sports catalogue loaded yet",
-                    body = "IPTV/Xtream sports appear automatically. For The Crew, start Kodi and enable Settings → Services → Control → Allow remote control via HTTP."
+                    body = "IPTV/Xtream sports appear automatically. Open Kodi Core from Settings for Kodi add-ons."
                 )
             }
         }
@@ -108,8 +107,7 @@ internal fun SportsHubScreen(
 private fun SportsRow(
     title: String,
     media: List<AppMedia>,
-    onOpen: (AppMedia) -> Unit,
-    onCrew: (AppMedia) -> Unit
+    onOpen: (AppMedia) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
@@ -124,9 +122,7 @@ private fun SportsRow(
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             items(media.distinctBy { it.meta.id }.take(80)) { item ->
-                SportsCard(item) {
-                    if (item.originAddonName == "Kodi · The Crew") onCrew(item) else onOpen(item)
-                }
+                SportsCard(item) { onOpen(item) }
             }
         }
     }

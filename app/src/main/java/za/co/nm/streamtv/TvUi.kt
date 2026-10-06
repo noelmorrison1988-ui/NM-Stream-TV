@@ -2,6 +2,9 @@ package za.co.nm.streamtv
 
 import android.content.Intent
 import android.net.Uri
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
@@ -87,6 +90,7 @@ private sealed interface Screen {
         val returnToSources: Boolean = true
     ) : Screen
     data class Trailer(val item: AppMedia, val title: String, val source: StreamOption) : Screen
+    data class YouTubeTrailer(val item: AppMedia, val title: String, val youtubeId: String) : Screen
 }
 
 @Composable
@@ -103,6 +107,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
             }
             is Screen.AutoPlay -> Screen.Details(current.item)
             is Screen.Trailer -> Screen.Details(current.item)
+            is Screen.YouTubeTrailer -> Screen.Details(current.item)
             is Screen.Sources -> Screen.Details(current.item)
             else -> Screen.Home
         }
@@ -156,8 +161,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         onOpen = {
                             viewModel.loadDetails(it)
                             screen = Screen.Details(it)
-                        },
-                        onCrew = viewModel::playKodiCrew
+                        }
                     )
                 }
                 Screen.LiveTv -> Shell("Live TV", { screen = it }) {
@@ -200,9 +204,11 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         playTrailer = { source ->
                             when {
                                 source.playableUrl != null -> screen = Screen.Trailer(detailItem, "Trailer · ${detailItem.meta.name}", source)
-                                source.youtubeUrl != null -> runCatching {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(source.youtubeUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                                }
+                                !source.stream.ytId.isNullOrBlank() -> screen = Screen.YouTubeTrailer(
+                                    detailItem,
+                                    "Trailer · ${detailItem.meta.name}",
+                                    source.stream.ytId.orEmpty()
+                                )
                                 !source.stream.externalUrl.isNullOrBlank() -> runCatching {
                                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(source.stream.externalUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                                 }
@@ -274,6 +280,10 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         }
                     }
                 }
+                is Screen.YouTubeTrailer -> YouTubeTrailerScreen(
+                    title = current.title,
+                    youtubeId = current.youtubeId
+                )
                 is Screen.Trailer -> PlayerScreen(
                     item = current.item,
                     videoId = "trailer:${current.item.meta.id}",
@@ -310,6 +320,154 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         Text(it, color = Color.White)
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun YouTubeTrailerScreen(
+    title: String,
+    youtubeId: String
+) {
+    var webView by remember(youtubeId) { mutableStateOf<WebView?>(null) }
+    var playing by remember(youtubeId) { mutableStateOf(true) }
+    val playFocus = remember(youtubeId) { FocusRequester() }
+
+    val safeYoutubeId = remember(youtubeId) { youtubeId.replace("'", "\\'") }
+    val html = remember(safeYoutubeId) {
+        """
+        <!doctype html>
+        <html>
+        <head>
+          <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+          <style>
+            html,body,#player { width:100%; height:100%; margin:0; padding:0; overflow:hidden; background:#000; }
+          </style>
+        </head>
+        <body>
+          <div id="player"></div>
+          <script src="https://www.youtube.com/iframe_api"></script>
+          <script>
+            var player;
+            function onYouTubeIframeAPIReady() {
+              player = new YT.Player('player', {
+                videoId: '$safeYoutubeId',
+                playerVars: {
+                  autoplay: 1,
+                  controls: 0,
+                  rel: 0,
+                  modestbranding: 1,
+                  playsinline: 1,
+                  fs: 0
+                },
+                events: {
+                  onReady: function(e) {
+                    e.target.setPlaybackQuality('hd720');
+                    e.target.playVideo();
+                  }
+                }
+              });
+            }
+            function nmPlay(){ if(player){ player.playVideo(); } }
+            function nmPause(){ if(player){ player.pauseVideo(); } }
+            function nmSeek(delta){
+              if(player && player.getCurrentTime){
+                player.seekTo(Math.max(0, player.getCurrentTime() + delta), true);
+              }
+            }
+          </script>
+        </body>
+        </html>
+        """.trimIndent()
+    }
+
+    DisposableEffect(youtubeId) {
+        onDispose {
+            webView?.stopLoading()
+            webView?.loadUrl("about:blank")
+            webView?.destroy()
+            webView = null
+        }
+    }
+
+    LaunchedEffect(youtubeId) {
+        delay(350)
+        runCatching { playFocus.requestFocus() }
+    }
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        AndroidView(
+            factory = { context ->
+                WebView(context).apply {
+                    webView = this
+                    setBackgroundColor(android.graphics.Color.BLACK)
+                    isFocusable = false
+                    isFocusableInTouchMode = false
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.mediaPlaybackRequiresUserGesture = false
+                    settings.cacheMode = WebSettings.LOAD_DEFAULT
+                    settings.allowFileAccess = false
+                    settings.allowContentAccess = false
+                    webChromeClient = WebChromeClient()
+                    loadDataWithBaseURL(
+                        "https://www.youtube.com",
+                        html,
+                        "text/html",
+                        "UTF-8",
+                        null
+                    )
+                }
+            },
+            update = { webView = it },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.Black.copy(alpha = .12f),
+                        Color.Transparent,
+                        Color.Transparent,
+                        Color.Black.copy(alpha = .78f)
+                    )
+                )
+            )
+        )
+
+        Column(
+            Modifier.align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 34.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(title, color = NmPlatinum, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                PlayerControl(
+                    label = "↶ 10",
+                    onClick = { webView?.evaluateJavascript("nmSeek(-10)", null) }
+                )
+                PlayerControl(
+                    label = if (playing) "❚❚" else "▶",
+                    primary = true,
+                    modifier = Modifier.focusRequester(playFocus),
+                    onClick = {
+                        playing = !playing
+                        webView?.evaluateJavascript(if (playing) "nmPlay()" else "nmPause()", null)
+                    }
+                )
+                PlayerControl(
+                    label = "10 ↷",
+                    onClick = { webView?.evaluateJavascript("nmSeek(10)", null) }
+                )
+                Spacer(Modifier.weight(1f))
+                Text("TRAILER · YOUTUBE", color = NmGold, fontSize = 11.sp, fontWeight = FontWeight.Black)
             }
         }
     }
@@ -885,10 +1043,6 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
     var xtreamServer by remember { mutableStateOf("") }
     var xtreamUser by remember { mutableStateOf("") }
     var xtreamPass by remember { mutableStateOf("") }
-    var kodiHost by remember { mutableStateOf("127.0.0.1") }
-    var kodiPort by remember { mutableStateOf("8080") }
-    var kodiUser by remember { mutableStateOf("") }
-    var kodiPass by remember { mutableStateOf("") }
     var quality by remember(state.preferredQuality) { mutableStateOf(state.preferredQuality) }
     var preferHttp by remember(state.preferHttpDebrid) { mutableStateOf(state.preferHttpDebrid) }
     var audioLang by remember(state.preferredAudioLanguage) { mutableStateOf(state.preferredAudioLanguage) }
@@ -1011,22 +1165,29 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             }
         } }
         item { CardBox {
-            Text("Kodi · The Crew Sports", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            Text(state.kodiCrewStatus, color = if (state.kodiCrewConnected) NmGreen else NmMuted)
+            Text("Kodi Core", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text(
-                "NM Stream reads only The Crew's sports catalogue through Kodi's local JSON-RPC interface. In Kodi enable Settings → Services → Control → Allow remote control via HTTP.",
+                state.kodiCrewStatus,
+                color = if (state.kodiCrewConnected) NmGreen else NmMuted
+            )
+            Text(
+                "Kodi runs inside the NM Stream TV package. Use Kodi's own Add-ons and Settings screens for compatible Kodi add-ons and any account authorization those add-ons support.",
                 color = NmMuted
             )
-            Box(Modifier.fillMaxWidth()) { InputBox(kodiHost, "Kodi host/IP · 127.0.0.1 if same box") { kodiHost = it } }
-            Box(Modifier.fillMaxWidth()) { InputBox(kodiPort, "Kodi HTTP port · usually 8080") { kodiPort = it } }
-            Box(Modifier.fillMaxWidth()) { InputBox(kodiUser, "Kodi web username · optional") { kodiUser = it } }
-            Box(Modifier.fillMaxWidth()) { InputBox(kodiPass, "Kodi web password · optional", password = true) { kodiPass = it } }
-            Button(onClick = {
-                vm.saveKodiCrewSettings(kodiHost, kodiPort.toIntOrNull() ?: 8080, kodiUser, kodiPass)
-                kodiPass = ""
-            }) { Text("Save Kodi bridge & refresh sports") }
+            Button(
+                onClick = {
+                    if (!KodiCore.open(context)) {
+                        android.widget.Toast.makeText(
+                            context,
+                            "Kodi Core is not included in this build.",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                },
+                enabled = state.kodiCrewConnected
+            ) { Text("Open Kodi") }
             Text(
-                "Kodi must be running on this Android box for the local bridge to answer. Playback is handed back to The Crew; NM Stream does not extract its stream URLs.",
+                "No host, port, username or HTTP remote-control setup is required.",
                 color = NmMuted,
                 fontSize = 12.sp
             )
@@ -1057,7 +1218,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV v0.14.1 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV v0.15.0 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
