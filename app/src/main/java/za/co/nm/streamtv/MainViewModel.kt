@@ -11,7 +11,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 
 data class MainUiState(
     val loading: Boolean = true,
@@ -48,7 +47,7 @@ data class MainUiState(
     val crewSports: List<AppMedia> = emptyList(),
     val sportsCatalog: List<AppMedia> = emptyList(),
     val kodiCrewConnected: Boolean = false,
-    val kodiCrewStatus: String = "Kodi bridge not connected",
+    val kodiCrewStatus: String = "Kodi Core not included in this build",
     val xtreamMovies: List<AppMedia> = emptyList(),
     val xtreamSeries: List<AppMedia> = emptyList(),
     val iptvCategories: List<LiveTvCategory> = emptyList(),
@@ -74,7 +73,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val tmdb = TmdbRepository(application)
     private val trakt = TraktRepository(application)
     private val iptv = IptvRepository(application)
-    private val kodiCrew = KodiCrewRepository(application)
     private val playback = PlaybackStore(application)
     private val nmAccount = NmAccountRepository(application)
 
@@ -124,16 +122,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val iptvDeferred = async {
                 if (iptv.configured()) runCatching { iptv.loadChannels() }.getOrDefault(emptyList()) else emptyList()
             }
-            val kodiConnectedDeferred = async {
-                withTimeoutOrNull(4_500) {
-                    runCatching { kodiCrew.testConnection() }.getOrDefault(false)
-                } ?: false
-            }
-            val crewDeferred = async {
-                withTimeoutOrNull(6_000) {
-                    runCatching { kodiCrew.loadSports() }.getOrDefault(emptyList())
-                }.orEmpty()
-            }
+            val kodiConnected = KodiCore.isAvailable()
+            val crewSports = emptyList<AppMedia>()
             val xtreamMoviesDeferred = async {
                 if (iptv.config().hasXtream) runCatching { iptv.loadXtreamMovies() }.getOrDefault(emptyList()) else emptyList()
             }
@@ -188,8 +178,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
 
             val iptvChannels = MediaPolicy.filter(iptvDeferred.await())
-            val kodiConnected = kodiConnectedDeferred.await()
-            val crewSports = MediaPolicy.filter(crewDeferred.await())
             val xtreamMovies = MediaPolicy.filter(xtreamMoviesDeferred.await())
             val xtreamSeries = MediaPolicy.filter(xtreamSeriesDeferred.await())
             val iptvSports = iptv.sportsOnly(iptvChannels)
@@ -227,13 +215,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 crewSports = crewSports,
                 sportsCatalog = sportsCatalog,
                 kodiCrewConnected = kodiConnected,
-                kodiCrewStatus = when {
-                    kodiConnected && crewSports.isNotEmpty() ->
-                        kodiCrew.statusLabel() + " · " + crewSports.size + " sports items"
-                    kodiConnected ->
-                        kodiCrew.statusLabel() + " · Connected · no sports items returned"
-                    else ->
-                        "Kodi connection failed · check host/IP, port, username/password and HTTP remote control"
+                kodiCrewStatus = if (kodiConnected) {
+                    "${KodiCore.VERSION_LABEL} · integrated"
+                } else {
+                    "Kodi Core is not included in this build"
                 },
                 xtreamMovies = xtreamMovies,
                 xtreamSeries = xtreamSeries,
@@ -656,46 +641,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playKodiCrew(item: AppMedia) {
-        val path = item.directUrl
-        if (path.isNullOrBlank() || item.originAddonName != "Kodi · The Crew") {
-            _uiState.value = _uiState.value.copy(message = "This is not a The Crew item")
-            return
-        }
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(message = "Opening in Kodi · The Crew…")
-            val opened = runCatching { kodiCrew.play(path) }.getOrDefault(false)
-            _uiState.value = _uiState.value.copy(
-                message = if (opened) "Sent to Kodi · The Crew" else "Could not reach Kodi. Start Kodi and enable HTTP remote control."
-            )
-        }
-    }
-
-    fun saveKodiCrewSettings(host: String, port: Int, username: String, password: String) {
-        runCatching { kodiCrew.saveConfig(host, port, username, password) }
-            .onSuccess {
-                viewModelScope.launch {
-                    _uiState.value = _uiState.value.copy(message = "Testing Kodi connection…")
-                    runCatching { kodiCrew.testConnection() }
-                        .onSuccess {
-                            _uiState.value = _uiState.value.copy(
-                                kodiCrewConnected = true,
-                                kodiCrewStatus = kodiCrew.statusLabel() + " · Connected",
-                                message = "Kodi connected successfully · The Crew detected"
-                            )
-                            refreshEverything()
-                        }
-                        .onFailure { error ->
-                            _uiState.value = _uiState.value.copy(
-                                kodiCrewConnected = false,
-                                kodiCrewStatus = "Kodi connection failed",
-                                message = error.message ?: "Could not connect to Kodi"
-                            )
-                        }
-                }
+        _uiState.value = _uiState.value.copy(
+            message = if (KodiCore.isAvailable()) {
+                "Open Kodi Core from Settings to use Kodi add-ons."
+            } else {
+                "Kodi Core is not included in this build."
             }
-            .onFailure {
-                _uiState.value = _uiState.value.copy(message = it.message ?: "Could not save Kodi settings")
-            }
+        )
     }
 
     fun savePlaybackPreferences(
