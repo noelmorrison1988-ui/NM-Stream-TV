@@ -51,6 +51,7 @@ data class MetaItem(
     val contentRating: String? = null,
     val contentAdvisories: List<String> = emptyList(),
     val genres: List<String> = emptyList(),
+    val isAnime: Boolean = false,
     val videos: List<VideoItem> = emptyList(),
     val trailers: List<TrailerRef> = emptyList()
 )

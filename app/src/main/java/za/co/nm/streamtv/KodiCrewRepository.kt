@@ -10,6 +10,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.ArrayDeque
 
 data class KodiCrewConfig(
+    val host: String = "127.0.0.1",
     val port: Int = 8080,
     val username: String = "",
     val password: String = ""
@@ -36,12 +37,20 @@ class KodiCrewRepository(context: Context) {
         return runCatching { gson.fromJson(raw, KodiCrewConfig::class.java) }.getOrDefault(KodiCrewConfig())
     }
 
-    fun saveConfig(port: Int, username: String, password: String) {
+    fun saveConfig(host: String, port: Int, username: String, password: String) {
         require(port in 1..65535) { "Kodi port must be between 1 and 65535" }
+        val cleanHost = host.trim()
+            .ifBlank { "127.0.0.1" }
+            .removePrefix("http://")
+            .removePrefix("https://")
+            .substringBefore('/')
+            .substringBefore(':')
+        require(cleanHost.isNotBlank()) { "Enter the Kodi host or IP address" }
         store.put(
             CONFIG_KEY,
             gson.toJson(
                 KodiCrewConfig(
+                    host = cleanHost,
                     port = port,
                     username = username.trim(),
                     password = password
@@ -52,7 +61,26 @@ class KodiCrewRepository(context: Context) {
 
     fun statusLabel(): String {
         val cfg = config()
-        return "Local Kodi · 127.0.0.1:" + cfg.port + " · The Crew"
+        return "Kodi · " + cfg.host + ":" + cfg.port + " · The Crew"
+    }
+
+    suspend fun testConnection(): Boolean {
+        val ping = rpc("JSONRPC.Ping", JsonObject())
+        if (ping.has("error")) return false
+        val addon = rpc(
+            "Addons.GetAddonDetails",
+            JsonObject().apply {
+                addProperty("addonid", CREW_ADDON_ID)
+                add("properties", JsonArray().apply {
+                    add("name")
+                    add("enabled")
+                })
+            }
+        )
+        val details = addon.getAsJsonObject("result")?.getAsJsonObject("addon")
+            ?: error("Kodi connected, but The Crew is not installed")
+        if (details.get("enabled")?.asBoolean == false) error("Kodi connected, but The Crew is disabled")
+        return true
     }
 
     suspend fun loadSports(): List<AppMedia> = withTimeoutOrNull(4_500) {
@@ -215,7 +243,7 @@ class KodiCrewRepository(context: Context) {
         }
 
         val result = SimpleHttp.postJson(
-            "http://127.0.0.1:" + cfg.port + "/jsonrpc",
+            "http://" + cfg.host + ":" + cfg.port + "/jsonrpc",
             body,
             headers
         )

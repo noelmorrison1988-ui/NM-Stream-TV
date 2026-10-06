@@ -19,6 +19,8 @@ class TraktRepository(context: Context) {
         private const val API = "https://api.trakt.tv"
         private const val TOKEN_API = "https://auth.trakt.tv"
         private const val PUBLIC_CLIENT_ID = "M9OjJrpO3YS2XXpA1_oyvs9v0mnWakH8OJoPSpxeFMO"
+        private const val CLIENT_ID_KEY = "trakt_client_id"
+        private const val CLIENT_SECRET_KEY = "trakt_client_secret"
         private const val AUTH_KEY = "trakt_auth"
         private const val API_VERSION = "2"
         private const val REFRESH_AHEAD_MS = 10 * 60 * 1000L
@@ -39,26 +41,27 @@ class TraktRepository(context: Context) {
     fun isConnected(): Boolean = loadAuth() != null
 
     suspend fun startDeviceAuth(): TraktDeviceCode {
-        val clientId = PUBLIC_CLIENT_ID
+        val clientId = effectiveClientId()
         val payload = gson.toJson(mapOf("client_id" to clientId))
         val body = SimpleHttp.requireSuccess(
-            SimpleHttp.postJson("$API/oauth/device/code", payload),
+            SimpleHttp.postJson("$API/oauth/device/code", payload, appHeaders(clientId)),
             "Starting Trakt sign-in"
         )
         return gson.fromJson(body, TraktDeviceCode::class.java)
     }
 
     suspend fun pollDeviceToken(deviceCode: String): TraktStoredAuth? {
-        val clientId = PUBLIC_CLIENT_ID
-        val payload = gson.toJson(
-            mapOf(
-                "code" to deviceCode,
-                "client_id" to clientId
-            )
+        val clientId = effectiveClientId()
+        val values = linkedMapOf(
+            "code" to deviceCode,
+            "client_id" to clientId
         )
-        val result = SimpleHttp.postJson("$API/oauth/device/token", payload)
+        legacyClientSecret()?.let { values["client_secret"] = it }
+        val payload = gson.toJson(values)
+        val result = SimpleHttp.postJson("$API/oauth/device/token", payload, appHeaders(clientId))
         when (result.code) {
             400, 429 -> return null
+            401, 403 -> error("Trakt rejected the app credentials. Reconnect using the NM Stream TV Trakt app.")
             404 -> error("Trakt sign-in code is invalid. Start the connection again.")
             409 -> error("This Trakt sign-in code was already used. Start again.")
             410 -> error("The Trakt sign-in code expired. Start again.")
@@ -440,7 +443,7 @@ class TraktRepository(context: Context) {
         if (auth == null) {
             disconnect()
         } else {
-            secureStore.put(AUTH_KEY, gson.toJson(auth.copy(clientId = PUBLIC_CLIENT_ID)))
+            secureStore.put(AUTH_KEY, gson.toJson(auth.copy(clientId = effectiveClientId())))
         }
     }
 
@@ -459,14 +462,14 @@ class TraktRepository(context: Context) {
 
     private suspend fun refresh(auth: TraktStoredAuth): TraktStoredAuth? {
         if (auth.refreshToken.isBlank()) return null
-        val payload = gson.toJson(
-            mapOf(
-                "refresh_token" to auth.refreshToken,
-                "client_id" to auth.clientId,
-                "grant_type" to "refresh_token"
-            )
+        val values = linkedMapOf(
+            "refresh_token" to auth.refreshToken,
+            "client_id" to auth.clientId,
+            "grant_type" to "refresh_token"
         )
-        val result = SimpleHttp.postJson("$TOKEN_API/oauth/token", payload)
+        legacyClientSecret()?.let { values["client_secret"] = it }
+        val payload = gson.toJson(values)
+        val result = SimpleHttp.postJson("$TOKEN_API/oauth/token", payload, appHeaders(auth.clientId))
         if (result.code !in 200..299) {
             if (result.code == 400 || result.code == 401) disconnect()
             return null
@@ -474,6 +477,12 @@ class TraktRepository(context: Context) {
         val token = gson.fromJson(result.body, TraktToken::class.java)
         return saveToken(auth.clientId, token)
     }
+
+    private fun effectiveClientId(): String =
+        secureStore.get(CLIENT_ID_KEY)?.trim()?.takeIf { it.isNotBlank() } ?: PUBLIC_CLIENT_ID
+
+    private fun legacyClientSecret(): String? =
+        secureStore.get(CLIENT_SECRET_KEY)?.trim()?.takeIf { it.isNotBlank() }
 
     private fun saveToken(clientId: String, token: TraktToken): TraktStoredAuth {
         require(token.accessToken.isNotBlank()) { "Trakt returned an empty access token" }
@@ -511,6 +520,11 @@ class TraktRepository(context: Context) {
                 originAddonName = "Trakt Watchlist"
             )
         }
+
+    private fun appHeaders(clientId: String): Map<String, String> = mapOf(
+        "trakt-api-version" to API_VERSION,
+        "trakt-api-key" to clientId
+    )
 
     private fun headers(auth: TraktStoredAuth): Map<String, String> = mapOf(
         "Authorization" to "Bearer ${auth.accessToken}",

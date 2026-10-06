@@ -38,6 +38,12 @@ class TmdbRepository(context: Context) {
             ?: candidate.get("first_air_date")?.takeUnless { it.isJsonNull }?.asString
         val rating = candidate.get("vote_average")?.takeUnless { it.isJsonNull }?.asDouble
         val tmdbId = candidate.get("id")?.takeUnless { it.isJsonNull }?.asInt
+        val originalLanguage = candidate.get("original_language")?.takeUnless { it.isJsonNull }?.asString
+        val genreIds = candidate.getAsJsonArray("genre_ids")
+            ?.mapNotNull { runCatching { it.asInt }.getOrNull() }
+            .orEmpty()
+        val animeDetected = item.meta.isAnime ||
+            (originalLanguage.equals("ja", true) && 16 in genreIds)
         val trailers = if (item.meta.trailers.isNotEmpty()) {
             item.meta.trailers
         } else {
@@ -54,6 +60,7 @@ class TmdbRepository(context: Context) {
             imdbRating = item.meta.imdbRating?.takeIf { it.isNotBlank() }
                 ?: rating?.takeIf { it > 0.0 }?.let { String.format("%.1f", it) },
             contentRating = contentRating,
+            isAnime = animeDetected,
             trailers = trailers
         )
         return item.copy(meta = merged)
