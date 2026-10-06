@@ -46,7 +46,7 @@ jobs:
         id: apk
         shell: bash
         run: |
-          VERSION_NAME=$(sed -n 's/.*versionName = "\\(.*\\)"/\\1/p' app/build.gradle.kts | head -n 1)
+          VERSION_NAME=$(grep -m1 'versionName' app/build.gradle.kts | cut -d'"' -f2)
           APK_NAME="NM-Stream-TV-v${VERSION_NAME}-debug"
           mkdir -p dist
           cp app/build/outputs/apk/debug/app-debug.apk "dist/${APK_NAME}.apk"
