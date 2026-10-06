@@ -43,6 +43,8 @@ class TmdbRepository(context: Context) {
         } else {
             tmdbId?.let { fetchTrailers(it, item.meta.type, headers) }.orEmpty()
         }
+        val contentRating = item.meta.contentRating
+            ?: tmdbId?.let { fetchContentRating(it, item.meta.type, headers) }
 
         val merged = item.meta.copy(
             poster = posterPath?.let { "$IMG/w500$it" } ?: item.meta.poster,
@@ -51,6 +53,7 @@ class TmdbRepository(context: Context) {
             releaseInfo = item.meta.releaseInfo?.takeIf { it.isNotBlank() } ?: release?.take(4),
             imdbRating = item.meta.imdbRating?.takeIf { it.isNotBlank() }
                 ?: rating?.takeIf { it > 0.0 }?.let { String.format("%.1f", it) },
+            contentRating = contentRating,
             trailers = trailers
         )
         return item.copy(meta = merged)
@@ -60,6 +63,54 @@ class TmdbRepository(context: Context) {
         val selected = items.take(limit)
         val enriched = selected.map { item -> async { runCatching { enrich(item) }.getOrDefault(item) } }.awaitAll()
         enriched + items.drop(limit)
+    }
+
+    private suspend fun fetchContentRating(
+        tmdbId: Int,
+        type: String,
+        headers: Map<String, String>
+    ): String? {
+        return if (type == "series") {
+            val result = SimpleHttp.get("$API/tv/$tmdbId/content_ratings", headers)
+            if (result.code !in 200..299) return null
+            val values = JsonParser.parseString(result.body).asJsonObject
+                .getAsJsonArray("results")
+                ?.mapNotNull { element ->
+                    val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+                    val region = obj.get("iso_3166_1")?.takeUnless { it.isJsonNull }?.asString ?: return@mapNotNull null
+                    val rating = obj.get("rating")?.takeUnless { it.isJsonNull }?.asString?.trim().orEmpty()
+                    if (rating.isBlank()) null else region to rating
+                }
+                .orEmpty()
+            preferredCertification(values)
+        } else {
+            val result = SimpleHttp.get("$API/movie/$tmdbId/release_dates", headers)
+            if (result.code !in 200..299) return null
+            val values = JsonParser.parseString(result.body).asJsonObject
+                .getAsJsonArray("results")
+                ?.flatMap { element ->
+                    val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@flatMap emptyList()
+                    val region = obj.get("iso_3166_1")?.takeUnless { it.isJsonNull }?.asString ?: return@flatMap emptyList()
+                    obj.getAsJsonArray("release_dates")
+                        ?.mapNotNull { dateElement ->
+                            val dateObj = dateElement.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+                            val certification = dateObj.get("certification")
+                                ?.takeUnless { it.isJsonNull }?.asString?.trim().orEmpty()
+                            if (certification.isBlank()) null else region to certification
+                        }
+                        .orEmpty()
+                }
+                .orEmpty()
+            preferredCertification(values)
+        }
+    }
+
+    private fun preferredCertification(values: List<Pair<String, String>>): String? {
+        val priority = listOf("ZA", "GB", "US", "AU")
+        priority.forEach { region ->
+            values.firstOrNull { it.first.equals(region, true) }?.second?.let { return it }
+        }
+        return values.firstOrNull()?.second
     }
 
     private suspend fun fetchTrailers(
