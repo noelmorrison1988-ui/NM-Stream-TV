@@ -44,8 +44,11 @@ class AddonRepository(context: Context) {
         }
         saveManifestCache(cached.filterKeys { it in urls })
 
-        return resolved.mapNotNull { it.second }
+        val allowed = resolved.mapNotNull { it.second }
             .filter(MediaPolicy::allowsAddon)
+        val allowedUrls = allowed.map { it.manifestUrl }.distinct()
+        if (allowedUrls.size != urls.size) saveStoredUrls(allowedUrls)
+        return allowed
     }
 
     suspend fun install(inputUrl: String): InstalledAddon {
