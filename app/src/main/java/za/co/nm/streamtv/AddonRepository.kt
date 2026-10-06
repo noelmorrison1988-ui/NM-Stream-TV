@@ -12,6 +12,7 @@ class AddonRepository(context: Context) {
     private val gson = Gson()
     private val secureStore = SecretStore(context)
     private val storedUrlsKey = "addon_manifest_urls"
+    private val manifestCacheKey = "addon_manifest_cache_v1"
 
     fun storedManifestUrls(): List<String> = loadStoredUrls()
 
@@ -20,16 +21,30 @@ class AddonRepository(context: Context) {
             runCatching { SimpleHttp.normalizeManifestUrl(raw) }.getOrNull()
         }.distinct()
         saveStoredUrls(normalized)
+        val cache = loadManifestCache().filterKeys { it in normalized }
+        saveManifestCache(cache)
         return loadInstalled()
     }
 
     suspend fun loadInstalled(): List<InstalledAddon> {
         val urls = loadStoredUrls()
-        return supervisorScope {
-            urls.map { url -> async { runCatching { fetchManifest(url) }.getOrNull() } }
-                .awaitAll()
-                .filterNotNull()
+        val cached = loadManifestCache().toMutableMap()
+
+        val resolved = supervisorScope {
+            urls.map { url ->
+                async {
+                    val fresh = runCatching { fetchManifest(url) }.getOrNull()
+                    if (fresh != null) url to fresh else url to cached[url]
+                }
+            }.awaitAll()
         }
+
+        resolved.forEach { (url, addon) ->
+            if (addon != null) cached[url] = addon
+        }
+        saveManifestCache(cached.filterKeys { it in urls })
+
+        return resolved.mapNotNull { it.second }
     }
 
     suspend fun install(inputUrl: String): InstalledAddon {
@@ -42,11 +57,18 @@ class AddonRepository(context: Context) {
             urls += manifestUrl
             saveStoredUrls(urls)
         }
+        val cache = loadManifestCache().toMutableMap()
+        cache[manifestUrl] = addon
+        saveManifestCache(cache)
         return addon
     }
 
     fun remove(manifestUrl: String) {
-        saveStoredUrls(loadStoredUrls().filterNot { it == manifestUrl })
+        val remaining = loadStoredUrls().filterNot { it == manifestUrl }
+        saveStoredUrls(remaining)
+        val cache = loadManifestCache().toMutableMap()
+        cache.remove(manifestUrl)
+        saveManifestCache(cache.filterKeys { it in remaining })
     }
 
     suspend fun loadHome(addons: List<InstalledAddon>): Pair<List<AppMedia>, List<AppMedia>> = supervisorScope {
@@ -200,6 +222,18 @@ class AddonRepository(context: Context) {
         val prefixes = obj.getAsJsonArray("idPrefixes")?.mapNotNull { runCatching { it.asString }.getOrNull() }.orEmpty()
         if (prefixes.isNotEmpty() && prefixes.none { id.startsWith(it) }) return false
         return true
+    }
+
+    private fun loadManifestCache(): Map<String, InstalledAddon> {
+        val json = secureStore.get(manifestCacheKey) ?: return emptyMap()
+        return runCatching {
+            val type = object : TypeToken<Map<String, InstalledAddon>>() {}.type
+            gson.fromJson<Map<String, InstalledAddon>>(json, type)
+        }.getOrDefault(emptyMap())
+    }
+
+    private fun saveManifestCache(cache: Map<String, InstalledAddon>) {
+        secureStore.put(manifestCacheKey, gson.toJson(cache))
     }
 
     private fun loadStoredUrls(): List<String> {
