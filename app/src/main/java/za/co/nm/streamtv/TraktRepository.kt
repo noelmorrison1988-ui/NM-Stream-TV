@@ -18,7 +18,7 @@ class TraktRepository(context: Context) {
     companion object {
         private const val API = "https://api.trakt.tv"
         private const val TOKEN_API = "https://auth.trakt.tv"
-        private const val CLIENT_ID_KEY = "trakt_client_id"
+        private const val PUBLIC_CLIENT_ID = "M9OjJrpO3YS2XXpA1_oyvs9v0mnWakH8OJoPSpxeFMO"
         private const val AUTH_KEY = "trakt_auth"
         private const val API_VERSION = "2"
         private const val REFRESH_AHEAD_MS = 10 * 60 * 1000L
@@ -28,28 +28,18 @@ class TraktRepository(context: Context) {
     private val gson = Gson()
     private val authMutex = Mutex()
 
-    fun saveClientId(clientId: String) {
-        require(clientId.isNotBlank()) { "Enter your Trakt Client ID" }
-        secureStore.put(CLIENT_ID_KEY, clientId.trim())
-        secureStore.remove(AUTH_KEY)
-    }
-
     fun clearCredentials() {
-        secureStore.remove(CLIENT_ID_KEY)
         secureStore.remove(AUTH_KEY)
     }
 
-    fun credentialsConfigured(): Boolean =
-        !secureStore.get(CLIENT_ID_KEY).isNullOrBlank()
+    fun credentialsConfigured(): Boolean = true
 
-    fun maskedClientId(): String = secureStore.get(CLIENT_ID_KEY)?.let {
-        if (it.length > 10) "••••${it.takeLast(6)}" else "Saved"
-    } ?: "Not configured"
+    fun maskedClientId(): String = "Built in"
 
     fun isConnected(): Boolean = loadAuth() != null
 
     suspend fun startDeviceAuth(): TraktDeviceCode {
-        val clientId = requireClientId()
+        val clientId = PUBLIC_CLIENT_ID
         val payload = gson.toJson(mapOf("client_id" to clientId))
         val body = SimpleHttp.requireSuccess(
             SimpleHttp.postJson("$API/oauth/device/code", payload),
@@ -59,7 +49,7 @@ class TraktRepository(context: Context) {
     }
 
     suspend fun pollDeviceToken(deviceCode: String): TraktStoredAuth? {
-        val clientId = requireClientId()
+        val clientId = PUBLIC_CLIENT_ID
         val payload = gson.toJson(
             mapOf(
                 "code" to deviceCode,
@@ -444,9 +434,15 @@ class TraktRepository(context: Context) {
 
     fun disconnect() = secureStore.remove(AUTH_KEY)
 
-    private fun requireClientId(): String =
-        secureStore.get(CLIENT_ID_KEY)?.takeIf { it.isNotBlank() }
-            ?: error("Add your Trakt Client ID in Settings first")
+    fun exportAuth(): TraktStoredAuth? = loadAuth()
+
+    fun importAuth(auth: TraktStoredAuth?) {
+        if (auth == null) {
+            disconnect()
+        } else {
+            secureStore.put(AUTH_KEY, gson.toJson(auth.copy(clientId = PUBLIC_CLIENT_ID)))
+        }
+    }
 
     private fun loadAuth(): TraktStoredAuth? {
         val json = secureStore.get(AUTH_KEY) ?: return null
