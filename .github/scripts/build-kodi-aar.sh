@@ -53,6 +53,20 @@ test -n "$TARGET_PREFIX"
 test -d "$TARGET_PREFIX/share/kodi"
 echo "Kodi target prefix: $TARGET_PREFIX"
 cd "$PACKAGING"
+
+# Kodi's Omega packaging Makefile treats an unmatched skin media glob as a hard
+# error. Some minimal/core builds legitimately have no skin media directory at
+# this stage, so make the cleanup command tolerant before running sharedapk.
+python3 - <<'PYFIX'
+from pathlib import Path
+p = Path("Makefile")
+s = p.read_text()
+old = '\tfind `pwd`/assets/addons/skin.*/media/* -depth -not -iname "*.xbt" -exec rm -rf {} \\;'
+if old in s and 'skin.*/media/* -depth -not -iname "*.xbt" -exec rm -rf {} \\; || true' not in s:
+    s = s.replace(old, old + ' || true')
+p.write_text(s)
+PYFIX
+
 make DEPENDS_PATH="$TARGET_PREFIX" PREFIX="$TARGET_PREFIX" sharedapk libs python java
 
 python3 - <<'PY'
