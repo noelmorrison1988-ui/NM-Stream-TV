@@ -48,8 +48,12 @@ cd "$SRC/build"
 make -j"$JOBS"
 
 PACKAGING="$SRC/build/tools/android/packaging"
+TARGET_PREFIX="$(find "$PREFIX" -maxdepth 1 -type d -name 'aarch64-linux-android-*-release' | head -n 1)"
+test -n "$TARGET_PREFIX"
+test -d "$TARGET_PREFIX/share/kodi"
+echo "Kodi target prefix: $TARGET_PREFIX"
 cd "$PACKAGING"
-make DEPENDS_PATH="$PREFIX" PREFIX="$PREFIX" sharedapk libs python java
+make DEPENDS_PATH="$TARGET_PREFIX" PREFIX="$TARGET_PREFIX" sharedapk libs python java
 
 python3 - <<'PY'
 from pathlib import Path
