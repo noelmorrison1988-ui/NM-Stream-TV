@@ -211,6 +211,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         addonInstallStatus = "Installed ${installed.manifest.name}",
                         addons = (_uiState.value.addons + installed).distinctBy { it.manifestUrl }
                     )
+                    if (nmAccount.isLinked()) {
+                        runCatching { nmAccount.pushAddonManifests(addons.storedManifestUrls()) }
+                    }
                     refreshEverything()
                 }
                 .onFailure { error ->
@@ -225,7 +228,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun removeAddon(manifestUrl: String) {
         addons.remove(manifestUrl)
         _uiState.value = _uiState.value.copy(addonInstallStatus = "Add-on removed")
-        refreshEverything()
+        viewModelScope.launch {
+            if (nmAccount.isLinked()) {
+                runCatching { nmAccount.pushAddonManifests(addons.storedManifestUrls()) }
+            }
+            refreshEverything()
+        }
     }
 
     fun search(query: String) {
