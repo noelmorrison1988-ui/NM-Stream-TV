@@ -36,6 +36,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -75,7 +77,6 @@ private val NmGreen = Color(0xFF71D6A0)
 private sealed interface Screen {
     data object Home : Screen
     data object Search : Screen
-    data object Sports : Screen
     data object Addons : Screen
     data object Settings : Screen
     data class Details(val item: AppMedia) : Screen
@@ -153,15 +154,6 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         viewModel.loadDetails(it)
                         screen = Screen.Details(it)
                     }
-                }
-                Screen.Sports -> Shell("Sports", { screen = it }) {
-                    SportsHubScreen(
-                        state = state,
-                        onOpen = {
-                            viewModel.loadDetails(it)
-                            screen = Screen.Details(it)
-                        }
-                    )
                 }
                 Screen.Addons -> Shell("Add-ons", { screen = it }) {
                     AddonsScreen(
@@ -511,7 +503,6 @@ private fun Shell(selected: String, navigate: (Screen) -> Unit, content: @Compos
             Spacer(Modifier.width(24.dp))
             listOf(
                 "Home" to Screen.Home,
-                "Sports" to Screen.Sports,
                 "Search" to Screen.Search,
                 "Add-ons" to Screen.Addons,
                 "Settings" to Screen.Settings
@@ -608,6 +599,14 @@ private fun HomeScreen(
         item { if (hero != null) Hero(hero, onOpen) else EmptyHero(state.addons.isEmpty()) }
 
         item { ContinueRow(state.continueWatching, onContinue, onContinueManual) }
+
+        if (state.recommendations.isNotEmpty()) {
+            item { MediaRow("Recommended for You · TMDB", state.recommendations, onOpen) }
+        }
+        val historyMedia = state.watchHistory.map { it.media }.distinctBy { it.meta.id }
+        if (historyMedia.isNotEmpty()) {
+            item { MediaRow("Watch History", historyMedia, onOpen) }
+        }
 
         if (state.movies.isNotEmpty()) item { MediaRow("Movies", state.movies, onOpen) }
         if (state.series.isNotEmpty()) item { MediaRow("Series", state.series, onOpen) }
@@ -1076,8 +1075,9 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             }) { Text("Save & sync playback preferences") }
         } }
         item { CardBox {
-            Text("TMDB artwork", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text("TMDB metadata & recommendations", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text("Status: " + state.tmdbStatus, color = if (state.tmdbConfigured) NmGreen else NmMuted)
+            Text("TMDB powers title matching, artwork and recommendations. Watch history and exact resume positions stay securely on this device.", color = NmMuted)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.fillMaxWidth()) { InputBox(tmdb, "TMDB API Read Access Token") { tmdb = it } }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1114,6 +1114,18 @@ private fun DetailsScreen(
     chooseManual: (AppMedia, String, String) -> Unit,
     playTrailer: (StreamOption) -> Unit
 ) {
+    val seasons = remember(item.meta.id, item.meta.videos) {
+        item.meta.videos.map { it.season ?: 1 }.distinct().sorted()
+    }
+    var selectedSeason by remember(item.meta.id, seasons) {
+        mutableIntStateOf(seasons.firstOrNull() ?: 1)
+    }
+    val seasonEpisodes = remember(item.meta.videos, selectedSeason) {
+        item.meta.videos
+            .filter { (it.season ?: 1) == selectedSeason }
+            .sortedBy { it.episode ?: Int.MAX_VALUE }
+    }
+
     Box(Modifier.fillMaxSize()) {
         AsyncImage(model = item.meta.background ?: item.meta.poster, contentDescription = item.meta.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(NmBg, NmBg.copy(alpha = .9f), NmBg.copy(alpha = .4f)))))
@@ -1148,8 +1160,28 @@ private fun DetailsScreen(
                 }
             }
             if (item.meta.videos.isNotEmpty()) {
-                item { Text("Episodes", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold) }
-                items(item.meta.videos) { ep ->
+                item { Text("Seasons", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold) }
+                item {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = PaddingValues(vertical = 4.dp)
+                    ) {
+                        items(seasons) { season ->
+                            Button(onClick = { selectedSeason = season }) {
+                                Text(if (selectedSeason == season) "✓ Season $season" else "Season $season")
+                            }
+                        }
+                    }
+                }
+                item {
+                    Text(
+                        "Season $selectedSeason · ${seasonEpisodes.size} Episodes",
+                        color = Color.White,
+                        fontSize = 23.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                items(seasonEpisodes) { ep ->
                     var focused by remember { mutableStateOf(false) }
                     Row(
                         Modifier.fillMaxWidth()
@@ -1164,8 +1196,19 @@ private fun DetailsScreen(
                             .padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        AsyncImage(model = ep.thumbnail, contentDescription = ep.displayName(), contentScale = ContentScale.Crop, modifier = Modifier.width(180.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)))
-                        Spacer(Modifier.width(16.dp)); Column(Modifier.weight(1f)) { Text(ep.displayName(), color = Color.White, fontWeight = FontWeight.Bold); ep.overview?.let { Text(it, color = NmMuted, maxLines = 2, overflow = TextOverflow.Ellipsis) } }
+                        AsyncImage(
+                            model = ep.thumbnail,
+                            contentDescription = ep.displayName(),
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.width(180.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp))
+                        )
+                        Spacer(Modifier.width(16.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(ep.displayName(), color = Color.White, fontWeight = FontWeight.Bold)
+                            ep.overview?.let {
+                                Text(it, color = NmMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
                     }
                 }
             }
@@ -1517,8 +1560,12 @@ private fun PlayerScreen(
         runCatching { playPauseFocus.requestFocus() }
     }
 
-    LaunchedEffect(controlsRevision) {
+    LaunchedEffect(controlsRevision, showAudioMenu, showSubtitleMenu) {
         controlsVisible = true
+        if (!showAudioMenu && !showSubtitleMenu) {
+            delay(3_500)
+            controlsVisible = false
+        }
     }
 
     LaunchedEffect(videoId, advisoryItems) {
@@ -1541,6 +1588,17 @@ private fun PlayerScreen(
     Box(
         Modifier.fillMaxSize()
             .background(Color.Black)
+            .pointerInput(player) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.changes.any { it.pressed }) {
+                            controlsVisible = true
+                            controlsRevision = System.currentTimeMillis()
+                        }
+                    }
+                }
+            }
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) {
                     false
@@ -1549,6 +1607,7 @@ private fun PlayerScreen(
                     controlsRevision = System.currentTimeMillis()
                     true
                 } else {
+                    controlsRevision = System.currentTimeMillis()
                     false
                 }
             }
