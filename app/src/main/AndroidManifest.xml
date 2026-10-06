@@ -7,14 +7,6 @@
 
     <queries>
         <package android:name="org.xbmc.kodi" />
-        <package android:name="com.google.android.youtube.tv" />
-        <package android:name="com.google.android.youtube" />
-        <package android:name="com.google.android.apps.youtube.music" />
-        <package android:name="com.netflix.ninja" />
-        <package android:name="com.netflix.mediaclient" />
-        <package android:name="com.formulaone.production" />
-        <package android:name="com.dstvmobile.android" />
-        <package android:name="com.dstv.android" />
     </queries>
 
     <application
