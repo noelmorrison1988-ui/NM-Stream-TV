@@ -124,8 +124,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val iptvDeferred = async {
                 if (iptv.configured()) runCatching { iptv.loadChannels() }.getOrDefault(emptyList()) else emptyList()
             }
+            val kodiConnectedDeferred = async {
+                withTimeoutOrNull(4_500) {
+                    runCatching { kodiCrew.testConnection() }.getOrDefault(false)
+                } ?: false
+            }
             val crewDeferred = async {
-                withTimeoutOrNull(5_000) {
+                withTimeoutOrNull(6_000) {
                     runCatching { kodiCrew.loadSports() }.getOrDefault(emptyList())
                 }.orEmpty()
             }
@@ -137,41 +142,56 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             val (rawMovies, rawSeries) = homeDeferred.await()
-            val movies = if (tmdb.configured()) runCatching { tmdb.enrichBatch(rawMovies, 24) }.getOrDefault(rawMovies) else rawMovies
-            val series = if (tmdb.configured()) runCatching { tmdb.enrichBatch(rawSeries, 24) }.getOrDefault(rawSeries) else rawSeries
+            val movies = MediaPolicy.filter(
+                if (tmdb.configured()) runCatching { tmdb.enrichBatch(rawMovies, 48) }.getOrDefault(rawMovies) else rawMovies
+            )
+            val series = MediaPolicy.filter(
+                if (tmdb.configured()) runCatching { tmdb.enrichBatch(rawSeries, 48) }.getOrDefault(rawSeries) else rawSeries
+            )
 
             val rdUser = rdUserDeferred.await()
             val rdItems = if (rdUser != null) {
-                runCatching { realDebrid.recentDownloads() }.getOrDefault(emptyList()).mapNotNull { it.toAppMedia() }
+                MediaPolicy.filter(
+                    runCatching { realDebrid.recentDownloads() }.getOrDefault(emptyList()).mapNotNull { it.toAppMedia() }
+                )
             } else emptyList()
             val traktUser = traktUserDeferred.await()
             val rawTraktWatchlist = traktWatchlistDeferred.await()
-            val traktWatchlist = if (tmdb.configured()) {
-                runCatching { tmdb.enrichBatch(rawTraktWatchlist, 30) }.getOrDefault(rawTraktWatchlist)
-            } else rawTraktWatchlist
+            val traktWatchlist = MediaPolicy.filter(
+                if (tmdb.configured()) {
+                    runCatching { tmdb.enrichBatch(rawTraktWatchlist, 40) }.getOrDefault(rawTraktWatchlist)
+                } else rawTraktWatchlist
+            )
 
             val rawTraktPlayback = traktPlaybackDeferred.await()
-            val traktPlayback = enrichProgress(rawTraktPlayback, 30)
+            val traktPlayback = enrichProgress(rawTraktPlayback, 40)
+                .filter { MediaPolicy.allows(it.media) }
             traktCloudPlayback = traktPlayback
 
             val rawUpNext = traktUpNextDeferred.await()
-            val upNext = enrichProgress(rawUpNext, 30)
+            val upNext = enrichProgress(rawUpNext, 40)
+                .filter { MediaPolicy.allows(it.media) }
             traktUpNext = upNext
 
             val rawNoelList = noelListDeferred.await()
-            val noelList = if (tmdb.configured()) {
-                runCatching { tmdb.enrichBatch(rawNoelList, 40) }.getOrDefault(rawNoelList)
-            } else rawNoelList
+            val noelList = MediaPolicy.filter(
+                if (tmdb.configured()) {
+                    runCatching { tmdb.enrichBatch(rawNoelList, 50) }.getOrDefault(rawNoelList)
+                } else rawNoelList
+            )
 
             val rawSarahList = sarahListDeferred.await()
-            val sarahList = if (tmdb.configured()) {
-                runCatching { tmdb.enrichBatch(rawSarahList, 40) }.getOrDefault(rawSarahList)
-            } else rawSarahList
+            val sarahList = MediaPolicy.filter(
+                if (tmdb.configured()) {
+                    runCatching { tmdb.enrichBatch(rawSarahList, 50) }.getOrDefault(rawSarahList)
+                } else rawSarahList
+            )
 
-            val iptvChannels = iptvDeferred.await()
-            val crewSports = crewDeferred.await()
-            val xtreamMovies = xtreamMoviesDeferred.await()
-            val xtreamSeries = xtreamSeriesDeferred.await()
+            val iptvChannels = MediaPolicy.filter(iptvDeferred.await())
+            val kodiConnected = kodiConnectedDeferred.await()
+            val crewSports = MediaPolicy.filter(crewDeferred.await())
+            val xtreamMovies = MediaPolicy.filter(xtreamMoviesDeferred.await())
+            val xtreamSeries = MediaPolicy.filter(xtreamSeriesDeferred.await())
             val iptvSports = iptv.sportsOnly(iptvChannels)
             val addonSports = sportsFromExistingAddons(rawMovies + rawSeries)
             val sportsCatalog = mergeSportsCatalog(crewSports, iptvSports, addonSports)
@@ -206,11 +226,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 iptvSports = iptvSports,
                 crewSports = crewSports,
                 sportsCatalog = sportsCatalog,
-                kodiCrewConnected = crewSports.isNotEmpty(),
-                kodiCrewStatus = if (crewSports.isNotEmpty()) {
-                    kodiCrew.statusLabel() + " · " + crewSports.size + " sports items"
-                } else {
-                    "Start Kodi and enable HTTP remote control to load The Crew sports"
+                kodiCrewConnected = kodiConnected,
+                kodiCrewStatus = when {
+                    kodiConnected && crewSports.isNotEmpty() ->
+                        kodiCrew.statusLabel() + " · " + crewSports.size + " sports items"
+                    kodiConnected ->
+                        kodiCrew.statusLabel() + " · Connected · no sports items returned"
+                    else ->
+                        "Kodi connection failed · check host/IP, port, username/password and HTTP remote control"
                 },
                 xtreamMovies = xtreamMovies,
                 xtreamSeries = xtreamSeries,
@@ -282,13 +305,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.value = _uiState.value.copy(message = it.message)
                 emptyList()
             }
-            val results = if (tmdb.configured()) runCatching { tmdb.enrichBatch(raw, 20) }.getOrDefault(raw) else raw
+            val results = MediaPolicy.filter(
+                if (tmdb.configured()) runCatching { tmdb.enrichBatch(raw, 40) }.getOrDefault(raw) else raw
+            )
             _uiState.value = _uiState.value.copy(searchLoading = false, searchResults = results)
         }
     }
 
     fun loadDetails(item: AppMedia) {
         viewModelScope.launch {
+            if (!MediaPolicy.allows(item)) {
+                _uiState.value = _uiState.value.copy(
+                    selectedMedia = null,
+                    detailsLoading = false,
+                    message = "Anime content is blocked by NM Stream TV"
+                )
+                return@launch
+            }
             _uiState.value = _uiState.value.copy(selectedMedia = item, detailsLoading = true, message = null)
             val sourceMeta = when {
                 item.meta.id.startsWith("xtream:series:") ->
@@ -299,7 +332,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val loaded = if (tmdb.configured()) {
                 runCatching { tmdb.enrich(sourceMeta) }.getOrDefault(sourceMeta)
             } else sourceMeta
-            _uiState.value = _uiState.value.copy(selectedMedia = loaded, detailsLoading = false)
+            if (!MediaPolicy.allows(loaded)) {
+                _uiState.value = _uiState.value.copy(
+                    selectedMedia = null,
+                    detailsLoading = false,
+                    message = "Anime content is blocked by NM Stream TV"
+                )
+            } else {
+                _uiState.value = _uiState.value.copy(selectedMedia = loaded, detailsLoading = false)
+            }
         }
     }
 
@@ -629,11 +670,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun saveKodiCrewSettings(port: Int, username: String, password: String) {
-        runCatching { kodiCrew.saveConfig(port, username, password) }
+    fun saveKodiCrewSettings(host: String, port: Int, username: String, password: String) {
+        runCatching { kodiCrew.saveConfig(host, port, username, password) }
             .onSuccess {
-                _uiState.value = _uiState.value.copy(message = "Kodi bridge settings saved")
-                refreshEverything()
+                viewModelScope.launch {
+                    _uiState.value = _uiState.value.copy(message = "Testing Kodi connection…")
+                    runCatching { kodiCrew.testConnection() }
+                        .onSuccess {
+                            _uiState.value = _uiState.value.copy(
+                                kodiCrewConnected = true,
+                                kodiCrewStatus = kodiCrew.statusLabel() + " · Connected",
+                                message = "Kodi connected successfully · The Crew detected"
+                            )
+                            refreshEverything()
+                        }
+                        .onFailure { error ->
+                            _uiState.value = _uiState.value.copy(
+                                kodiCrewConnected = false,
+                                kodiCrewStatus = "Kodi connection failed",
+                                message = error.message ?: "Could not connect to Kodi"
+                            )
+                        }
+                }
             }
             .onFailure {
                 _uiState.value = _uiState.value.copy(message = it.message ?: "Could not save Kodi settings")
@@ -979,6 +1037,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         upNext: List<PlaybackProgress>
     ): List<PlaybackProgress> =
         (local + cloud + upNext)
+            .filter { MediaPolicy.allows(it.media) }
             .sortedByDescending { it.updatedAtMs }
             .distinctBy {
                 if (it.media.meta.type == "series") "series|${it.media.meta.id}"
@@ -991,7 +1050,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             "sport", "rugby", "football", "soccer", "cricket", "formula 1", "f1", "motorsport",
             "ufc", "mma", "boxing", "wwe", "tennis", "golf", "nfl", "nba", "nhl"
         )
-        return items.filter { item ->
+        return items.filter(MediaPolicy::allows).filter { item ->
             val text = buildString {
                 append(item.meta.name)
                 append(' ')
@@ -1014,6 +1073,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .trim() + "|" + item.meta.genres.firstOrNull().orEmpty().lowercase()
 
         return (crew + iptvItems + addonItems)
+            .filter(MediaPolicy::allows)
             .distinctBy(::key)
             .sortedWith(
                 compareBy<AppMedia> {
