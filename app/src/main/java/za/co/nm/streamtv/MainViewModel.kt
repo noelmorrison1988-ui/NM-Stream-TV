@@ -508,7 +508,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { iptv.saveM3u(m3uUrl, epgUrl) }
                 .onSuccess {
-                    _uiState.value = _uiState.value.copy(message = "IPTV playlist saved")
+                    if (nmAccount.isLinked()) {
+                        runCatching { nmAccount.pushIptv(true, iptv.config()) }
+                    }
+                    _uiState.value = _uiState.value.copy(message = "IPTV playlist saved and synced")
                     refreshEverything()
                 }
                 .onFailure { error ->
@@ -521,7 +524,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { iptv.saveXtream(server, username, password) }
                 .onSuccess {
-                    _uiState.value = _uiState.value.copy(message = "Xtream IPTV saved")
+                    if (nmAccount.isLinked()) {
+                        runCatching { nmAccount.pushIptv(true, iptv.config()) }
+                    }
+                    _uiState.value = _uiState.value.copy(message = "Xtream IPTV saved and synced")
                     refreshEverything()
                 }
                 .onFailure { error ->
@@ -532,6 +538,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearIptv() {
         iptv.clear()
+        viewModelScope.launch {
+            if (nmAccount.isLinked()) runCatching { nmAccount.pushIptv(true, null) }
+        }
         _uiState.value = _uiState.value.copy(
             iptvChannels = emptyList(),
             iptvSports = emptyList(),
@@ -539,8 +548,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             iptvGuide = emptyMap(),
             iptvConfigured = false,
             iptvStatus = "Not configured",
-            message = "IPTV configuration removed"
+            message = "IPTV configuration removed from all linked devices"
         )
+    }
+
+    fun savePlaybackPreferences(
+        preferredQuality: Int,
+        preferHttpDebrid: Boolean,
+        audioLanguage: String,
+        subtitleLanguage: String
+    ) {
+        val prefs = NmPlaybackPreferences(
+            preferredQuality = preferredQuality,
+            preferHttpDebrid = preferHttpDebrid,
+            preferredAudioLanguage = audioLanguage.trim().ifBlank { "en" },
+            subtitleLanguage = subtitleLanguage.trim().ifBlank { "en" }
+        )
+        nmAccount.savePlaybackPreferences(prefs)
+        _uiState.value = _uiState.value.copy(
+            preferredQuality = prefs.preferredQuality,
+            preferHttpDebrid = prefs.preferHttpDebrid,
+            preferredAudioLanguage = prefs.preferredAudioLanguage,
+            preferredSubtitleLanguage = prefs.subtitleLanguage,
+            message = "Playback language and source preferences saved"
+        )
+        viewModelScope.launch {
+            if (nmAccount.isLinked()) {
+                runCatching { nmAccount.pushPlaybackPreferences(prefs) }
+                    .onFailure { error ->
+                        _uiState.value = _uiState.value.copy(
+                            message = error.message ?: "Saved locally, but cloud sync failed"
+                        )
+                    }
+            }
+        }
     }
 
     fun beginNmAccountPairing() {
