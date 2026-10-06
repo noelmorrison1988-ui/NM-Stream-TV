@@ -76,7 +76,6 @@ private sealed interface Screen {
     data object Home : Screen
     data object Search : Screen
     data object Sports : Screen
-    data object LiveTv : Screen
     data object Addons : Screen
     data object Settings : Screen
     data class Details(val item: AppMedia) : Screen
@@ -164,12 +163,6 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         }
                     )
                 }
-                Screen.LiveTv -> Shell("Live TV", { screen = it }) {
-                    LiveTvScreen(state) {
-                        viewModel.loadDetails(it)
-                        screen = Screen.Details(it)
-                    }
-                }
                 Screen.Addons -> Shell("Add-ons", { screen = it }) {
                     AddonsScreen(
                         state = state,
@@ -186,9 +179,6 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     DetailsScreen(
                         item = detailItem,
                         loading = state.detailsLoading,
-                        traktConnected = state.traktConnected,
-                        inNoel = state.noelList.any { mediaMatches(it, detailItem) },
-                        inSarah = state.sarahList.any { mediaMatches(it, detailItem) },
                         trailer = trailer,
                         play = { item, id, title ->
                             val key = viewModel.sourceRequestKey(item, id)
@@ -199,8 +189,6 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             viewModel.loadSources(item, id)
                             screen = Screen.Sources(item, id, title)
                         },
-                        addNoel = { viewModel.addToPersonalList("Noel", detailItem) },
-                        addSarah = { viewModel.addToPersonalList("Sarah", detailItem) },
                         playTrailer = { source ->
                             when {
                                 source.playableUrl != null -> screen = Screen.Trailer(detailItem, "Trailer · ${detailItem.meta.name}", source)
@@ -524,7 +512,6 @@ private fun Shell(selected: String, navigate: (Screen) -> Unit, content: @Compos
             listOf(
                 "Home" to Screen.Home,
                 "Sports" to Screen.Sports,
-                "Live TV" to Screen.LiveTv,
                 "Search" to Screen.Search,
                 "Add-ons" to Screen.Addons,
                 "Settings" to Screen.Settings
@@ -617,37 +604,11 @@ private fun HomeScreen(
     }
     val hero = state.movies.firstOrNull()
         ?: state.series.firstOrNull()
-        ?: state.xtreamMovies.firstOrNull()
-        ?: state.xtreamSeries.firstOrNull()
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         item { if (hero != null) Hero(hero, onOpen) else EmptyHero(state.addons.isEmpty()) }
 
-        item {
-            PersonalMediaRow(
-                title = "Noel",
-                media = state.noelList,
-                emptyText = if (state.traktConnected)
-                    "Add movies or series to the Trakt list named Noel."
-                else "Connect Trakt to load the Noel list.",
-                onOpen = onOpen
-            )
-        }
-        item {
-            PersonalMediaRow(
-                title = "Sarah",
-                media = state.sarahList,
-                emptyText = if (state.traktConnected)
-                    "Add movies or series to the Trakt list named Sarah."
-                else "Connect Trakt to load the Sarah list.",
-                onOpen = onOpen
-            )
-        }
         item { ContinueRow(state.continueWatching, onContinue, onContinueManual) }
 
-        if (state.traktWatchlist.isNotEmpty()) item { MediaRow("My Trakt Watchlist", state.traktWatchlist, onOpen) }
-        if (state.iptvSports.isNotEmpty()) item { MediaRow("Live Sports · Rugby · F1 · Soccer · Cricket", state.iptvSports.take(40), onOpen) }
-        if (state.xtreamMovies.isNotEmpty()) item { MediaRow("Xtream Movies", state.xtreamMovies, onOpen) }
-        if (state.xtreamSeries.isNotEmpty()) item { MediaRow("Xtream Series", state.xtreamSeries, onOpen) }
         if (state.movies.isNotEmpty()) item { MediaRow("Movies", state.movies, onOpen) }
         if (state.series.isNotEmpty()) item { MediaRow("Series", state.series, onOpen) }
         if (state.debridItems.isNotEmpty()) item { MediaRow("My Real-Debrid Library", state.debridItems, onOpen) }
@@ -767,7 +728,7 @@ private fun ContinueRow(
                     .padding(18.dp),
                 contentAlignment = Alignment.CenterStart
             ) {
-                Text("Your Trakt playback and next unwatched episodes will appear here.", color = NmMuted)
+                Text("Movies and episodes you start watching will appear here.", color = NmMuted)
             }
         } else LazyRow(contentPadding = PaddingValues(horizontal = 40.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(media) { p ->
@@ -790,14 +751,10 @@ private fun ContinueRow(
                     Spacer(Modifier.height(6.dp))
                     Text(p.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
-                        when (p.source) {
-                            "Up Next" -> "UP NEXT · OK plays · hold for sources"
-                            "Trakt" -> "TRAKT · ${p.percent}% · hold for sources"
-                            else -> (p.source?.let { "$it · " } ?: "") + p.percent + "% · hold for sources"
-                        },
-                        color = if (p.source == "Trakt" || p.source == "Up Next") NmGreen else NmMuted,
+                        (p.source?.let { "$it · " } ?: "") + p.percent + "% · hold for sources",
+                        color = NmMuted,
                         fontSize = 12.sp,
-                        fontWeight = if (p.source == "Up Next") FontWeight.Bold else FontWeight.Normal
+                        fontWeight = FontWeight.Normal
                     )
                 }
             }
@@ -1038,11 +995,6 @@ private fun AddonsScreen(
 @Composable
 private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
     var tmdb by remember { mutableStateOf("") }
-    var m3uUrl by remember { mutableStateOf("") }
-    var epgUrl by remember { mutableStateOf("") }
-    var xtreamServer by remember { mutableStateOf("") }
-    var xtreamUser by remember { mutableStateOf("") }
-    var xtreamPass by remember { mutableStateOf("") }
     var quality by remember(state.preferredQuality) { mutableStateOf(state.preferredQuality) }
     var preferHttp by remember(state.preferHttpDebrid) { mutableStateOf(state.preferHttpDebrid) }
     var audioLang by remember(state.preferredAudioLanguage) { mutableStateOf(state.preferredAudioLanguage) }
@@ -1061,7 +1013,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
                 color = if (state.nmAccountLinked) NmGreen else NmMuted
             )
             Text(
-                "Pair this device once, then manage synced add-ons, preferred quality, source priority and optional encrypted IPTV settings from your phone.",
+                "Pair this device once, then manage synced add-ons, preferred quality, source priority and Real-Debrid settings from your phone.",
                 color = NmMuted
             )
             Text("Phone dashboard: ${NmAccountRepository.DASHBOARD_URL}", color = NmMuted, fontSize = 12.sp)
@@ -1135,62 +1087,12 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             }
         } }
         item { CardBox {
-            Text("Live TV / IPTV", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            Text("Status: " + state.iptvStatus, color = if (state.iptvConfigured) NmGreen else NmMuted)
-            Text("Use an IPTV source you are authorized to access. M3U/M3U8 supports Live TV. Xtream Codes loads Live TV plus provider Movies and Series; Xtream VOD appears in separate Home rows.", color = NmMuted)
-            Text("M3U / XMLTV", color = Color.White, fontWeight = FontWeight.Bold)
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.fillMaxWidth()) { InputBox(m3uUrl, "M3U / M3U8 playlist URL") { m3uUrl = it } }
-                Box(Modifier.fillMaxWidth()) { InputBox(epgUrl, "XMLTV EPG URL (optional)") { epgUrl = it } }
-                Button(onClick = {
-                    vm.saveIptvM3u(m3uUrl, epgUrl)
-                    m3uUrl = ""
-                    epgUrl = ""
-                }) { Text("Save M3U") }
-            }
-            Text("Xtream Codes", color = Color.White, fontWeight = FontWeight.Bold)
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.fillMaxWidth()) { InputBox(xtreamServer, "Portal/server URL") { xtreamServer = it } }
-                Box(Modifier.fillMaxWidth()) { InputBox(xtreamUser, "Username") { xtreamUser = it } }
-                Box(Modifier.fillMaxWidth()) { InputBox(xtreamPass, "Password", password = true) { xtreamPass = it } }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(onClick = {
-                        vm.saveIptvXtream(xtreamServer, xtreamUser, xtreamPass)
-                        xtreamServer = ""
-                        xtreamUser = ""
-                        xtreamPass = ""
-                    }) { Text("Save Xtream · Live + Movies + Series") }
-                    if (state.iptvConfigured) Button(onClick = vm::clearIptv) { Text("Remove IPTV") }
-                }
-            }
-        } }
-        item { CardBox {
-            Text("Trakt", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            Text(
-                state.traktUser?.let { "Connected as " + (it.name.ifBlank { it.username }) } ?: "Not connected",
-                color = if (state.traktConnected) NmGreen else NmMuted
-            )
-            Text(
-                "Simple TV sign-in: choose Connect Trakt, then enter the code in Trakt on your phone. No Client ID or developer setup is required.",
-                color = NmMuted
-            )
-            if (state.traktConnected) {
-                Button(onClick = vm::disconnectTrakt) { Text("Disconnect Trakt everywhere") }
-            } else {
-                Button(
-                    onClick = vm::beginTraktSignIn,
-                    enabled = !state.traktConnecting
-                ) { Text(if (state.traktConnecting) "Waiting for authorization…" else "Connect Trakt") }
-            }
-            state.traktDeviceCode?.let { DeviceCode("Trakt", it.userCode, it.verificationUrl) }
-        } }
-        item { CardBox {
             Text("Real-Debrid", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text(state.rdUser?.let { "Connected as " + it.username } ?: "Not connected", color = if (state.rdUser != null) NmGreen else NmMuted)
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV v0.15.0 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV Lite v0.15.1 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
@@ -1207,14 +1109,9 @@ private fun DeviceCode(service: String, code: String, url: String) {
 private fun DetailsScreen(
     item: AppMedia,
     loading: Boolean,
-    traktConnected: Boolean,
-    inNoel: Boolean,
-    inSarah: Boolean,
     trailer: StreamOption?,
     play: (AppMedia, String, String) -> Unit,
     chooseManual: (AppMedia, String, String) -> Unit,
-    addNoel: () -> Unit,
-    addSarah: () -> Unit,
     playTrailer: (StreamOption) -> Unit
 ) {
     Box(Modifier.fillMaxSize()) {
@@ -1248,22 +1145,6 @@ private fun DetailsScreen(
                         fontSize = 12.sp
                     )
 
-                    if (item.meta.type == "movie" || item.meta.type == "series") {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(
-                                onClick = addNoel,
-                                enabled = traktConnected && !inNoel
-                            ) { Text(if (inNoel) "✓ In Noel" else "+ Add to Noel") }
-
-                            Button(
-                                onClick = addSarah,
-                                enabled = traktConnected && !inSarah
-                            ) { Text(if (inSarah) "✓ In Sarah" else "+ Add to Sarah") }
-                        }
-                        if (!traktConnected) {
-                            Text("Connect Trakt in Settings to use the Noel and Sarah lists.", color = NmMuted, fontSize = 12.sp)
-                        }
-                    }
                 }
             }
             if (item.meta.videos.isNotEmpty()) {
