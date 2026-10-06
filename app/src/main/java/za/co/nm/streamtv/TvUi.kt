@@ -12,6 +12,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -330,8 +331,8 @@ private fun Button(
             .background(
                 when {
                     !enabled -> Color(0xFF343841)
-                    focused -> NmRed
-                    else -> NmPanelFocus
+                    focused -> Color(0xFFFF2948)
+                    else -> NmRed
                 }
             )
             .border(
@@ -1217,32 +1218,37 @@ private fun Modifier.tvActivation(
 ): Modifier = composed {
     var pressedAtMs by remember { mutableStateOf<Long?>(null) }
 
-    onPreviewKeyEvent { event ->
-        val supported = event.key == Key.DirectionCenter || event.key == Key.Enter
+    this
+        .combinedClickable(
+            onClick = onClick,
+            onLongClick = onLongClick
+        )
+        .onPreviewKeyEvent { event ->
+            val supported = event.key == Key.DirectionCenter || event.key == Key.Enter
 
-        if (!supported) {
-            false
-        } else {
-            when (event.type) {
-                KeyEventType.KeyDown -> {
-                    if (pressedAtMs == null) {
-                        pressedAtMs = System.currentTimeMillis()
+            if (!supported) {
+                false
+            } else {
+                when (event.type) {
+                    KeyEventType.KeyDown -> {
+                        if (pressedAtMs == null) {
+                            pressedAtMs = System.currentTimeMillis()
+                        }
+                        true
                     }
-                    true
-                }
 
-                KeyEventType.KeyUp -> {
-                    val started = pressedAtMs
-                    pressedAtMs = null
-                    val heldForMs = started?.let { System.currentTimeMillis() - it } ?: 0L
-                    if (heldForMs >= 550L) onLongClick() else onClick()
-                    true
-                }
+                    KeyEventType.KeyUp -> {
+                        val started = pressedAtMs
+                        pressedAtMs = null
+                        val heldForMs = started?.let { System.currentTimeMillis() - it } ?: 0L
+                        if (heldForMs >= 550L) onLongClick() else onClick()
+                        true
+                    }
 
-                else -> false
+                    else -> false
+                }
             }
         }
-    }
 }
 
 @Composable
