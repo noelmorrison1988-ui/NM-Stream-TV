@@ -1,8 +1,5 @@
 package za.co.nm.streamtv
 
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,7 +17,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -189,164 +185,6 @@ private fun SportsCard(item: AppMedia, onClick: () -> Unit) {
 }
 
 @Composable
-internal fun YouTubeHubScreen() {
-    val context = LocalContext.current
-    LazyColumn(
-        Modifier.fillMaxSize().background(PremiumBg).padding(horizontal = 42.dp),
-        contentPadding = PaddingValues(top = 28.dp, bottom = 60.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
-    ) {
-        item {
-            Text("YOUTUBE", color = PremiumGold, fontSize = 12.sp, fontWeight = FontWeight.Black)
-            Text("Your YouTube corner", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Black)
-            Text(
-                "Premium remains attached to your Google/YouTube account in the official apps.",
-                color = PremiumMuted
-            )
-        }
-        item {
-            ServiceHeroCard(
-                eyebrow = "MUSIC FIRST",
-                title = "YouTube Music",
-                body = "Open your personalized mixes, library, playlists and Premium music experience.",
-                action = "OPEN MUSIC"
-            ) {
-                launchFirstInstalled(
-                    context,
-                    listOf("com.google.android.apps.youtube.music", "com.google.android.youtube.tv"),
-                    "https://music.youtube.com/"
-                )
-            }
-        }
-        item {
-            ServiceHeroCard(
-                eyebrow = "VIDEO",
-                title = "YouTube Premium",
-                body = "Open the signed-in YouTube TV experience with your subscriptions, recommendations and Premium benefits.",
-                action = "OPEN YOUTUBE"
-            ) {
-                launchFirstInstalled(
-                    context,
-                    listOf("com.google.android.youtube.tv", "com.google.android.youtube"),
-                    "https://www.youtube.com/"
-                )
-            }
-        }
-        item {
-            PremiumInfoCard(
-                title = "Why this opens the official YouTube apps",
-                body = "Google does not expose the full personalized Home feed, YouTube Music catalogue, or your Premium entitlement to third-party TV apps. NM Stream keeps YouTube as a premium one-click destination instead of pretending to mirror data the public APIs do not provide."
-            )
-        }
-    }
-}
-
-@Composable
-internal fun ServicesHubScreen() {
-    val context = LocalContext.current
-    LazyColumn(
-        Modifier.fillMaxSize().background(PremiumBg).padding(horizontal = 42.dp),
-        contentPadding = PaddingValues(top = 28.dp, bottom = 60.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
-    ) {
-        item {
-            Text("NM SERVICES", color = PremiumGold, fontSize = 12.sp, fontWeight = FontWeight.Black)
-            Text("Premium apps, one doorway", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Black)
-            Text("Launch supported official streaming apps without leaving the NM Stream navigation concept.", color = PremiumMuted)
-        }
-
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                ServiceTile("Netflix", "Films & series", Modifier.weight(1f)) {
-                    launchFirstInstalled(
-                        context,
-                        listOf("com.netflix.ninja", "com.netflix.mediaclient"),
-                        "https://www.netflix.com/"
-                    )
-                }
-                ServiceTile("F1 TV", "Live F1 & archive", Modifier.weight(1f)) {
-                    launchFirstInstalled(
-                        context,
-                        listOf("com.formulaone.production"),
-                        "https://f1tv.formula1.com/"
-                    )
-                }
-                ServiceTile("DStv Stream", "Live TV & Catch Up", Modifier.weight(1f)) {
-                    launchFirstInstalled(
-                        context,
-                        listOf("com.dstvmobile.android", "com.dstv.android"),
-                        "https://now.dstv.com/"
-                    )
-                }
-            }
-        }
-
-        item {
-            PremiumInfoCard(
-                title = "Protected services stay protected",
-                body = "NM Stream can launch and hand off to Netflix, F1 TV and DStv. Their DRM video, account entitlements and private catalogues cannot be re-broadcast inside the NM player without each provider's commercial integration and DRM authorization."
-            )
-        }
-    }
-}
-
-@Composable
-private fun ServiceHeroCard(
-    eyebrow: String,
-    title: String,
-    body: String,
-    action: String,
-    onClick: () -> Unit
-) {
-    var focused by remember { mutableStateOf(false) }
-    Row(
-        Modifier.fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(
-                Brush.horizontalGradient(
-                    listOf(
-                        if (focused) Color(0xFF292316) else Color(0xFF17191D),
-                        Color(0xFF0E1013)
-                    )
-                )
-            )
-            .border(if (focused) 2.dp else 1.dp, if (focused) PremiumGold else Color.White.copy(alpha = .08f), RoundedCornerShape(18.dp))
-            .onFocusChanged { focused = it.isFocused }
-            .focusable()
-            .premiumActivation(onClick)
-            .padding(24.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(eyebrow, color = PremiumGold, fontSize = 11.sp, fontWeight = FontWeight.Black)
-            Text(title, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black)
-            Text(body, color = PremiumMuted, fontSize = 14.sp)
-        }
-        Text(action, color = PremiumGold, fontWeight = FontWeight.Black)
-    }
-}
-
-@Composable
-private fun ServiceTile(title: String, body: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    Column(
-        modifier.clip(RoundedCornerShape(16.dp))
-            .background(if (focused) PremiumPanelRaised else PremiumPanel)
-            .border(if (focused) 2.dp else 1.dp, if (focused) PremiumGold else Color.White.copy(alpha = .08f), RoundedCornerShape(16.dp))
-            .onFocusChanged { focused = it.isFocused }
-            .focusable()
-            .premiumActivation(onClick)
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(7.dp)
-    ) {
-        Text(title, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Black)
-        Text(body, color = PremiumMuted)
-        Spacer(Modifier.height(6.dp))
-        Text("OPEN", color = PremiumGold, fontWeight = FontWeight.Black, fontSize = 12.sp)
-    }
-}
-
-@Composable
 private fun PremiumInfoCard(title: String, body: String) {
     Column(
         Modifier.fillMaxWidth()
@@ -363,20 +201,3 @@ private fun PremiumInfoCard(title: String, body: String) {
 
 private fun Modifier.premiumActivation(onClick: () -> Unit): Modifier =
     this.clickable(onClick = onClick)
-
-private fun launchFirstInstalled(context: Context, packages: List<String>, fallbackUrl: String) {
-    packages.firstNotNullOfOrNull { packageName ->
-        context.packageManager.getLaunchIntentForPackage(packageName)
-    }?.let { intent ->
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        runCatching { context.startActivity(intent) }
-        return
-    }
-
-    runCatching {
-        context.startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse(fallbackUrl))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
-    }
-}
