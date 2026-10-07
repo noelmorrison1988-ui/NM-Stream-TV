@@ -1252,8 +1252,10 @@ private fun DetailsScreen(
                                 Text("▶  Trailer · 720p preferred")
                             }
                         }
-                        Button(onClick = toggleMyList) {
-                            Text(if (inMyList) "✓ My List" else "+ My List")
+                        if (item.meta.type == "movie" || item.meta.type == "series") {
+                            Button(onClick = toggleMyList) {
+                                Text(if (inMyList) "✓ My List" else "+ My List")
+                            }
                         }
                     }
 
