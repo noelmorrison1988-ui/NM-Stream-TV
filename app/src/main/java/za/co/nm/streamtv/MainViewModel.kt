@@ -25,6 +25,9 @@ data class MainUiState(
     val continueWatching: List<PlaybackProgress> = emptyList(),
     val watchHistory: List<PlaybackProgress> = emptyList(),
     val myList: List<AppMedia> = emptyList(),
+    val belowDeck: List<AppMedia> = emptyList(),
+    val realHousewives: List<AppMedia> = emptyList(),
+    val bravo: List<AppMedia> = emptyList(),
     val newMovies: List<AppMedia> = emptyList(),
     val trendingMovies: List<AppMedia> = emptyList(),
     val newSeries: List<AppMedia> = emptyList(),
@@ -108,10 +111,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     .getOrDefault(emptyList<AppMedia>() to emptyList())
             }
             val rdUserDeferred = async { runCatching { realDebrid.getUser() }.getOrNull() }
-            val discoveryDeferred = async {
+            val sarahRowsDeferred = async {
                 if (tmdb.configured()) {
-                    runCatching { tmdb.discoveryRows(18) }.getOrDefault(TmdbDiscoveryRows())
-                } else TmdbDiscoveryRows()
+                    runCatching { tmdb.sarahEditionRows(24) }.getOrDefault(SarahEditionRows())
+                } else SarahEditionRows()
             }
 
             val (rawMovies, rawSeries) = homeDeferred.await()
@@ -138,7 +141,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 enrichProgress(rawHistory, 15)
             } else rawHistory
 
-            val discovery = discoveryDeferred.await()
+            val sarahRows = sarahRowsDeferred.await()
             val nmPrefs = nmAccount.playbackPreferences()
 
             _uiState.value = _uiState.value.copy(
@@ -153,10 +156,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 continueWatching = playback.load().filter { MediaPolicy.allows(it.media) }.take(30),
                 watchHistory = watchHistory,
                 myList = myListStore.load(),
-                newMovies = discovery.newMovies,
-                trendingMovies = discovery.trendingMovies,
-                newSeries = discovery.newSeries,
-                trendingSeries = discovery.trendingSeries,
+                belowDeck = sarahRows.belowDeck,
+                realHousewives = sarahRows.realHousewives,
+                bravo = sarahRows.bravo,
+                newMovies = emptyList(),
+                trendingMovies = emptyList(),
+                newSeries = emptyList(),
+                trendingSeries = emptyList(),
                 recentSearches = searchHistoryStore.load(),
                 rdDeviceCode = null,
                 rdConnecting = false,
@@ -284,7 +290,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val added = myListStore.toggle(item)
         _uiState.value = _uiState.value.copy(
             myList = myListStore.load(),
-            message = if (added) "Added ${item.meta.name} to My List" else "Removed ${item.meta.name} from My List"
+            message = if (added) "Added ${item.meta.name} to Sarah’s Picks" else "Removed ${item.meta.name} from Sarah’s Picks"
         )
     }
 
