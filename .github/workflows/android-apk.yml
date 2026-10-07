@@ -17,6 +17,7 @@ jobs:
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      TMDB_READ_ACCESS_TOKEN: ${{ secrets.TMDB_READ_ACCESS_TOKEN }}
 
     steps:
       - name: Checkout
@@ -38,6 +39,14 @@ jobs:
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platforms;android-37.1" "build-tools;36.0.0" "platform-tools"
+
+      - name: Verify TMDB build credential
+        shell: bash
+        run: |
+          if [ -z "$TMDB_READ_ACCESS_TOKEN" ]; then
+            echo "TMDB_READ_ACCESS_TOKEN repository secret is missing."
+            exit 1
+          fi
 
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace assembleDebug
