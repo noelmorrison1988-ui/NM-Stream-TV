@@ -330,7 +330,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val prefs = nmAccount.playbackPreferences()
             val sortedStreams = streamsDeferred.await()
                 .filter { option ->
-                    option.detectedQuality == null || option.detectedQuality <= 1080
+                    val quality = option.detectedQuality
+                    quality == null || quality <= 1080
                 }
                 .sortedWith(
                     compareBy<StreamOption> { option ->
