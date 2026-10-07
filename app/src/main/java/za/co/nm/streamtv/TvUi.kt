@@ -353,9 +353,13 @@ private fun YouTubeTrailerScreen(
     title: String,
     youtubeId: String
 ) {
+    val context = LocalContext.current
     var webView by remember(youtubeId) { mutableStateOf<WebView?>(null) }
     var playing by remember(youtubeId) { mutableStateOf(true) }
+    var playerError by remember(youtubeId) { mutableStateOf<Int?>(null) }
     val playFocus = remember(youtubeId) { FocusRequester() }
+    val clientIdentity = "https://github.com/noelmorrison1988-ui/NM-Stream-TV/"
+    val externalUrl = remember(youtubeId) { "https://www.youtube.com/watch?v=$youtubeId" }
 
     val safeYoutubeId = remember(youtubeId) { youtubeId.replace("'", "\\'") }
     val html = remember(safeYoutubeId) {
@@ -364,6 +368,7 @@ private fun YouTubeTrailerScreen(
         <html>
         <head>
           <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+          <meta name="referrer" content="strict-origin-when-cross-origin">
           <style>
             html,body,#player { width:100%; height:100%; margin:0; padding:0; overflow:hidden; background:#000; }
           </style>
@@ -380,14 +385,17 @@ private fun YouTubeTrailerScreen(
                   autoplay: 1,
                   controls: 0,
                   rel: 0,
-                  modestbranding: 1,
                   playsinline: 1,
-                  fs: 0
+                  fs: 0,
+                  origin: 'https://github.com',
+                  widget_referrer: '$clientIdentity'
                 },
                 events: {
                   onReady: function(e) {
-                    e.target.setPlaybackQuality('hd720');
                     e.target.playVideo();
+                  },
+                  onError: function(e) {
+                    window.location.href = 'nmstream://youtube-error/' + e.data;
                   }
                 }
               });
@@ -403,6 +411,15 @@ private fun YouTubeTrailerScreen(
         </body>
         </html>
         """.trimIndent()
+    }
+
+    fun openInYouTube() {
+        runCatching {
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(externalUrl))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
     }
 
     DisposableEffect(youtubeId) {
@@ -421,8 +438,8 @@ private fun YouTubeTrailerScreen(
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
-            factory = { context ->
-                WebView(context).apply {
+            factory = { webContext ->
+                WebView(webContext).apply {
                     webView = this
                     setBackgroundColor(android.graphics.Color.BLACK)
                     isFocusable = false
@@ -434,8 +451,21 @@ private fun YouTubeTrailerScreen(
                     settings.allowFileAccess = false
                     settings.allowContentAccess = false
                     webChromeClient = WebChromeClient()
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(
+                            view: WebView?,
+                            request: WebResourceRequest?
+                        ): Boolean {
+                            val uri = request?.url ?: return false
+                            if (uri.scheme == "nmstream" && uri.host == "youtube-error") {
+                                playerError = uri.lastPathSegment?.toIntOrNull()
+                                return true
+                            }
+                            return false
+                        }
+                    }
                     loadDataWithBaseURL(
-                        "https://www.youtube.com",
+                        clientIdentity,
                         html,
                         "text/html",
                         "UTF-8",
@@ -459,6 +489,21 @@ private fun YouTubeTrailerScreen(
                 )
             )
         )
+
+        playerError?.let { errorCode ->
+            Column(
+                Modifier.align(Alignment.Center)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xEE111319))
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("Trailer embed unavailable", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text("YouTube returned player error $errorCode. You can still open this trailer directly.", color = NmMuted)
+                Button(onClick = ::openInYouTube) { Text("Open in YouTube") }
+            }
+        }
 
         Column(
             Modifier.align(Alignment.BottomCenter)
@@ -489,13 +534,16 @@ private fun YouTubeTrailerScreen(
                     label = "10 ↷",
                     onClick = { webView?.evaluateJavascript("nmSeek(10)", null) }
                 )
+                PlayerControl(
+                    label = "YOUTUBE ↗",
+                    onClick = ::openInYouTube
+                )
                 Spacer(Modifier.weight(1f))
                 Text("TRAILER · YOUTUBE", color = NmGold, fontSize = 11.sp, fontWeight = FontWeight.Black)
             }
         }
     }
 }
-
 @Composable
 private fun DeviceBlockedScreen() {
     Column(
@@ -1338,7 +1386,7 @@ private fun DetailsScreen(
                         }
                         trailer?.let {
                             Button(onClick = { playTrailer(it) }) {
-                                Text("▶  Trailer · 720p preferred")
+                                Text("▶  Trailer · 1080p preferred")
                             }
                         }
                         if (item.meta.type == "movie" || item.meta.type == "series") {
