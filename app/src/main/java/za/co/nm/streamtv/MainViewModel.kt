@@ -24,12 +24,8 @@ data class MainUiState(
     val debridItems: List<AppMedia> = emptyList(),
     val continueWatching: List<PlaybackProgress> = emptyList(),
     val watchHistory: List<PlaybackProgress> = emptyList(),
-    val recommendations: List<AppMedia> = emptyList(),
     val myList: List<AppMedia> = emptyList(),
-    val newMovies: List<AppMedia> = emptyList(),
-    val trendingMovies: List<AppMedia> = emptyList(),
-    val newSeries: List<AppMedia> = emptyList(),
-    val trendingSeries: List<AppMedia> = emptyList(),
+    val recentSearches: List<String> = emptyList(),
     val searchResults: List<AppMedia> = emptyList(),
     val searchLoading: Boolean = false,
     val selectedMedia: AppMedia? = null,
@@ -77,6 +73,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val tmdb = TmdbRepository(application)
     private val playback = PlaybackStore(application)
     private val myListStore = MyListStore(application)
+    private val searchHistoryStore = SearchHistoryStore(application)
     private val nmAccount = NmAccountRepository(application)
 
     private val _uiState = MutableStateFlow(MainUiState())
@@ -107,13 +104,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     .getOrDefault(emptyList<AppMedia>() to emptyList())
             }
             val rdUserDeferred = async { runCatching { realDebrid.getUser() }.getOrNull() }
-            val discoveryDeferred = async {
-                if (tmdb.configured()) {
-                    runCatching { tmdb.discoveryRows(18) }.getOrDefault(TmdbDiscoveryRows())
-                } else {
-                    TmdbDiscoveryRows()
-                }
-            }
 
             val (rawMovies, rawSeries) = homeDeferred.await()
             val movies = MediaPolicy.filter(
@@ -138,11 +128,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val watchHistory = if (tmdb.configured()) {
                 enrichProgress(rawHistory, 15)
             } else rawHistory
-            val recommendations = if (tmdb.configured()) {
-                runCatching { tmdb.recommendationsFor(watchHistory.map { it.media }, 24) }
-                    .getOrDefault(emptyList())
-            } else emptyList()
-            val discovery = discoveryDeferred.await()
+
             val nmPrefs = nmAccount.playbackPreferences()
 
             _uiState.value = _uiState.value.copy(
@@ -156,12 +142,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 debridItems = rdItems,
                 continueWatching = playback.load().filter { MediaPolicy.allows(it.media) }.take(30),
                 watchHistory = watchHistory,
-                recommendations = recommendations,
                 myList = myListStore.load(),
-                newMovies = discovery.newMovies,
-                trendingMovies = discovery.trendingMovies,
-                newSeries = discovery.newSeries,
-                trendingSeries = discovery.trendingSeries,
+                recentSearches = searchHistoryStore.load(),
                 rdDeviceCode = null,
                 rdConnecting = false,
                 tmdbConfigured = tmdb.configured(),
@@ -236,12 +218,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun search(query: String) {
         viewModelScope.launch {
-            if (query.isBlank()) {
+            val submittedQuery = query.trim()
+            if (submittedQuery.isBlank()) {
                 _uiState.value = _uiState.value.copy(searchResults = emptyList())
                 return@launch
             }
-            _uiState.value = _uiState.value.copy(searchLoading = true, message = null)
-            val raw = runCatching { addons.search(_uiState.value.addons, query) }.getOrElse {
+            _uiState.value = _uiState.value.copy(
+                searchLoading = true,
+                recentSearches = searchHistoryStore.record(submittedQuery),
+                message = null
+            )
+            val raw = runCatching { addons.search(_uiState.value.addons, submittedQuery) }.getOrElse {
                 _uiState.value = _uiState.value.copy(message = it.message)
                 emptyList()
             }
@@ -342,14 +329,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             val prefs = nmAccount.playbackPreferences()
             val sortedStreams = streamsDeferred.await()
+                .filter { option ->
+                    option.detectedQuality == null || option.detectedQuality <= 1080
+                }
                 .sortedWith(
-                    compareBy<StreamOption> {
-                        it.preferenceScore(
-                            preferredQuality = prefs.preferredQuality,
-                            preferHttpDebrid = prefs.preferHttpDebrid,
-                            preferredAudioLanguage = prefs.preferredAudioLanguage
-                        )
-                    }.thenBy { it.stream.behaviorHints?.videoSize ?: Long.MAX_VALUE }
+                    compareBy<StreamOption> { option ->
+                        if (option.addonName.contains("pengu", ignoreCase = true)) 0 else 1
+                    }.thenBy { option ->
+                        when {
+                            option.playableUrl != null -> 0
+                            option.isP2p -> 1
+                            else -> 2
+                        }
+                    }.thenBy { option ->
+                        when (option.detectedQuality) {
+                            1080 -> 0
+                            720 -> 1
+                            576 -> 2
+                            480 -> 3
+                            360 -> 4
+                            null -> 5
+                            else -> 6
+                        }
+                    }.thenByDescending { it.stream.behaviorHints?.videoSize ?: 0L }
                 )
 
             val sortedSubtitles = subtitlesDeferred.await()
@@ -724,22 +726,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onPlaybackStopped(item: AppMedia, videoId: String, title: String, positionMs: Long, durationMs: Long) {
         onPlaybackProgress(item, videoId, title, positionMs, durationMs)
-        refreshTmdbRecommendations()
-    }
-
-    private fun refreshTmdbRecommendations() {
-        if (!tmdb.configured()) return
-        viewModelScope.launch {
-            val rawHistory = playback.history().filter { MediaPolicy.allows(it.media) }
-            val history = enrichProgress(rawHistory, 15)
-            val recommended = runCatching {
-                tmdb.recommendationsFor(history.map { it.media }, 24)
-            }.getOrDefault(emptyList())
-            _uiState.value = _uiState.value.copy(
-                watchHistory = history,
-                recommendations = recommended
-            )
-        }
     }
 
     fun clearMessage() {
