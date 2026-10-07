@@ -63,7 +63,7 @@ class NmDeviceUnpairedException : IllegalStateException("NM Account link expired
 
 class NmAccountRepository(context: Context) {
     companion object {
-        const val DASHBOARD_URL = "https://nm-stream-tv-account.floot.app"
+        private const val DASHBOARD_URL = "https://nm-stream-tv-account.floot.app"
         private const val API = "$DASHBOARD_URL/_api"
 
         private const val DEVICE_TOKEN_KEY = "nm_account_device_token"
