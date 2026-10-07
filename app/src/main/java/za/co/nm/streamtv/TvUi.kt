@@ -518,7 +518,7 @@ private fun YouTubeTrailerScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 PlayerControl(
-                    label = "↶ 10",
+                    label = "↶ 30",
                     onClick = { webView?.evaluateJavascript("nmSeek(-10)", null) }
                 )
                 PlayerControl(
@@ -531,7 +531,7 @@ private fun YouTubeTrailerScreen(
                     }
                 )
                 PlayerControl(
-                    label = "10 ↷",
+                    label = "30 ↷",
                     onClick = { webView?.evaluateJavascript("nmSeek(10)", null) }
                 )
                 PlayerControl(
@@ -1315,7 +1315,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.2 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.3 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
@@ -1746,6 +1746,8 @@ private fun PlayerScreen(
     var remoteControlIndex by remember(player) { mutableIntStateOf(1) }
     var audioMenuIndex by remember(player) { mutableIntStateOf(0) }
     var subtitleMenuIndex by remember(player) { mutableIntStateOf(0) }
+    var scrubMode by remember(player) { mutableStateOf(false) }
+    var scrubPositionMs by remember(player) { mutableLongStateOf(0L) }
     val advisoryItems = remember(item.meta.contentRating, item.meta.contentAdvisories) {
         buildList {
             item.meta.contentRating?.takeIf { it.isNotBlank() }?.let { add("Rated " + it) }
@@ -1809,7 +1811,8 @@ private fun PlayerScreen(
             }
     }
 
-    BackHandler(showAudioMenu || showSubtitleMenu) {
+    BackHandler(showAudioMenu || showSubtitleMenu || scrubMode) {
+        scrubMode = false
         showAudioMenu = false
         showSubtitleMenu = false
         controlsRevision = System.currentTimeMillis()
@@ -1823,6 +1826,8 @@ private fun PlayerScreen(
         remoteControlIndex,
         audioMenuIndex,
         subtitleMenuIndex,
+        scrubMode,
+        scrubPositionMs,
         audioTracks,
         textTracks,
         subtitlesEnabled,
@@ -1848,7 +1853,9 @@ private fun PlayerScreen(
                 false
             } else if (event.action == android.view.KeyEvent.ACTION_UP) {
                 true
-            } else if (event.action != android.view.KeyEvent.ACTION_DOWN || event.repeatCount > 0) {
+            } else if (event.action != android.view.KeyEvent.ACTION_DOWN) {
+                true
+            } else if (event.repeatCount > 0 && !scrubMode) {
                 true
             } else {
                 val now = System.currentTimeMillis()
@@ -1873,14 +1880,14 @@ private fun PlayerScreen(
                     }
                     android.view.KeyEvent.KEYCODE_MEDIA_REWIND -> {
                         controlsVisible = true
-                        player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                        player.seekTo((player.currentPosition - 30_000L).coerceAtLeast(0L))
                         controlsRevision = now
                         true
                     }
                     android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
                         controlsVisible = true
                         val limit = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
-                        player.seekTo((player.currentPosition + 10_000L).coerceAtMost(limit))
+                        player.seekTo((player.currentPosition + 30_000L).coerceAtMost(limit))
                         controlsRevision = now
                         true
                     }
@@ -1888,6 +1895,32 @@ private fun PlayerScreen(
                         if (!controlsVisible) {
                             controlsVisible = true
                             remoteControlIndex = 1
+                            if (code == android.view.KeyEvent.KEYCODE_DPAD_UP) {
+                                scrubMode = true
+                                scrubPositionMs = player.currentPosition.coerceAtLeast(0L)
+                            }
+                            controlsRevision = now
+                            true
+                        } else if (scrubMode) {
+                            val duration = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
+                            when (code) {
+                                android.view.KeyEvent.KEYCODE_DPAD_LEFT ->
+                                    scrubPositionMs = (scrubPositionMs - 30_000L).coerceAtLeast(0L)
+                                android.view.KeyEvent.KEYCODE_DPAD_RIGHT ->
+                                    scrubPositionMs = (scrubPositionMs + 30_000L).coerceAtMost(duration)
+                                android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                                android.view.KeyEvent.KEYCODE_ENTER,
+                                android.view.KeyEvent.KEYCODE_NUMPAD_ENTER,
+                                android.view.KeyEvent.KEYCODE_BUTTON_A -> {
+                                    player.seekTo(scrubPositionMs.coerceAtMost(duration))
+                                    scrubMode = false
+                                }
+                                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
+                                    scrubMode = false
+                                    scrubPositionMs = player.currentPosition.coerceAtLeast(0L)
+                                }
+                                android.view.KeyEvent.KEYCODE_DPAD_UP -> Unit
+                            }
                             controlsRevision = now
                             true
                         } else if (showSubtitleMenu) {
@@ -1952,16 +1985,21 @@ private fun PlayerScreen(
                             when (code) {
                                 android.view.KeyEvent.KEYCODE_DPAD_LEFT -> remoteControlIndex = (remoteControlIndex - 1).coerceAtLeast(0)
                                 android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> remoteControlIndex = (remoteControlIndex + 1).coerceAtMost(5)
+                                android.view.KeyEvent.KEYCODE_DPAD_UP -> {
+                                    scrubMode = true
+                                    scrubPositionMs = player.currentPosition.coerceAtLeast(0L)
+                                }
+                                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> Unit
                                 android.view.KeyEvent.KEYCODE_DPAD_CENTER,
                                 android.view.KeyEvent.KEYCODE_ENTER,
                                 android.view.KeyEvent.KEYCODE_NUMPAD_ENTER,
                                 android.view.KeyEvent.KEYCODE_BUTTON_A -> {
                                     when (remoteControlIndex) {
-                                        0 -> player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                                        0 -> player.seekTo((player.currentPosition - 30_000L).coerceAtLeast(0L))
                                         1 -> if (player.isPlaying) player.pause() else player.play()
                                         2 -> {
                                             val limit = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
-                                            player.seekTo((player.currentPosition + 10_000L).coerceAtMost(limit))
+                                            player.seekTo((player.currentPosition + 30_000L).coerceAtMost(limit))
                                         }
                                         3 -> {
                                             subtitleMenuIndex = 0
@@ -2153,12 +2191,13 @@ private fun PlayerScreen(
             ) {
                 Text(title, color = NmPlatinum, fontSize = 20.sp, fontWeight = FontWeight.Bold)
 
+                val displayedPositionMs = if (scrubMode) scrubPositionMs else playerPositionMs
                 val progress = if (playerDurationMs > 0) {
-                    (playerPositionMs.toFloat() / playerDurationMs.toFloat()).coerceIn(0f, 1f)
+                    (displayedPositionMs.toFloat() / playerDurationMs.toFloat()).coerceIn(0f, 1f)
                 } else 0f
 
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(formatPlayerTime(playerPositionMs), color = NmMuted, fontSize = 12.sp)
+                    Text(formatPlayerTime(displayedPositionMs), color = if (scrubMode) NmGold else NmMuted, fontSize = 12.sp)
                     Box(
                         Modifier.weight(1f)
                             .height(5.dp)
@@ -2174,16 +2213,31 @@ private fun PlayerScreen(
                     Text(formatPlayerTime(playerDurationMs), color = NmMuted, fontSize = 12.sp)
                 }
 
+                if (scrubMode) {
+                    Text(
+                        "SEEK · ◀ / ▶ move 30 sec · OK apply · ↓ cancel",
+                        color = NmGold,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                } else {
+                    Text(
+                        "↑ timeline",
+                        color = NmMuted,
+                        fontSize = 11.sp
+                    )
+                }
+
                 Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     PlayerControl(
-                        label = "↶ 10",
+                        label = "↶ 30",
                         selected = remoteControlIndex == 0,
                         onClick = {
-                            player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                            player.seekTo((player.currentPosition - 30_000L).coerceAtLeast(0L))
                             controlsRevision = System.currentTimeMillis()
                         }
                     )
@@ -2198,11 +2252,11 @@ private fun PlayerScreen(
                         }
                     )
                     PlayerControl(
-                        label = "10 ↷",
+                        label = "30 ↷",
                         selected = remoteControlIndex == 2,
                         onClick = {
                             val limit = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
-                            player.seekTo((player.currentPosition + 10_000L).coerceAtMost(limit))
+                            player.seekTo((player.currentPosition + 30_000L).coerceAtMost(limit))
                             controlsRevision = System.currentTimeMillis()
                         }
                     )
