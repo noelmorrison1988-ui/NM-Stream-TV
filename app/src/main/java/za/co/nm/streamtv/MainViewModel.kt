@@ -230,13 +230,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
 
             if (key in tmdbKeys) {
-                val pageItems = runCatching {
+                val pageResult = runCatching {
                     tmdb.browseCollection(key, safePage, pageSize)
-                }.getOrDefault(emptyList())
+                }.getOrDefault(TmdbBrowsePage())
                 _uiState.value = _uiState.value.copy(
-                    expandedRowItems = pageItems,
+                    expandedRowItems = pageResult.items,
                     expandedRowLoading = false,
-                    expandedRowHasNext = pageItems.size >= pageSize
+                    expandedRowHasNext = pageResult.hasNext
                 )
                 return@launch
             }
