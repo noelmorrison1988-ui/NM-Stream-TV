@@ -2,7 +2,6 @@ package za.co.nm.streamtv
 
 import android.content.Intent
 import android.net.Uri
-import android.view.KeyEvent as AndroidKeyEvent
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -38,7 +37,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.nativeKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -1646,19 +1644,14 @@ private fun SourceResultRow(source: StreamOption, isDefault: Boolean, select: (S
         }
     }
 }
-private fun isTvConfirmKey(keyCode: Int): Boolean =
-    keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
-        keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
-        keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
-        keyCode == AndroidKeyEvent.KEYCODE_BUTTON_A ||
-        keyCode == AndroidKeyEvent.KEYCODE_BUTTON_SELECT ||
-        keyCode == AndroidKeyEvent.KEYCODE_SPACE
+private fun isTvConfirmKey(key: Key): Boolean =
+    key == Key.DirectionCenter || key == Key.Enter
 
 private fun Modifier.tvRemoteClick(
     enabled: Boolean = true,
     onClick: () -> Unit
 ): Modifier = onPreviewKeyEvent { event ->
-    if (!enabled || !isTvConfirmKey(event.nativeKeyEvent.keyCode)) {
+    if (!enabled || !isTvConfirmKey(event.key)) {
         false
     } else {
         when (event.type) {
@@ -1771,7 +1764,7 @@ private fun PlayerScreen(
     val playPauseFocus = remember(player) { FocusRequester() }
     val audioMenuFocus = remember(player) { FocusRequester() }
     val subtitleMenuFocus = remember(player) { FocusRequester() }
-    var revealKeyCode by remember(player) { mutableIntStateOf(-1) }
+    var revealKey by remember(player) { mutableStateOf<Key?>(null) }
     var playerPositionMs by remember(player) { mutableLongStateOf(0L) }
     var playerDurationMs by remember(player) { mutableLongStateOf(0L) }
     var isPlaying by remember(player) { mutableStateOf(false) }
@@ -1939,57 +1932,16 @@ private fun PlayerScreen(
                 }
             }
             .onPreviewKeyEvent { event ->
-                val keyCode = event.nativeKeyEvent.keyCode
+                val pressedKey = event.key
 
-                if (revealKeyCode >= 0 && keyCode == revealKeyCode) {
-                    if (event.type == KeyEventType.KeyUp) revealKeyCode = -1
+                if (revealKey != null && pressedKey == revealKey) {
+                    if (event.type == KeyEventType.KeyUp) revealKey = null
                     true
                 } else if (!controlsVisible && event.type == KeyEventType.KeyDown) {
                     controlsVisible = true
                     controlsRevision = System.currentTimeMillis()
-                    revealKeyCode = keyCode
+                    revealKey = pressedKey
                     true
-                } else if (event.type == KeyEventType.KeyUp) {
-                    when (keyCode) {
-                        AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
-                        AndroidKeyEvent.KEYCODE_HEADSETHOOK -> {
-                            if (player.isPlaying) player.pause() else player.play()
-                            controlsVisible = true
-                            controlsRevision = System.currentTimeMillis()
-                            true
-                        }
-
-                        AndroidKeyEvent.KEYCODE_MEDIA_PLAY -> {
-                            player.play()
-                            controlsVisible = true
-                            controlsRevision = System.currentTimeMillis()
-                            true
-                        }
-
-                        AndroidKeyEvent.KEYCODE_MEDIA_PAUSE -> {
-                            player.pause()
-                            controlsVisible = true
-                            controlsRevision = System.currentTimeMillis()
-                            true
-                        }
-
-                        AndroidKeyEvent.KEYCODE_MEDIA_REWIND -> {
-                            player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
-                            controlsVisible = true
-                            controlsRevision = System.currentTimeMillis()
-                            true
-                        }
-
-                        AndroidKeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                            val limit = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
-                            player.seekTo((player.currentPosition + 10_000L).coerceAtMost(limit))
-                            controlsVisible = true
-                            controlsRevision = System.currentTimeMillis()
-                            true
-                        }
-
-                        else -> false
-                    }
                 } else {
                     if (event.type == KeyEventType.KeyDown) {
                         controlsRevision = System.currentTimeMillis()
