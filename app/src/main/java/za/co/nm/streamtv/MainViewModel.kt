@@ -871,21 +871,84 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resumeCloudPercent(item: AppMedia, videoId: String): Double? = null
 
-    fun onPlaybackStarted(item: AppMedia, videoId: String, positionMs: Long, durationMs: Long) {
-        // Lite build keeps playback history local only.
+    fun lastPlaybackSession(item: AppMedia, videoId: String): LastPlaybackSession? =
+        playback.lastSession(item, videoId)
+
+    fun onPlaybackStarted(
+        item: AppMedia,
+        videoId: String,
+        title: String,
+        source: StreamOption,
+        subtitles: List<SubtitleOption>,
+        positionMs: Long,
+        durationMs: Long
+    ) {
+        playback.saveLastSession(
+            LastPlaybackSession(
+                media = item,
+                videoId = videoId,
+                title = title,
+                source = source,
+                subtitles = subtitles,
+                positionMs = positionMs,
+                durationMs = durationMs,
+                updatedAtMs = System.currentTimeMillis()
+            )
+        )
     }
 
-    fun onPlaybackProgress(item: AppMedia, videoId: String, title: String, positionMs: Long, durationMs: Long) {
-        val progress = PlaybackProgress(item, videoId, title, positionMs, durationMs, System.currentTimeMillis())
-        if (durationMs > 0 && progress.percent >= 95) playback.complete(item, videoId) else playback.save(progress)
+    fun onPlaybackProgress(
+        item: AppMedia,
+        videoId: String,
+        title: String,
+        source: StreamOption,
+        subtitles: List<SubtitleOption>,
+        positionMs: Long,
+        durationMs: Long
+    ) {
+        val progress = PlaybackProgress(
+            item,
+            videoId,
+            title,
+            positionMs,
+            durationMs,
+            System.currentTimeMillis(),
+            source = source.addonName
+        )
+        if (durationMs > 0 && progress.percent >= 95) {
+            playback.complete(item, videoId)
+            playback.clearLastSession(item, videoId)
+        } else {
+            playback.save(progress)
+            playback.saveLastSession(
+                LastPlaybackSession(
+                    media = item,
+                    videoId = videoId,
+                    title = title,
+                    source = source,
+                    subtitles = subtitles,
+                    positionMs = positionMs,
+                    durationMs = durationMs,
+                    updatedAtMs = System.currentTimeMillis()
+                )
+            )
+        }
         _uiState.value = _uiState.value.copy(
             continueWatching = playback.load().filter { MediaPolicy.allows(it.media) }.take(30),
             watchHistory = playback.history().filter { MediaPolicy.allows(it.media) }.take(60)
         )
     }
 
-    fun onPlaybackStopped(item: AppMedia, videoId: String, title: String, positionMs: Long, durationMs: Long) {
-        onPlaybackProgress(item, videoId, title, positionMs, durationMs)
+    fun onPlaybackStopped(
+        item: AppMedia,
+        videoId: String,
+        title: String,
+        source: StreamOption,
+        subtitles: List<SubtitleOption>,
+        positionMs: Long,
+        durationMs: Long
+    ) {
+        onPlaybackProgress(item, videoId, title, source, subtitles, positionMs, durationMs)
     }
 
     fun clearMessage() {
