@@ -15,6 +15,11 @@ data class TmdbDiscoveryRows(
     val nowAiringSeries: List<AppMedia> = emptyList()
 )
 
+data class TmdbBrowsePage(
+    val items: List<AppMedia> = emptyList(),
+    val hasNext: Boolean = false
+)
+
 class TmdbRepository(context: Context) {
     companion object {
         private const val TOKEN_KEY = "tmdb_read_access_token"
@@ -183,9 +188,9 @@ class TmdbRepository(context: Context) {
         key: String,
         page: Int,
         limit: Int = 20
-    ): List<AppMedia> {
+    ): TmdbBrowsePage {
         val token = activeToken()
-        if (token.isBlank()) return emptyList()
+        if (token.isBlank()) return TmdbBrowsePage()
         val headers = mapOf("Authorization" to "Bearer $token")
         val safePage = page.coerceAtLeast(1)
         val pair = when (key) {
@@ -194,9 +199,26 @@ class TmdbRepository(context: Context) {
             "trending_series" -> "trending/tv/week" to "series"
             "new_series" -> "tv/on_the_air" to "series"
             "now_airing_series" -> "tv/airing_today" to "series"
-            else -> return emptyList()
+            else -> return TmdbBrowsePage()
         }
-        return fetchCollection(pair.first, pair.second, headers, limit, safePage)
+        val separator = if (pair.first.contains("?")) "&" else "?"
+        val result = SimpleHttp.get(
+            "$API/${pair.first}${separator}language=en-US&page=$safePage",
+            headers
+        )
+        if (result.code !in 200..299) return TmdbBrowsePage()
+        val root = JsonParser.parseString(result.body).asJsonObject
+        val totalPages = root.get("total_pages")?.takeUnless { it.isJsonNull }?.asInt ?: safePage
+        val items = root.getAsJsonArray("results")
+            ?.mapNotNull { element ->
+                val candidate = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+                tmdbCandidateToAppMedia(candidate, pair.second)
+            }
+            ?.filter(MediaPolicy::allows)
+            ?.distinctBy { "${it.meta.type}:${it.meta.tmdbId ?: it.meta.id}" }
+            ?.take(limit)
+            .orEmpty()
+        return TmdbBrowsePage(items = items, hasNext = safePage < totalPages)
     }
     private suspend fun fetchCollection(
         path: String,
