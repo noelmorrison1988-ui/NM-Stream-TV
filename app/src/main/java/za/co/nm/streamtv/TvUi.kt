@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.*
@@ -77,6 +78,7 @@ private val NmGreen = Color(0xFF71D6A0)
 private sealed interface Screen {
     data object Home : Screen
     data object Search : Screen
+    data object MyList : Screen
     data object Addons : Screen
     data object Settings : Screen
     data class Details(val item: AppMedia) : Screen
@@ -93,10 +95,21 @@ private sealed interface Screen {
     data class YouTubeTrailer(val item: AppMedia, val title: String, val youtubeId: String) : Screen
 }
 
+private data class SeriesSelection(
+    val season: Int,
+    val episodeId: String? = null
+)
+
+private fun seriesSelectionKey(item: AppMedia): String =
+    "${item.meta.type}|" + item.meta.name.lowercase()
+        .replace(Regex("[^a-z0-9]+"), " ")
+        .trim()
+
 @Composable
 fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
     val context = LocalContext.current
     var screen: Screen by remember { mutableStateOf(Screen.Home) }
+    var seriesSelections by remember { mutableStateOf<Map<String, SeriesSelection>>(emptyMap()) }
 
     BackHandler(screen !is Screen.Home) {
         screen = when (val current = screen) {
@@ -155,6 +168,12 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         screen = Screen.Details(it)
                     }
                 }
+                Screen.MyList -> Shell("My List", { screen = it }) {
+                    MyListScreen(state.myList) {
+                        viewModel.loadDetails(it)
+                        screen = Screen.Details(it)
+                    }
+                }
                 Screen.Addons -> Shell("Add-ons", { screen = it }) {
                     AddonsScreen(
                         state = state,
@@ -168,10 +187,31 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                 is Screen.Details -> {
                     val detailItem = state.selectedMedia ?: current.item
                     val trailer = viewModel.bestTrailer(detailItem)
+                    val selectionKey = seriesSelectionKey(current.item)
+                    val rememberedSelection = seriesSelections[selectionKey]
                     DetailsScreen(
                         item = detailItem,
                         loading = state.detailsLoading,
                         trailer = trailer,
+                        inMyList = state.myList.any { mediaMatches(it, detailItem) },
+                        rememberedSeason = rememberedSelection?.season,
+                        rememberedEpisodeId = rememberedSelection?.episodeId,
+                        toggleMyList = { viewModel.toggleMyList(detailItem) },
+                        rememberSeason = { season ->
+                            val previous = seriesSelections[selectionKey]
+                            seriesSelections = seriesSelections + (selectionKey to SeriesSelection(
+                                season = season,
+                                episodeId = previous?.episodeId?.takeIf { id ->
+                                    detailItem.meta.videos.any { video -> video.id == id && (video.season ?: 1) == season }
+                                }
+                            ))
+                        },
+                        rememberEpisode = { episode ->
+                            seriesSelections = seriesSelections + (selectionKey to SeriesSelection(
+                                season = episode.season ?: rememberedSelection?.season ?: 1,
+                                episodeId = episode.id
+                            ))
+                        },
                         play = { item, id, title ->
                             val key = viewModel.sourceRequestKey(item, id)
                             viewModel.loadSources(item, id)
@@ -503,6 +543,7 @@ private fun Shell(selected: String, navigate: (Screen) -> Unit, content: @Compos
             Spacer(Modifier.width(24.dp))
             listOf(
                 "Home" to Screen.Home,
+                "My List" to Screen.MyList,
                 "Search" to Screen.Search,
                 "Add-ons" to Screen.Addons,
                 "Settings" to Screen.Settings
@@ -599,6 +640,11 @@ private fun HomeScreen(
         item { if (hero != null) Hero(hero, onOpen) else EmptyHero(state.addons.isEmpty()) }
 
         item { ContinueRow(state.continueWatching, onContinue, onContinueManual) }
+
+        if (state.trendingMovies.isNotEmpty()) item { MediaRow("Trending Movies · TMDB", state.trendingMovies, onOpen) }
+        if (state.newMovies.isNotEmpty()) item { MediaRow("New Movies · TMDB", state.newMovies, onOpen) }
+        if (state.trendingSeries.isNotEmpty()) item { MediaRow("Trending Series · TMDB", state.trendingSeries, onOpen) }
+        if (state.newSeries.isNotEmpty()) item { MediaRow("New Series · TMDB", state.newSeries, onOpen) }
 
         if (state.recommendations.isNotEmpty()) {
             item { MediaRow("Recommended for You · TMDB", state.recommendations, onOpen) }
@@ -894,19 +940,63 @@ private fun formatGuideTime(timeMs: Long): String =
 @Composable
 private fun SearchScreen(state: MainUiState, onSearch: (String) -> Unit, onOpen: (AppMedia) -> Unit) {
     var query by remember { mutableStateOf("") }
+    var submittedQuery by remember { mutableStateOf("") }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 42.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item {
             Text("Search", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black)
-            Spacer(Modifier.height(12.dp)); InputBox(query, "Search movies and series") { query = it; onSearch(it) }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    InputBox(query, "Search movies and series") { query = it }
+                }
+                Button(
+                    onClick = {
+                        val submitted = query.trim()
+                        if (submitted.isNotBlank()) {
+                            submittedQuery = submitted
+                            onSearch(submitted)
+                        }
+                    },
+                    enabled = query.isNotBlank() && !state.searchLoading
+                ) { Text(if (state.searchLoading) "Searching…" else "Search") }
+            }
+            Text("Search starts only when you press Search.", color = NmMuted, fontSize = 12.sp)
         }
         if (state.searchLoading) item { Text("Searching…", color = NmMuted) }
-        else if (query.isNotBlank()) item {
-            if (state.searchResults.isEmpty()) Text("No results found.", color = NmMuted)
+        else if (submittedQuery.isNotBlank()) item {
+            if (state.searchResults.isEmpty()) Text("No results found for “$submittedQuery”.", color = NmMuted)
             else Column(verticalArrangement = Arrangement.spacedBy(16.dp)) { state.searchResults.chunked(6).forEach { row -> Row(horizontalArrangement = Arrangement.spacedBy(15.dp)) { row.forEach { PosterCard(it, onOpen) } } } }
         }
     }
 }
 
+@Composable
+private fun MyListScreen(media: List<AppMedia>, onOpen: (AppMedia) -> Unit) {
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 42.dp),
+        contentPadding = PaddingValues(top = 26.dp, bottom = 48.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
+        item {
+            Text("My List", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black)
+            Text("Saved only on this Mobile Lite installation. Nothing in My List is synced to other devices.", color = NmMuted)
+        }
+        if (media.isEmpty()) {
+            item {
+                CardBox {
+                    Text("Your list is empty", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("Open any movie or series and choose + My List.", color = NmMuted)
+                }
+            }
+        } else {
+            items(media.chunked(6)) { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(15.dp)) {
+                    row.forEach { PosterCard(it, onOpen) }
+                }
+            }
+        }
+    }
+}
 @Composable
 private fun AddonsScreen(
     state: MainUiState,
@@ -1110,6 +1200,12 @@ private fun DetailsScreen(
     item: AppMedia,
     loading: Boolean,
     trailer: StreamOption?,
+    inMyList: Boolean,
+    rememberedSeason: Int?,
+    rememberedEpisodeId: String?,
+    toggleMyList: () -> Unit,
+    rememberSeason: (Int) -> Unit,
+    rememberEpisode: (VideoItem) -> Unit,
     play: (AppMedia, String, String) -> Unit,
     chooseManual: (AppMedia, String, String) -> Unit,
     playTrailer: (StreamOption) -> Unit
@@ -1117,19 +1213,26 @@ private fun DetailsScreen(
     val seasons = remember(item.meta.id, item.meta.videos) {
         item.meta.videos.map { it.season ?: 1 }.distinct().sorted()
     }
-    var selectedSeason by remember(item.meta.id, seasons) {
-        mutableIntStateOf(seasons.firstOrNull() ?: 1)
-    }
+    val selectedSeason = rememberedSeason?.takeIf { it in seasons } ?: seasons.firstOrNull() ?: 1
     val seasonEpisodes = remember(item.meta.videos, selectedSeason) {
         item.meta.videos
             .filter { (it.season ?: 1) == selectedSeason }
             .sortedBy { it.episode ?: Int.MAX_VALUE }
     }
+    val detailsListState = rememberLazyListState()
+
+    LaunchedEffect(item.meta.id, selectedSeason, rememberedEpisodeId) {
+        val episodeIndex = seasonEpisodes.indexOfFirst { it.id == rememberedEpisodeId }
+        if (episodeIndex >= 0) {
+            delay(80)
+            detailsListState.scrollToItem(4 + episodeIndex)
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         AsyncImage(model = item.meta.background ?: item.meta.poster, contentDescription = item.meta.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(NmBg, NmBg.copy(alpha = .9f), NmBg.copy(alpha = .4f)))))
-        LazyColumn(Modifier.fillMaxSize().padding(48.dp), contentPadding = PaddingValues(bottom = 50.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        LazyColumn(Modifier.fillMaxSize().padding(48.dp), state = detailsListState, contentPadding = PaddingValues(bottom = 50.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             item {
                 Column(Modifier.widthIn(max = 720.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(item.meta.name, color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Black)
@@ -1149,6 +1252,9 @@ private fun DetailsScreen(
                                 Text("▶  Trailer · 720p preferred")
                             }
                         }
+                        Button(onClick = toggleMyList) {
+                            Text(if (inMyList) "✓ My List" else "+ My List")
+                        }
                     }
 
                     Text(
@@ -1167,7 +1273,7 @@ private fun DetailsScreen(
                         contentPadding = PaddingValues(vertical = 4.dp)
                     ) {
                         items(seasons) { season ->
-                            Button(onClick = { selectedSeason = season }) {
+                            Button(onClick = { rememberSeason(season) }) {
                                 Text(if (selectedSeason == season) "✓ Season $season" else "Season $season")
                             }
                         }
@@ -1186,11 +1292,21 @@ private fun DetailsScreen(
                     Row(
                         Modifier.fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
-                            .background(if (focused) NmPanelFocus else NmPanel)
+                            .background(when {
+                                focused -> NmPanelFocus
+                                ep.id == rememberedEpisodeId -> NmGold.copy(alpha = .14f)
+                                else -> NmPanel
+                            })
                             .onFocusChanged { focused = it.isFocused }
                             .tvActivation(
-                                onClick = { play(item, ep.id, ep.displayName()) },
-                                onLongClick = { chooseManual(item, ep.id, ep.displayName()) }
+                                onClick = {
+                                    rememberEpisode(ep)
+                                    play(item, ep.id, ep.displayName())
+                                },
+                                onLongClick = {
+                                    rememberEpisode(ep)
+                                    chooseManual(item, ep.id, ep.displayName())
+                                }
                             )
                             .focusable()
                             .padding(14.dp),
