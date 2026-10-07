@@ -53,6 +53,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -198,14 +199,20 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         onExpand = { title, key ->
                             viewModel.loadExpandedRow(key, 1)
                             screen = Screen.ExpandedRow(title, key, 1)
-                        }
+                        },
+                        onToggleMyList = viewModel::toggleMyList
                     )
                 }
                 Screen.Search -> Shell("Search", { screen = it }) {
-                    SearchScreen(state, viewModel::search) {
-                        viewModel.loadDetails(it)
-                        screen = Screen.Details(it)
-                    }
+                    SearchScreen(
+                        state = state,
+                        onSearch = viewModel::search,
+                        onOpen = {
+                            viewModel.loadDetails(it)
+                            screen = Screen.Details(it)
+                        },
+                        onToggleMyList = viewModel::toggleMyList
+                    )
                 }
                 Screen.MyList -> Shell("My List", { screen = it }) {
                     MyListScreen(state.myList) {
@@ -254,7 +261,9 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         viewModel.loadDetails(it.media)
                         viewModel.loadSources(it.media, it.videoId)
                         screen = Screen.Sources(it.media, it.videoId, it.title)
-                    }
+                    },
+                    myList = state.myList,
+                    onToggleMyList = viewModel::toggleMyList
                 )
                 is Screen.Details -> {
                     val detailItem = state.selectedMedia ?: current.item
