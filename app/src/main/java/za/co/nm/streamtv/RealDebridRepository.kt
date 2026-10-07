@@ -73,6 +73,44 @@ class RealDebridRepository(context: Context) {
         return gson.fromJson(SimpleHttp.requireSuccess(result, "Loading Real-Debrid downloads"), type)
     }
 
+    suspend fun instantlyAvailableHashes(hashes: List<String>): Set<String>? {
+        val auth = validAuth() ?: return null
+        val normalized = hashes
+            .map { it.trim().lowercase() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(50)
+
+        if (normalized.isEmpty()) return emptySet()
+
+        val result = SimpleHttp.get(
+            "$REST_BASE/torrents/instantAvailability/${normalized.joinToString("/")}",
+            mapOf("Authorization" to "Bearer ${auth.accessToken}")
+        )
+        if (result.code !in 200..299) return null
+
+        val root = runCatching {
+            gson.fromJson(result.body, com.google.gson.JsonObject::class.java)
+        }.getOrNull() ?: return null
+
+        return normalized.filterTo(mutableSetOf()) { hash ->
+            val value = root.entrySet()
+                .firstOrNull { it.key.equals(hash, ignoreCase = true) }
+                ?.value
+            if (value?.isJsonObject != true) {
+                false
+            } else {
+                val rd = value.asJsonObject.get("rd")
+                when {
+                    rd == null || rd.isJsonNull -> false
+                    rd.isJsonArray -> rd.asJsonArray.size() > 0
+                    rd.isJsonObject -> rd.asJsonObject.size() > 0
+                    else -> false
+                }
+            }
+        }
+    }
+
     fun disconnect() = secureStore.remove(AUTH_KEY)
 
     fun exportAuth(): RdStoredAuth? = loadAuth()
