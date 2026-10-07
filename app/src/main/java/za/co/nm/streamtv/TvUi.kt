@@ -1153,7 +1153,6 @@ private fun AddonsScreen(
 
 @Composable
 private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
-    var tmdb by remember { mutableStateOf("") }
     var audioLang by remember(state.preferredAudioLanguage) { mutableStateOf(state.preferredAudioLanguage) }
     var subtitleLang by remember(state.preferredSubtitleLanguage) { mutableStateOf(state.preferredSubtitleLanguage) }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 24.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 55.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -1210,14 +1209,10 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
         item { CardBox {
             Text("TMDB metadata, actor search & discovery", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text("Status: " + state.tmdbStatus, color = if (state.tmdbConfigured) NmGreen else NmMuted)
-            Text("You can use either the short TMDB API Key or the long API Read Access Token. Mobile Lite detects which one you entered automatically. It powers artwork, actor search, New and Trending rows.", color = NmMuted)
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.fillMaxWidth()) { InputBox(tmdb, "Paste TMDB API Key or Read Access Token") { tmdb = it } }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(onClick = { vm.saveTmdbToken(tmdb); tmdb = "" }) { Text("Save") }
-                    if (state.tmdbConfigured) Button(onClick = { vm.saveTmdbToken("") }) { Text("Remove") }
-                }
-            }
+            Text(
+                "TMDB is built into Mobile Lite and works automatically for artwork, actor search, New Movies, Trending Movies, New Series and Trending Series.",
+                color = NmMuted
+            )
         } }
         item { CardBox {
             Text("Real-Debrid", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
@@ -1225,7 +1220,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV Mobile Lite v0.15.1-mobile-lite.6 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV Mobile Lite v0.15.1-mobile-lite.7 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
