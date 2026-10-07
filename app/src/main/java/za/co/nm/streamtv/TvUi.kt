@@ -2,6 +2,7 @@ package za.co.nm.streamtv
 
 import android.content.Intent
 import android.net.Uri
+import android.view.KeyEvent as AndroidKeyEvent
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -37,6 +38,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.nativeKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -634,6 +636,7 @@ private fun Button(
                 RoundedCornerShape(8.dp)
             )
             .onFocusChanged { focused = it.isFocused }
+            .tvRemoteClick(enabled = enabled, onClick = onClick)
             .clickable(enabled = enabled, onClick = onClick)
             .focusable(enabled)
             .padding(horizontal = 17.dp, vertical = 11.dp),
@@ -661,6 +664,7 @@ private fun NavChip(label: String, selected: Boolean, onClick: () -> Unit) {
                 RoundedCornerShape(20.dp)
             )
             .onFocusChanged { focused = it.isFocused }
+            .tvRemoteClick(onClick = onClick)
             .clickable(onClick = onClick)
             .focusable()
             .padding(horizontal = 12.dp, vertical = 8.dp)
@@ -1642,6 +1646,32 @@ private fun SourceResultRow(source: StreamOption, isDefault: Boolean, select: (S
         }
     }
 }
+private fun isTvConfirmKey(keyCode: Int): Boolean =
+    keyCode == AndroidKeyEvent.KEYCODE_DPAD_CENTER ||
+        keyCode == AndroidKeyEvent.KEYCODE_ENTER ||
+        keyCode == AndroidKeyEvent.KEYCODE_NUMPAD_ENTER ||
+        keyCode == AndroidKeyEvent.KEYCODE_BUTTON_A ||
+        keyCode == AndroidKeyEvent.KEYCODE_BUTTON_SELECT ||
+        keyCode == AndroidKeyEvent.KEYCODE_SPACE
+
+private fun Modifier.tvRemoteClick(
+    enabled: Boolean = true,
+    onClick: () -> Unit
+): Modifier = onPreviewKeyEvent { event ->
+    if (!enabled || !isTvConfirmKey(event.nativeKeyEvent.keyCode)) {
+        false
+    } else {
+        when (event.type) {
+            KeyEventType.KeyDown -> true
+            KeyEventType.KeyUp -> {
+                onClick()
+                true
+            }
+            else -> false
+        }
+    }
+}
+
 private data class PlayerTrackChoice(
     val group: Tracks.Group,
     val trackIndex: Int,
@@ -1739,6 +1769,9 @@ private fun PlayerScreen(
     var controlsVisible by remember(player) { mutableStateOf(true) }
     var controlsRevision by remember(player) { mutableLongStateOf(System.currentTimeMillis()) }
     val playPauseFocus = remember(player) { FocusRequester() }
+    val audioMenuFocus = remember(player) { FocusRequester() }
+    val subtitleMenuFocus = remember(player) { FocusRequester() }
+    var revealKeyCode by remember(player) { mutableIntStateOf(-1) }
     var playerPositionMs by remember(player) { mutableLongStateOf(0L) }
     var playerDurationMs by remember(player) { mutableLongStateOf(0L) }
     var isPlaying by remember(player) { mutableStateOf(false) }
@@ -1845,9 +1878,25 @@ private fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(player) {
-        delay(250)
-        runCatching { playPauseFocus.requestFocus() }
+    LaunchedEffect(controlsVisible, showAudioMenu, showSubtitleMenu) {
+        if (controlsVisible && !showAudioMenu && !showSubtitleMenu) {
+            delay(80)
+            runCatching { playPauseFocus.requestFocus() }
+        }
+    }
+
+    LaunchedEffect(showAudioMenu) {
+        if (showAudioMenu) {
+            delay(80)
+            runCatching { audioMenuFocus.requestFocus() }
+        }
+    }
+
+    LaunchedEffect(showSubtitleMenu) {
+        if (showSubtitleMenu) {
+            delay(80)
+            runCatching { subtitleMenuFocus.requestFocus() }
+        }
     }
 
     LaunchedEffect(controlsRevision, showAudioMenu, showSubtitleMenu) {
@@ -1890,14 +1939,61 @@ private fun PlayerScreen(
                 }
             }
             .onPreviewKeyEvent { event ->
-                if (event.type != KeyEventType.KeyDown) {
-                    false
-                } else if (!controlsVisible) {
+                val keyCode = event.nativeKeyEvent.keyCode
+
+                if (revealKeyCode >= 0 && keyCode == revealKeyCode) {
+                    if (event.type == KeyEventType.KeyUp) revealKeyCode = -1
+                    true
+                } else if (!controlsVisible && event.type == KeyEventType.KeyDown) {
                     controlsVisible = true
                     controlsRevision = System.currentTimeMillis()
+                    revealKeyCode = keyCode
                     true
+                } else if (event.type == KeyEventType.KeyUp) {
+                    when (keyCode) {
+                        AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                        AndroidKeyEvent.KEYCODE_HEADSETHOOK -> {
+                            if (player.isPlaying) player.pause() else player.play()
+                            controlsVisible = true
+                            controlsRevision = System.currentTimeMillis()
+                            true
+                        }
+
+                        AndroidKeyEvent.KEYCODE_MEDIA_PLAY -> {
+                            player.play()
+                            controlsVisible = true
+                            controlsRevision = System.currentTimeMillis()
+                            true
+                        }
+
+                        AndroidKeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                            player.pause()
+                            controlsVisible = true
+                            controlsRevision = System.currentTimeMillis()
+                            true
+                        }
+
+                        AndroidKeyEvent.KEYCODE_MEDIA_REWIND -> {
+                            player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                            controlsVisible = true
+                            controlsRevision = System.currentTimeMillis()
+                            true
+                        }
+
+                        AndroidKeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                            val limit = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
+                            player.seekTo((player.currentPosition + 10_000L).coerceAtMost(limit))
+                            controlsVisible = true
+                            controlsRevision = System.currentTimeMillis()
+                            true
+                        }
+
+                        else -> false
+                    }
                 } else {
-                    controlsRevision = System.currentTimeMillis()
+                    if (event.type == KeyEventType.KeyDown) {
+                        controlsRevision = System.currentTimeMillis()
+                    }
                     false
                 }
             }
@@ -2070,7 +2166,7 @@ private fun PlayerScreen(
                 if (audioTracks.isEmpty()) {
                     item { Text("This source exposes only one/default audio track.", color = NmMuted) }
                 } else {
-                    items(audioTracks) { choice ->
+                    itemsIndexed(audioTracks) { index, choice ->
                         Button(onClick = {
                             val override = TrackSelectionOverride(
                                 choice.group.mediaTrackGroup,
@@ -2082,7 +2178,10 @@ private fun PlayerScreen(
                                 .setOverrideForType(override)
                                 .build()
                             showAudioMenu = false
-                        }, modifier = Modifier.fillMaxWidth()) {
+                            controlsRevision = System.currentTimeMillis()
+                        }, modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (index == 0) Modifier.focusRequester(audioMenuFocus) else Modifier)) {
                             Text(choice.label)
                         }
                     }
@@ -2118,7 +2217,10 @@ private fun PlayerScreen(
                             .build()
                         subtitlesEnabled = false
                         showSubtitleMenu = false
-                    }, modifier = Modifier.fillMaxWidth()) {
+                        controlsRevision = System.currentTimeMillis()
+                    }, modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(subtitleMenuFocus)) {
                         Text("Off")
                     }
                 }
@@ -2135,6 +2237,7 @@ private fun PlayerScreen(
                             .build()
                         subtitlesEnabled = true
                         showSubtitleMenu = false
+                        controlsRevision = System.currentTimeMillis()
                     }, modifier = Modifier.fillMaxWidth()) {
                         Text(choice.label)
                     }
