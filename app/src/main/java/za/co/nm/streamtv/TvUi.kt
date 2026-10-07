@@ -631,7 +631,7 @@ private fun HomeScreen(
     onContinueManual: (PlaybackProgress) -> Unit
 ) {
     if (state.loading) {
-        CenterText("Loading NM Stream TV…")
+        CenterText("Loading NM Stream TV Mobile Lite…")
         return
     }
     val hero = state.movies.firstOrNull()
@@ -1182,7 +1182,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV Lite v0.15.1-lite.2 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV Mobile Lite v0.15.1-mobile-lite.1 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
