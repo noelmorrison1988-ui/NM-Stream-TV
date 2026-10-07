@@ -361,7 +361,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             val prefs = nmAccount.playbackPreferences()
-            val sortedStreams = streamsDeferred.await()
+            val loadedStreams = streamsDeferred.await()
+
+            fun isRealDebridStream(option: StreamOption): Boolean {
+                val text = listOfNotNull(
+                    option.addonName,
+                    option.stream.name,
+                    option.stream.title,
+                    option.stream.behaviorHints?.filename
+                ).joinToString(" ").lowercase()
+
+                return text.contains("real-debrid") ||
+                    text.contains("real debrid") ||
+                    Regex("""(^|[^a-z0-9])rd\+?([^a-z0-9]|$)""").containsMatchIn(text)
+            }
+
+            val rdHashesToVerify = loadedStreams
+                .filter { option ->
+                    !option.stream.infoHash.isNullOrBlank() && isRealDebridStream(option)
+                }
+                .mapNotNull { it.stream.infoHash?.lowercase() }
+                .distinct()
+
+            val instantlyAvailableRdHashes = if (rdHashesToVerify.isNotEmpty()) {
+                runCatching {
+                    realDebrid.instantlyAvailableHashes(rdHashesToVerify)
+                }.getOrNull()
+            } else {
+                null
+            }
+
+            val cacheFilteredStreams = loadedStreams.filter { option ->
+                val hash = option.stream.infoHash?.lowercase()
+                hash == null ||
+                    !isRealDebridStream(option) ||
+                    instantlyAvailableRdHashes == null ||
+                    hash in instantlyAvailableRdHashes
+            }
+
+            val sortedStreams = cacheFilteredStreams
                 .sortedWith(
                     compareBy<StreamOption> {
                         it.preferenceScore(
