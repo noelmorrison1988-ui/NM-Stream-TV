@@ -1857,7 +1857,8 @@ private fun PlayerScreen(
     preferredSubtitleLanguage: String,
     onStarted: (Long, Long) -> Unit,
     onProgress: (Long, Long) -> Unit,
-    onStopped: (Long, Long) -> Unit
+    onStopped: (Long, Long) -> Unit,
+    onSourceSwitch: (Long, String) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
 
@@ -1938,7 +1939,9 @@ private fun PlayerScreen(
     var scrubMode by remember(player) { mutableStateOf(false) }
     var scrubPositionMs by remember(player) { mutableLongStateOf(0L) }
     var bufferingSinceMs by remember(player) { mutableLongStateOf(0L) }
-    var autoRecoveryCount by remember(player) { mutableIntStateOf(0) }
+    var countedBufferStartMs by remember(player) { mutableLongStateOf(0L) }
+    var freezeEventsMs by remember(player) { mutableStateOf<List<Long>>(emptyList()) }
+    var sourceSwitchRequested by remember(player) { mutableStateOf(false) }
     var recoveryMessage by remember(player) { mutableStateOf<String?>(null) }
     val advisoryItems = remember(item.meta.contentRating, item.meta.contentAdvisories) {
         buildList {
@@ -1964,7 +1967,7 @@ private fun PlayerScreen(
                     if (bufferingSinceMs == 0L) bufferingSinceMs = System.currentTimeMillis()
                 } else if (playbackState == Player.STATE_READY) {
                     bufferingSinceMs = 0L
-                    if (player.isPlaying) autoRecoveryCount = 0
+                    countedBufferStartMs = 0L
                     recoveryMessage = null
                 }
             }
@@ -2253,24 +2256,40 @@ private fun PlayerScreen(
 
     LaunchedEffect(player) {
         while (true) {
-            delay(2_000)
+            delay(500)
+            if (!started || sourceSwitchRequested) continue
+
             val now = System.currentTimeMillis()
-            val stalledForMs = if (bufferingSinceMs > 0L) now - bufferingSinceMs else 0L
-            val shouldRecover = player.playerError != null || stalledForMs >= 12_000L
+            val bufferStart = bufferingSinceMs
+            val stalledForMs = if (bufferStart > 0L) now - bufferStart else 0L
 
-            if (shouldRecover && autoRecoveryCount < 4) {
-                val resumeAt = player.currentPosition.coerceAtLeast(0L)
-                autoRecoveryCount += 1
-                recoveryMessage = "Buffer stalled · reconnecting (" + autoRecoveryCount + "/4)…"
-                bufferingSinceMs = 0L
+            if (bufferStart > 0L && stalledForMs >= 3_000L && countedBufferStartMs != bufferStart) {
+                countedBufferStartMs = bufferStart
+                val recent = (freezeEventsMs + now).filter { now - it <= 5 * 60_000L }
+                freezeEventsMs = recent
+                recoveryMessage = "Buffering detected · " + recent.size + "/4 in 5 min"
 
-                runCatching {
-                    player.prepare()
-                    if (resumeAt > 0L) player.seekTo(resumeAt)
-                    player.playWhenReady = true
+                if (recent.size > 3) {
+                    sourceSwitchRequested = true
+                    val resumeAt = player.currentPosition.coerceAtLeast(0L)
+                    recoveryMessage = "Repeated freezes · switching source…"
+                    onSourceSwitch(resumeAt, "More than 3 freezes in 5 minutes")
+                    continue
                 }
+            }
 
-                delay(5_000)
+            if (player.playerError != null || stalledForMs >= 8_000L) {
+                sourceSwitchRequested = true
+                val resumeAt = player.currentPosition.coerceAtLeast(0L)
+                recoveryMessage = if (player.playerError != null) {
+                    "Stream error · switching source…"
+                } else {
+                    "Buffer stalled too long · switching source…"
+                }
+                onSourceSwitch(
+                    resumeAt,
+                    if (player.playerError != null) "Playback error" else "Buffering exceeded 8 seconds"
+                )
             }
         }
     }
