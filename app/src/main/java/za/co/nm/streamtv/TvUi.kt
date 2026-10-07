@@ -1530,13 +1530,7 @@ private fun PlayerScreen(
                         .setLanguage(option.subtitle.lang)
                         .setLabel(option.subtitle.lang.uppercase() + " · " + option.addonName)
                         .setMimeType(subtitleMime(option.subtitle.url))
-                        .setSelectionFlags(
-                            if (index == 0 && option.subtitle.lang.startsWith(preferredSubtitleLanguage, true)) {
-                                C.SELECTION_FLAG_DEFAULT
-                            } else {
-                                0
-                            }
-                        )
+                        .setSelectionFlags(0)
                         .build()
                 }
 
@@ -1544,6 +1538,7 @@ private fun PlayerScreen(
                     .buildUpon()
                     .setPreferredAudioLanguage(preferredAudioLanguage)
                     .setPreferredTextLanguage(preferredSubtitleLanguage)
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                     .build()
 
                 setMediaItem(
@@ -1564,6 +1559,7 @@ private fun PlayerScreen(
     var trackRevision by remember(player) { mutableIntStateOf(0) }
     var showAudioMenu by remember { mutableStateOf(false) }
     var showSubtitleMenu by remember { mutableStateOf(false) }
+    var subtitlesEnabled by remember(player) { mutableStateOf(false) }
     var controlsVisible by remember(player) { mutableStateOf(true) }
     var controlsRevision by remember(player) { mutableLongStateOf(System.currentTimeMillis()) }
     val playPauseFocus = remember(player) { FocusRequester() }
@@ -1599,7 +1595,9 @@ private fun PlayerScreen(
             .buildUpon()
             .setPreferredAudioLanguage(preferredAudioLanguage)
             .setPreferredTextLanguage(preferredSubtitleLanguage)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
             .build()
+        subtitlesEnabled = false
     }
 
     val audioTracks = remember(player, trackRevision) {
@@ -1839,8 +1837,8 @@ private fun PlayerScreen(
                         }
                     )
                     PlayerControl(
-                        label = "CC",
-                        active = showSubtitleMenu,
+                        label = if (subtitlesEnabled) "CC ON" else "CC OFF",
+                        active = showSubtitleMenu || subtitlesEnabled,
                         onClick = {
                             showSubtitleMenu = !showSubtitleMenu
                             showAudioMenu = false
@@ -1942,6 +1940,7 @@ private fun PlayerScreen(
                             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
                             .build()
+                        subtitlesEnabled = false
                         showSubtitleMenu = false
                     }, modifier = Modifier.fillMaxWidth()) {
                         Text("Off")
@@ -1958,6 +1957,7 @@ private fun PlayerScreen(
                             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
                             .setOverrideForType(override)
                             .build()
+                        subtitlesEnabled = true
                         showSubtitleMenu = false
                     }, modifier = Modifier.fillMaxWidth()) {
                         Text(choice.label)
