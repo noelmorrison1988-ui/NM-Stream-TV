@@ -41,6 +41,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -641,14 +642,6 @@ private fun HomeScreen(
 
         item { ContinueRow(state.continueWatching, onContinue, onContinueManual) }
 
-        if (state.trendingMovies.isNotEmpty()) item { MediaRow("Trending Movies · TMDB", state.trendingMovies, onOpen) }
-        if (state.newMovies.isNotEmpty()) item { MediaRow("New Movies · TMDB", state.newMovies, onOpen) }
-        if (state.trendingSeries.isNotEmpty()) item { MediaRow("Trending Series · TMDB", state.trendingSeries, onOpen) }
-        if (state.newSeries.isNotEmpty()) item { MediaRow("New Series · TMDB", state.newSeries, onOpen) }
-
-        if (state.recommendations.isNotEmpty()) {
-            item { MediaRow("Recommended for You · TMDB", state.recommendations, onOpen) }
-        }
         val historyMedia = state.watchHistory.map { it.media }.distinctBy { it.meta.id }
         if (historyMedia.isNotEmpty()) {
             item { MediaRow("Watch History", historyMedia, onOpen) }
@@ -941,35 +934,108 @@ private fun formatGuideTime(timeMs: Long): String =
 private fun SearchScreen(state: MainUiState, onSearch: (String) -> Unit, onOpen: (AppMedia) -> Unit) {
     var query by remember { mutableStateOf("") }
     var submittedQuery by remember { mutableStateOf("") }
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 42.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+    var editing by remember { mutableStateOf(false) }
+    val searchFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+
+    LaunchedEffect(editing) {
+        if (editing) {
+            delay(80)
+            runCatching { searchFocus.requestFocus() }
+            keyboard?.show()
+        }
+    }
+
+    fun submit(value: String) {
+        val submitted = value.trim()
+        if (submitted.isBlank()) return
+        query = submitted
+        submittedQuery = submitted
+        editing = false
+        keyboard?.hide()
+        onSearch(submitted)
+    }
+
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 42.dp),
+        contentPadding = PaddingValues(top = 26.dp, bottom = 48.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
         item {
             Text("Search", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black)
             Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.weight(1f)) {
-                    InputBox(query, "Search movies and series") { query = it }
+            if (!editing) {
+                Box(
+                    Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF111319))
+                        .border(1.dp, Color(0xFF343841), RoundedCornerShape(8.dp))
+                        .clickable { editing = true }
+                        .padding(horizontal = 14.dp, vertical = 14.dp)
+                ) {
+                    Text(
+                        if (query.isBlank()) "Tap here to search movies and series" else query,
+                        color = if (query.isBlank()) NmMuted.copy(alpha = .7f) else Color.White,
+                        fontSize = 16.sp
+                    )
                 }
-                Button(
-                    onClick = {
-                        val submitted = query.trim()
-                        if (submitted.isNotBlank()) {
-                            submittedQuery = submitted
-                            onSearch(submitted)
-                        }
-                    },
-                    enabled = query.isNotBlank() && !state.searchLoading
-                ) { Text(if (state.searchLoading) "Searching…" else "Search") }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF111319))
+                            .border(2.dp, Color.White, RoundedCornerShape(8.dp))
+                            .padding(horizontal = 14.dp, vertical = 12.dp)
+                    ) {
+                        if (query.isBlank()) Text("Search movies and series", color = NmMuted.copy(alpha = .7f))
+                        BasicTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            singleLine = true,
+                            textStyle = TextStyle(color = Color.White, fontSize = 16.sp),
+                            cursorBrush = SolidColor(NmRed),
+                            modifier = Modifier.fillMaxWidth().focusRequester(searchFocus)
+                        )
+                    }
+                    Button(
+                        onClick = { submit(query) },
+                        enabled = query.isNotBlank() && !state.searchLoading
+                    ) { Text(if (state.searchLoading) "Searching…" else "Search") }
+                }
             }
-            Text("Search starts only when you press Search.", color = NmMuted, fontSize = 12.sp)
         }
+
+        if (!editing && state.recentSearches.isNotEmpty()) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Recent searches", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text("Stored only on this device · latest 5 only", color = NmMuted, fontSize = 12.sp)
+                    state.recentSearches.forEach { recent ->
+                        Button(onClick = { submit(recent) }, modifier = Modifier.fillMaxWidth()) {
+                            Text("↻  $recent")
+                        }
+                    }
+                }
+            }
+        }
+
         if (state.searchLoading) item { Text("Searching…", color = NmMuted) }
         else if (submittedQuery.isNotBlank()) item {
-            if (state.searchResults.isEmpty()) Text("No results found for “$submittedQuery”.", color = NmMuted)
-            else Column(verticalArrangement = Arrangement.spacedBy(16.dp)) { state.searchResults.chunked(6).forEach { row -> Row(horizontalArrangement = Arrangement.spacedBy(15.dp)) { row.forEach { PosterCard(it, onOpen) } } } }
+            if (state.searchResults.isEmpty()) {
+                Text("No results found for “$submittedQuery”.", color = NmMuted)
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    state.searchResults.chunked(6).forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(15.dp)) {
+                            row.forEach { PosterCard(it, onOpen) }
+                        }
+                    }
+                }
+            }
         }
     }
 }
-
 @Composable
 private fun MyListScreen(media: List<AppMedia>, onOpen: (AppMedia) -> Unit) {
     LazyColumn(
@@ -1084,8 +1150,6 @@ private fun AddonsScreen(
 @Composable
 private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
     var tmdb by remember { mutableStateOf("") }
-    var quality by remember(state.preferredQuality) { mutableStateOf(state.preferredQuality) }
-    var preferHttp by remember(state.preferHttpDebrid) { mutableStateOf(state.preferHttpDebrid) }
     var audioLang by remember(state.preferredAudioLanguage) { mutableStateOf(state.preferredAudioLanguage) }
     var subtitleLang by remember(state.preferredSubtitleLanguage) { mutableStateOf(state.preferredSubtitleLanguage) }
     val context = LocalContext.current
@@ -1102,7 +1166,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
                 color = if (state.nmAccountLinked) NmGreen else NmMuted
             )
             Text(
-                "Pair this device once, then manage synced add-ons, preferred quality, source priority and Real-Debrid settings from your phone.",
+                "Pair this device once, then manage synced add-ons, playback language and Real-Debrid settings from your phone.",
                 color = NmMuted
             )
             Text("Phone dashboard: ${NmAccountRepository.DASHBOARD_URL}", color = NmMuted, fontSize = 12.sp)
@@ -1135,18 +1199,8 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Text("Playback & language", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text("These preferences sync to every linked NM Stream TV device.", color = NmMuted)
 
-            Text("Preferred quality", color = Color.White, fontWeight = FontWeight.Bold)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(480, 720, 1080, 2160).forEach { value ->
-                    Button(onClick = { quality = value }) {
-                        Text(if (quality == value) "✓ ${value}p" else "${value}p")
-                    }
-                }
-            }
-
-            Button(onClick = { preferHttp = !preferHttp }) {
-                Text(if (preferHttp) "✓ Prefer HTTP / Debrid over P2P" else "Prefer HTTP / Debrid over P2P")
-            }
+            Text("Mobile Lite source policy", color = Color.White, fontWeight = FontWeight.Bold)
+            Text("Pengu is the default provider. Streams above 1080p are excluded in Mobile Lite.", color = NmMuted, fontSize = 12.sp)
 
             Text("Preferred audio language", color = Color.White, fontWeight = FontWeight.Bold)
             Box(Modifier.fillMaxWidth()) { InputBox(audioLang, "en") { audioLang = it } }
@@ -1156,18 +1210,13 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Box(Modifier.fillMaxWidth()) { InputBox(subtitleLang, "en") { subtitleLang = it } }
 
             Button(onClick = {
-                vm.savePlaybackPreferences(
-                    quality,
-                    preferHttp,
-                    audioLang,
-                    subtitleLang
-                )
-            }) { Text("Save & sync playback preferences") }
+                vm.saveMobileLiteLanguagePreferences(audioLang, subtitleLang)
+            }) { Text("Save & sync language preferences") }
         } }
         item { CardBox {
-            Text("TMDB metadata & recommendations", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text("TMDB metadata", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text("Status: " + state.tmdbStatus, color = if (state.tmdbConfigured) NmGreen else NmMuted)
-            Text("TMDB powers title matching, artwork and recommendations. Watch history and exact resume positions stay securely on this device.", color = NmMuted)
+            Text("TMDB is used for title matching and artwork only in Mobile Lite. Watch history and resume positions stay on this device.", color = NmMuted)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.fillMaxWidth()) { InputBox(tmdb, "TMDB API Read Access Token") { tmdb = it } }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1413,61 +1462,99 @@ private fun Modifier.tvActivation(
 }
 
 @Composable
-private fun SourcesScreen(title: String, loading: Boolean, sources: List<StreamOption>, subtitleCount: Int, select: (StreamOption) -> Unit) {
-    val recommended = sources.firstOrNull()
+private fun SourcesScreen(
+    title: String,
+    loading: Boolean,
+    sources: List<StreamOption>,
+    subtitleCount: Int,
+    select: (StreamOption) -> Unit
+) {
+    val recommended = sources.firstOrNull {
+        it.playableUrl != null || it.youtubeUrl != null || !it.stream.externalUrl.isNullOrBlank()
+    }
+    val httpSources = sources.filter { it.playableUrl != null }
+    val p2pSources = sources.filter { it.isP2p }
+    val otherSources = sources.filter { it.playableUrl == null && !it.isP2p }
 
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 46.dp), contentPadding = PaddingValues(top = 34.dp, bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(
+        Modifier.fillMaxSize().padding(horizontal = 46.dp),
+        contentPadding = PaddingValues(top = 34.dp, bottom = 48.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
         item {
             Text(title, color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Black)
-            Text(subtitleCount.toString() + " subtitle tracks found", color = NmMuted)
-            Text("Default preference: 720p · Debrid/HTTP first · P2P last", color = NmGreen, fontSize = 13.sp)
+            Text("$subtitleCount subtitle tracks found", color = NmMuted)
+            Text("Mobile Lite default: Pengu · maximum 1080p", color = NmGreen, fontSize = 13.sp)
         }
 
-        if (!loading && recommended != null && (
-                recommended.playableUrl != null ||
-                recommended.youtubeUrl != null ||
-                !recommended.stream.externalUrl.isNullOrBlank()
-            )
-        ) {
+        if (!loading && recommended != null) {
             item {
                 Button(onClick = { select(recommended) }) {
-                    Text("▶  PLAY DEFAULT · ${recommended.qualityLabel()} · ${recommended.transportLabel()}")
+                    Text("▶  PLAY DEFAULT · ${recommended.addonName} · ${recommended.qualityLabel()}")
                 }
             }
         }
 
-        if (loading) item { Text("Checking installed sources…", color = NmMuted) }
-        else if (sources.isEmpty()) item { Text("No stream sources were returned.", color = NmMuted) }
-        else itemsIndexed(sources) { index, source ->
-            var focused by remember { mutableStateOf(false) }
-            Row(
-                Modifier.fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (focused) NmPanelFocus else NmPanel)
-                    .onFocusChanged { focused = it.isFocused }
-                    .clickable { select(source) }
-                    .focusable()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(source.displayTitle(), color = Color.White, fontWeight = FontWeight.Bold)
-                        if (index == 0) Text("DEFAULT", color = NmGreen, fontSize = 11.sp, fontWeight = FontWeight.Black)
-                    }
-                    Text(source.addonName, color = NmRed)
-                    Text(source.statusText(), color = NmMuted)
-                }
-                if (source.playableUrl != null || source.youtubeUrl != null) {
-                    Text("PLAY", color = NmGreen, fontWeight = FontWeight.Black)
-                } else if (source.isP2p) {
-                    Text("P2P", color = NmMuted, fontWeight = FontWeight.Bold)
-                }
+        if (loading) {
+            item { Text("Checking installed sources…", color = NmMuted) }
+        } else if (sources.isEmpty()) {
+            item { Text("No streams at 1080p or below were returned.", color = NmMuted) }
+        } else {
+            if (httpSources.isNotEmpty()) {
+                item { SourceSectionHeading("HTTP", "Direct HTTP and debrid-ready streams") }
+                items(httpSources) { source -> SourceResultRow(source, source == recommended, select) }
+            }
+            if (p2pSources.isNotEmpty()) {
+                item { SourceSectionHeading("P2P", "Peer-to-peer sources") }
+                items(p2pSources) { source -> SourceResultRow(source, source == recommended, select) }
+            }
+            if (otherSources.isNotEmpty()) {
+                item { SourceSectionHeading("OTHER", "External, YouTube or unclassified sources") }
+                items(otherSources) { source -> SourceResultRow(source, source == recommended, select) }
             }
         }
     }
 }
 
+@Composable
+private fun SourceSectionHeading(title: String, description: String) {
+    Column(Modifier.fillMaxWidth().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(title, color = NmGold, fontSize = 20.sp, fontWeight = FontWeight.Black)
+        Text(description, color = NmMuted, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun SourceResultRow(source: StreamOption, isDefault: Boolean, select: (StreamOption) -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (focused) NmPanelFocus else NmPanel)
+            .onFocusChanged { focused = it.isFocused }
+            .clickable { select(source) }
+            .focusable()
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(source.displayTitle(), color = Color.White, fontWeight = FontWeight.Bold)
+                if (isDefault) Text("DEFAULT", color = NmGreen, fontSize = 11.sp, fontWeight = FontWeight.Black)
+                if (source.addonName.contains("pengu", ignoreCase = true)) {
+                    Text("PENGU", color = NmGold, fontSize = 11.sp, fontWeight = FontWeight.Black)
+                }
+            }
+            Text(source.addonName, color = NmRed)
+            Text(source.statusText(), color = NmMuted)
+        }
+        when {
+            source.playableUrl != null || source.youtubeUrl != null -> Text("PLAY", color = NmGreen, fontWeight = FontWeight.Black)
+            source.isP2p -> Text("P2P", color = NmMuted, fontWeight = FontWeight.Bold)
+            else -> Text("OTHER", color = NmMuted, fontWeight = FontWeight.Bold)
+        }
+    }
+}
 private data class PlayerTrackChoice(
     val group: Tracks.Group,
     val trackIndex: Int,
