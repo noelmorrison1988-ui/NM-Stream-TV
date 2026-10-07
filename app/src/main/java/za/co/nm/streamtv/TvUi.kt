@@ -683,7 +683,8 @@ private fun HomeScreen(
     onOpen: (AppMedia) -> Unit,
     onContinue: (PlaybackProgress) -> Unit,
     onContinueManual: (PlaybackProgress) -> Unit,
-    onExpand: (String, String) -> Unit
+    onExpand: (String, String) -> Unit,
+    onToggleMyList: (AppMedia) -> Unit
 ) {
     if (state.loading) {
         CenterText("Loading NM Stream TV TV Box Lite…")
@@ -709,31 +710,94 @@ private fun HomeScreen(
         }
 
         if (state.trendingMovies.isNotEmpty()) item {
-            MediaRow("Trending Movies", state.trendingMovies, onOpen) { onExpand("Trending Movies", "trending_movies") }
+            MediaRow(
+                title = "Trending Movies",
+                media = state.trendingMovies,
+                onOpen = onOpen,
+                myList = state.myList,
+                onToggleMyList = onToggleMyList,
+                onExpand = { onExpand("Trending Movies", "trending_movies") }
+            )
         }
         if (state.newMovies.isNotEmpty()) item {
-            MediaRow("New Movies", state.newMovies, onOpen) { onExpand("New Movies", "new_movies") }
+            MediaRow(
+                title = "New Movies",
+                media = state.newMovies,
+                onOpen = onOpen,
+                myList = state.myList,
+                onToggleMyList = onToggleMyList,
+                onExpand = { onExpand("New Movies", "new_movies") }
+            )
         }
         if (state.trendingSeries.isNotEmpty()) item {
-            MediaRow("Trending Series", state.trendingSeries, onOpen) { onExpand("Trending Series", "trending_series") }
+            MediaRow(
+                title = "Trending Series",
+                media = state.trendingSeries,
+                onOpen = onOpen,
+                myList = state.myList,
+                onToggleMyList = onToggleMyList,
+                onExpand = { onExpand("Trending Series", "trending_series") }
+            )
         }
         if (state.newSeries.isNotEmpty()) item {
-            MediaRow("New Series", state.newSeries, onOpen) { onExpand("New Series", "new_series") }
+            MediaRow(
+                title = "New Series",
+                media = state.newSeries,
+                onOpen = onOpen,
+                myList = state.myList,
+                onToggleMyList = onToggleMyList,
+                onExpand = { onExpand("New Series", "new_series") }
+            )
         }
         if (state.nowAiringSeries.isNotEmpty()) item {
-            MediaRow("Now Airing TV Shows", state.nowAiringSeries, onOpen) { onExpand("Now Airing TV Shows", "now_airing_series") }
+            MediaRow(
+                title = "Now Airing TV Shows",
+                media = state.nowAiringSeries,
+                onOpen = onOpen,
+                myList = state.myList,
+                onToggleMyList = onToggleMyList,
+                onExpand = { onExpand("Now Airing TV Shows", "now_airing_series") }
+            )
         }
         if (historyMedia.isNotEmpty()) item {
-            MediaRow("Watch History", historyMedia, onOpen) { onExpand("Watch History", "watch_history") }
+            MediaRow(
+                title = "Watch History",
+                media = historyMedia,
+                onOpen = onOpen,
+                myList = state.myList,
+                onToggleMyList = onToggleMyList,
+                onExpand = { onExpand("Watch History", "watch_history") }
+            )
         }
         if (state.movies.isNotEmpty()) item {
-            MediaRow("Movies", state.movies, onOpen) { onExpand("Movies", "movies") }
+            MediaRow(
+                title = "Movies",
+                media = state.movies,
+                onOpen = onOpen,
+                myList = state.myList,
+                onToggleMyList = onToggleMyList,
+                onExpand = { onExpand("Movies", "movies") }
+            )
         }
         if (state.series.isNotEmpty()) item {
-            MediaRow("Series", state.series, onOpen) { onExpand("Series", "series") }
+            MediaRow(
+                title = "Series",
+                media = state.series,
+                onOpen = onOpen,
+                myList = state.myList,
+                onToggleMyList = onToggleMyList,
+                onExpand = { onExpand("Series", "series") }
+            )
         }
         if (state.debridItems.isNotEmpty()) item {
-            MediaRow("My Real-Debrid Library", state.debridItems, onOpen) { onExpand("My Real-Debrid Library", "real_debrid") }
+            MediaRow(
+                title = "My Real-Debrid Library",
+                media = state.debridItems,
+                onOpen = onOpen,
+                myList = state.myList,
+                onToggleMyList = onToggleMyList,
+                onExpand = { onExpand("My Real-Debrid Library", "real_debrid") }
+            )
         }
     }
 }
@@ -751,7 +815,9 @@ private fun ExpandedRowScreen(
     onNext: () -> Unit,
     onOpen: (AppMedia) -> Unit,
     onContinue: (PlaybackProgress) -> Unit,
-    onContinueManual: (PlaybackProgress) -> Unit
+    onContinueManual: (PlaybackProgress) -> Unit,
+    myList: List<AppMedia>,
+    onToggleMyList: (AppMedia) -> Unit
 ) {
     Column(
         Modifier.fillMaxSize().background(NmBg).padding(top = 28.dp),
@@ -800,7 +866,12 @@ private fun ExpandedRowScreen(
                 verticalArrangement = Arrangement.spacedBy(22.dp)
             ) {
                 gridItems(items, key = { "${it.meta.type}|${it.meta.tmdbId ?: it.meta.id}" }) { media ->
-                    ExpandedPosterCard(media, onOpen)
+                    ExpandedPosterCard(
+                        item = media,
+                        onOpen = onOpen,
+                        inMyList = myList.any { mediaMatches(it, media) },
+                        onToggleMyList = onToggleMyList
+                    )
                 }
             }
         }
@@ -1177,7 +1248,8 @@ private fun formatGuideTime(timeMs: Long): String =
 private fun SearchScreen(
     state: MainUiState,
     onSearch: (String, SearchCategory) -> Unit,
-    onOpen: (AppMedia) -> Unit
+    onOpen: (AppMedia) -> Unit,
+    onToggleMyList: (AppMedia) -> Unit
 ) {
     var query by remember { mutableStateOf("") }
     var submittedQuery by remember { mutableStateOf("") }
@@ -1318,7 +1390,14 @@ private fun SearchScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         state.searchResults.chunked(6).forEach { row ->
                             Row(horizontalArrangement = Arrangement.spacedBy(15.dp)) {
-                                row.forEach { PosterCard(it, onOpen) }
+                                row.forEach { media ->
+                                    PosterCard(
+                                        item = media,
+                                        onOpen = onOpen,
+                                        inMyList = state.myList.any { mediaMatches(it, media) },
+                                        onToggleMyList = onToggleMyList
+                                    )
+                                }
                             }
                         }
                     }
