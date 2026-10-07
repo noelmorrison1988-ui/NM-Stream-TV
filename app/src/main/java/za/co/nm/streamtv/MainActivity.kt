@@ -7,6 +7,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.activity.compose.setContent
 import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -22,9 +23,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -97,41 +100,82 @@ private fun StartupSplash() {
             .background(
                 Brush.verticalGradient(
                     listOf(
-                        Color(0xFF090A0E),
-                        Color(0xFF141821),
-                        Color(0xFF050609)
+                        Color(0xFF24150D),
+                        Color(0xFF4A2C18),
+                        Color(0xFF170B07)
                     )
                 )
             ),
         contentAlignment = Alignment.Center
     ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val dark = Color(0xFF120805)
+            val tan = Color(0xFFC27B42)
+            val stepX = 120f
+            val stepY = 92f
+            var row = 0
+            var y = 15f
+            while (y < size.height + stepY) {
+                var x = if (row % 2 == 0) 20f else 75f
+                while (x < size.width + stepX) {
+                    drawCircle(dark.copy(alpha = .78f), 28f, Offset(x, y))
+                    drawCircle(tan.copy(alpha = .86f), 16f, Offset(x + 2f, y))
+                    drawCircle(dark.copy(alpha = .72f), 6f, Offset(x + 5f, y + 1f))
+                    drawCircle(dark.copy(alpha = .5f), 9f, Offset(x - 25f, y + 17f))
+                    x += stepX
+                }
+                row += 1
+                y += stepY
+            }
+        }
+
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.Black.copy(alpha = .10f),
+                        Color.Black.copy(alpha = .20f),
+                        Color.Black.copy(alpha = .48f)
+                    )
+                )
+            )
+        )
+
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.padding(horizontal = 32.dp)
         ) {
             Text(
                 "NM",
-                color = Color(0xFFD6A84B),
+                color = Color(0xFFFFF1E7),
                 fontSize = 86.sp,
                 fontWeight = FontWeight.Black
             )
             Text(
-                "STREAM TV MOBILE LITE",
+                "STREAM TV",
                 color = Color.White,
                 fontSize = 44.sp,
                 fontWeight = FontWeight.Black
             )
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "The Sarah Edition",
+                color = Color(0xFFFF2D95),
+                fontSize = 34.sp,
+                fontWeight = FontWeight.Black,
+                modifier = Modifier.graphicsLayer { rotationZ = -8f }
+            )
+            Spacer(Modifier.height(22.dp))
             Box(
                 Modifier
-                    .width(240.dp)
+                    .width(260.dp)
                     .height(4.dp)
-                    .background(Color(0xFFE2182D))
+                    .background(Color(0xFFFF2D95))
             )
             Spacer(Modifier.height(18.dp))
             Text(
-                "MOBILE LITE · MORRISON ENTERTAINMENT",
-                color = Color(0xFFD6A84B),
+                "MORRISON ENTERTAINMENT",
+                color = Color(0xFFD8A45C),
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
             )
