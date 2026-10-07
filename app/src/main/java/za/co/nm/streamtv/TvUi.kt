@@ -1743,6 +1743,9 @@ private fun PlayerScreen(
     var playerDurationMs by remember(player) { mutableLongStateOf(0L) }
     var isPlaying by remember(player) { mutableStateOf(false) }
     var fillVideo by remember(player) { mutableStateOf(false) }
+    var remoteControlIndex by remember(player) { mutableIntStateOf(1) }
+    var audioMenuIndex by remember(player) { mutableIntStateOf(0) }
+    var subtitleMenuIndex by remember(player) { mutableIntStateOf(0) }
     val advisoryItems = remember(item.meta.contentRating, item.meta.contentAdvisories) {
         buildList {
             item.meta.contentRating?.takeIf { it.isNotBlank() }?.let { add("Rated " + it) }
@@ -1806,6 +1809,187 @@ private fun PlayerScreen(
             }
     }
 
+    BackHandler(showAudioMenu || showSubtitleMenu) {
+        showAudioMenu = false
+        showSubtitleMenu = false
+        controlsRevision = System.currentTimeMillis()
+    }
+
+    DisposableEffect(
+        player,
+        controlsVisible,
+        showAudioMenu,
+        showSubtitleMenu,
+        remoteControlIndex,
+        audioMenuIndex,
+        subtitleMenuIndex,
+        audioTracks,
+        textTracks,
+        subtitlesEnabled,
+        fillVideo
+    ) {
+        val remoteHandler: (android.view.KeyEvent) -> Boolean = { event ->
+            val code = event.keyCode
+            val supported = code == android.view.KeyEvent.KEYCODE_DPAD_LEFT ||
+                code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT ||
+                code == android.view.KeyEvent.KEYCODE_DPAD_UP ||
+                code == android.view.KeyEvent.KEYCODE_DPAD_DOWN ||
+                code == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
+                code == android.view.KeyEvent.KEYCODE_ENTER ||
+                code == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER ||
+                code == android.view.KeyEvent.KEYCODE_BUTTON_A ||
+                code == android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
+                code == android.view.KeyEvent.KEYCODE_MEDIA_PLAY ||
+                code == android.view.KeyEvent.KEYCODE_MEDIA_PAUSE ||
+                code == android.view.KeyEvent.KEYCODE_MEDIA_REWIND ||
+                code == android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD
+
+            if (!supported) {
+                false
+            } else if (event.action == android.view.KeyEvent.ACTION_UP) {
+                true
+            } else if (event.action != android.view.KeyEvent.ACTION_DOWN || event.repeatCount > 0) {
+                true
+            } else {
+                val now = System.currentTimeMillis()
+                when (code) {
+                    android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+                        controlsVisible = true
+                        if (player.isPlaying) player.pause() else player.play()
+                        controlsRevision = now
+                        true
+                    }
+                    android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                        controlsVisible = true
+                        player.play()
+                        controlsRevision = now
+                        true
+                    }
+                    android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                        controlsVisible = true
+                        player.pause()
+                        controlsRevision = now
+                        true
+                    }
+                    android.view.KeyEvent.KEYCODE_MEDIA_REWIND -> {
+                        controlsVisible = true
+                        player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                        controlsRevision = now
+                        true
+                    }
+                    android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                        controlsVisible = true
+                        val limit = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
+                        player.seekTo((player.currentPosition + 10_000L).coerceAtMost(limit))
+                        controlsRevision = now
+                        true
+                    }
+                    else -> {
+                        if (!controlsVisible) {
+                            controlsVisible = true
+                            remoteControlIndex = 1
+                            controlsRevision = now
+                            true
+                        } else if (showSubtitleMenu) {
+                            val maxIndex = textTracks.size
+                            when (code) {
+                                android.view.KeyEvent.KEYCODE_DPAD_UP -> subtitleMenuIndex = (subtitleMenuIndex - 1).coerceAtLeast(0)
+                                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> subtitleMenuIndex = (subtitleMenuIndex + 1).coerceAtMost(maxIndex)
+                                android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+                                android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> showSubtitleMenu = false
+                                android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                                android.view.KeyEvent.KEYCODE_ENTER,
+                                android.view.KeyEvent.KEYCODE_NUMPAD_ENTER,
+                                android.view.KeyEvent.KEYCODE_BUTTON_A -> {
+                                    if (subtitleMenuIndex == 0) {
+                                        player.trackSelectionParameters = player.trackSelectionParameters
+                                            .buildUpon()
+                                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                                            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                                            .build()
+                                        subtitlesEnabled = false
+                                    } else {
+                                        textTracks.getOrNull(subtitleMenuIndex - 1)?.let { choice ->
+                                            val override = TrackSelectionOverride(choice.group.mediaTrackGroup, listOf(choice.trackIndex))
+                                            player.trackSelectionParameters = player.trackSelectionParameters
+                                                .buildUpon()
+                                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                                .setOverrideForType(override)
+                                                .build()
+                                            subtitlesEnabled = true
+                                        }
+                                    }
+                                    showSubtitleMenu = false
+                                }
+                            }
+                            controlsRevision = now
+                            true
+                        } else if (showAudioMenu) {
+                            val maxIndex = (audioTracks.size - 1).coerceAtLeast(0)
+                            when (code) {
+                                android.view.KeyEvent.KEYCODE_DPAD_UP -> audioMenuIndex = (audioMenuIndex - 1).coerceAtLeast(0)
+                                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> audioMenuIndex = (audioMenuIndex + 1).coerceAtMost(maxIndex)
+                                android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+                                android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> showAudioMenu = false
+                                android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                                android.view.KeyEvent.KEYCODE_ENTER,
+                                android.view.KeyEvent.KEYCODE_NUMPAD_ENTER,
+                                android.view.KeyEvent.KEYCODE_BUTTON_A -> {
+                                    audioTracks.getOrNull(audioMenuIndex)?.let { choice ->
+                                        val override = TrackSelectionOverride(choice.group.mediaTrackGroup, listOf(choice.trackIndex))
+                                        player.trackSelectionParameters = player.trackSelectionParameters
+                                            .buildUpon()
+                                            .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                                            .setOverrideForType(override)
+                                            .build()
+                                    }
+                                    showAudioMenu = false
+                                }
+                            }
+                            controlsRevision = now
+                            true
+                        } else {
+                            when (code) {
+                                android.view.KeyEvent.KEYCODE_DPAD_LEFT -> remoteControlIndex = (remoteControlIndex - 1).coerceAtLeast(0)
+                                android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> remoteControlIndex = (remoteControlIndex + 1).coerceAtMost(5)
+                                android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                                android.view.KeyEvent.KEYCODE_ENTER,
+                                android.view.KeyEvent.KEYCODE_NUMPAD_ENTER,
+                                android.view.KeyEvent.KEYCODE_BUTTON_A -> {
+                                    when (remoteControlIndex) {
+                                        0 -> player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                                        1 -> if (player.isPlaying) player.pause() else player.play()
+                                        2 -> {
+                                            val limit = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
+                                            player.seekTo((player.currentPosition + 10_000L).coerceAtMost(limit))
+                                        }
+                                        3 -> {
+                                            subtitleMenuIndex = 0
+                                            showSubtitleMenu = true
+                                            showAudioMenu = false
+                                        }
+                                        4 -> {
+                                            audioMenuIndex = 0
+                                            showAudioMenu = true
+                                            showSubtitleMenu = false
+                                        }
+                                        5 -> fillVideo = !fillVideo
+                                    }
+                                }
+                            }
+                            controlsRevision = now
+                            true
+                        }
+                    }
+                }
+            }
+        }
+
+        TvRemoteKeyRouter.handler = remoteHandler
+        onDispose {
+            if (TvRemoteKeyRouter.handler === remoteHandler) TvRemoteKeyRouter.handler = null
+        }
+    }
     LaunchedEffect(player) {
         while (!resumeApplied) {
             delay(250)
