@@ -283,6 +283,20 @@ data class SubtitleOption(
     val subtitle: AddonSubtitle
 )
 
+data class LastPlaybackSession(
+    val media: AppMedia,
+    val videoId: String,
+    val title: String,
+    val source: StreamOption,
+    val subtitles: List<SubtitleOption> = emptyList(),
+    val positionMs: Long,
+    val durationMs: Long,
+    val updatedAtMs: Long
+) {
+    val percent: Int
+        get() = if (durationMs <= 0L) 0
+        else ((positionMs * 100L) / durationMs).toInt().coerceIn(0, 100)
+}
 data class PlaybackProgress(
     val media: AppMedia,
     val videoId: String,
