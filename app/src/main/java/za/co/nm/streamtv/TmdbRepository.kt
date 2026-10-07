@@ -24,7 +24,7 @@ class TmdbRepository(context: Context) {
     private val secureStore = SecretStore(context)
 
     private data class TmdbAuth(
-        val auth: TmdbAuth = emptyMap(),
+        val headers: Map<String, String> = emptyMap(),
         val apiKey: String? = null
     )
 
@@ -114,9 +114,9 @@ class TmdbRepository(context: Context) {
         val auth = auth() ?: return emptyList()
         if (query.isBlank()) return emptyList()
 
-        val search = SimpleHttp.get(
+        val search = tmdbGet(
             "$API/search/person?query=${SimpleHttp.encode(query.trim())}&include_adult=false&language=en-US&page=1",
-            headers
+            auth
         )
         if (search.code !in 200..299) return emptyList()
         val person = JsonParser.parseString(search.body).asJsonObject
@@ -216,9 +216,9 @@ class TmdbRepository(context: Context) {
     ): List<AppMedia> {
         val tmdbId = item.meta.tmdbId ?: return emptyList()
         val endpoint = if (item.meta.type == "series") "tv" else "movie"
-        val result = SimpleHttp.get(
+        val result = tmdbGet(
             "$API/$endpoint/$tmdbId/recommendations?language=en-US&page=1",
-            headers
+            auth
         )
         if (result.code !in 200..299) return emptyList()
 
