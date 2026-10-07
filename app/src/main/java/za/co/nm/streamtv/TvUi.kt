@@ -1033,13 +1033,8 @@ private fun PersonalMediaRow(
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 items(media) { item ->
-                PosterCard(
-                    item = item,
-                    onOpen = onOpen,
-                    inMyList = myList.any { mediaMatches(it, item) },
-                    onToggleMyList = onToggleMyList
-                )
-            }
+                    PosterCard(item = item, onOpen = onOpen)
+                }
             }
         }
     }
@@ -1069,7 +1064,14 @@ private fun MediaRow(
             contentPadding = PaddingValues(horizontal = 40.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            items(media) { PosterCard(it, onOpen) }
+            items(media) { item ->
+                PosterCard(
+                    item = item,
+                    onOpen = onOpen,
+                    inMyList = myList.any { mediaMatches(it, item) },
+                    onToggleMyList = onToggleMyList
+                )
+            }
         }
     }
 }
