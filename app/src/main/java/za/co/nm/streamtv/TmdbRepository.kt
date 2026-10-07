@@ -25,7 +25,7 @@ class TmdbRepository(context: Context) {
 
     private fun activeToken(): String =
         TmdbBuildSecret.TOKEN.trim()
-            .ifBlank { activeToken() }
+            .ifBlank { secureStore.get(TOKEN_KEY)?.trim().orEmpty() }
 
     fun configured(): Boolean = activeToken().isNotBlank()
 
