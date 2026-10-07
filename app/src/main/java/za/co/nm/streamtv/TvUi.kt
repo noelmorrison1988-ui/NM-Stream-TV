@@ -441,6 +441,20 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                                 p,
                                 d
                             )
+                        },
+                        onSourceSwitch = { positionMs, _ ->
+                            viewModel.forgetLastPlaybackSession(current.item, current.videoId)
+                            val requestKey = viewModel.sourceRequestKey(current.item, current.videoId)
+                            viewModel.loadSources(current.item, current.videoId)
+                            screen = Screen.AutoPlay(
+                                item = current.item,
+                                videoId = current.videoId,
+                                title = current.title,
+                                requestKey = requestKey,
+                                excludedUrl = current.source.playableUrl,
+                                resumeMsOverride = positionMs,
+                                resumeSubtitles = activeSubtitles
+                            )
                         }
                     )
                 }
