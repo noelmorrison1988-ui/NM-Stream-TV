@@ -9,6 +9,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,6 +31,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -69,19 +71,60 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val NmBg = Color(0xFF050607)
-private val NmPanel = Color(0xFF121417)
-private val NmPanelFocus = Color(0xFF1D2025)
-private val NmRed = Color(0xFFE2182D)
-private val NmGold = Color(0xFFD6A84B)
-private val NmPlatinum = Color(0xFFD8DCE3)
-private val NmMuted = Color(0xFF9EA5AF)
-private val NmGreen = Color(0xFF71D6A0)
+private val NmBg = Color(0xFF21140D)
+private val NmPanel = Color(0xD93A2417)
+private val NmPanelFocus = Color(0xF25A3822)
+private val NmRed = Color(0xFFFF2D95)
+private val NmGold = Color(0xFFD8A45C)
+private val NmPlatinum = Color(0xFFFFF1E7)
+private val NmMuted = Color(0xFFD0B79F)
+private val NmGreen = Color(0xFF8DE0B0)
+private val SarahPink = Color(0xFFFF2D95)
+private val LeopardTan = Color(0xFFB9753E)
+private val LeopardDark = Color(0xFF130A06)
+
+@Composable
+private fun LeopardPattern(alpha: Float = .34f) {
+    Canvas(Modifier.fillMaxSize()) {
+        val stepX = 118f
+        val stepY = 92f
+        var row = 0
+        var y = 18f
+        while (y < size.height + stepY) {
+            val offset = if (row % 2 == 0) 12f else 66f
+            var x = offset
+            while (x < size.width + stepX) {
+                drawCircle(
+                    color = LeopardDark.copy(alpha = alpha),
+                    radius = 25f,
+                    center = Offset(x, y)
+                )
+                drawCircle(
+                    color = LeopardTan.copy(alpha = alpha * .92f),
+                    radius = 14f,
+                    center = Offset(x + 2f, y - 1f)
+                )
+                drawCircle(
+                    color = LeopardDark.copy(alpha = alpha * .7f),
+                    radius = 5f,
+                    center = Offset(x + 4f, y + 1f)
+                )
+                drawCircle(
+                    color = LeopardDark.copy(alpha = alpha * .55f),
+                    radius = 8f,
+                    center = Offset(x - 24f, y + 18f)
+                )
+                x += stepX
+            }
+            row += 1
+            y += stepY
+        }
+    }
+}
 
 private sealed interface Screen {
     data object Home : Screen
     data object Search : Screen
-    data object MyList : Screen
     data object Addons : Screen
     data object Settings : Screen
     data class Details(val item: AppMedia) : Screen
@@ -142,6 +185,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
 
     MaterialTheme {
         Box(Modifier.fillMaxSize().background(NmBg)) {
+            LeopardPattern()
             if (state.nmDeviceBlocked) {
                 DeviceBlockedScreen()
             } else {
@@ -167,12 +211,6 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                 }
                 Screen.Search -> Shell("Search", { screen = it }) {
                     SearchScreen(state, viewModel::search) {
-                        viewModel.loadDetails(it)
-                        screen = Screen.Details(it)
-                    }
-                }
-                Screen.MyList -> Shell("My List", { screen = it }) {
-                    MyListScreen(state.myList) {
                         viewModel.loadDetails(it)
                         screen = Screen.Details(it)
                     }
@@ -594,7 +632,6 @@ private fun Shell(selected: String, navigate: (Screen) -> Unit, content: @Compos
             Spacer(Modifier.width(24.dp))
             listOf(
                 "Home" to Screen.Home,
-                "My List" to Screen.MyList,
                 "Search" to Screen.Search,
                 "Add-ons" to Screen.Addons,
                 "Settings" to Screen.Settings
@@ -603,7 +640,7 @@ private fun Shell(selected: String, navigate: (Screen) -> Unit, content: @Compos
                 Spacer(Modifier.width(5.dp))
             }
             Spacer(Modifier.weight(1f))
-            Text("MORRISON ENTERTAINMENT", color = NmMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text("THE SARAH EDITION", color = SarahPink, fontSize = 11.sp, fontWeight = FontWeight.Black)
         }
         Box(Modifier.fillMaxSize()) { content() }
     }
@@ -682,28 +719,75 @@ private fun HomeScreen(
     onContinueManual: (PlaybackProgress) -> Unit
 ) {
     if (state.loading) {
-        CenterText("Loading NM Stream TV Mobile Lite…")
+        CenterText("Loading The Sarah Edition…")
         return
     }
-    val hero = state.movies.firstOrNull()
-        ?: state.series.firstOrNull()
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-        item { if (hero != null) Hero(hero, onOpen) else EmptyHero(state.addons.isEmpty()) }
+    val historyMedia = state.watchHistory.map { it.media }.distinctBy { it.meta.id }
 
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(top = 26.dp, bottom = 48.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp)
+    ) {
+        item { SarahEditionHeader() }
+        item { CuratedRow("Below Deck", state.belowDeck, "Below Deck titles will appear here.", onOpen) }
+        item { CuratedRow("The Real Housewives", state.realHousewives, "Real Housewives titles will appear here.", onOpen) }
+        item { CuratedRow("Bravo", state.bravo, "Bravo shows will appear here.", onOpen) }
+        item { CuratedRow("Sarah’s Picks", state.myList, "Add movies or series using + Sarah’s Picks.", onOpen) }
         item { ContinueRow(state.continueWatching, onContinue, onContinueManual) }
+        item { CuratedRow("Watch History", historyMedia, "Recently watched titles will appear here.", onOpen) }
+    }
+}
 
-        if (state.trendingMovies.isNotEmpty()) item { MediaRow("Trending Movies", state.trendingMovies, onOpen) }
-        if (state.newMovies.isNotEmpty()) item { MediaRow("New Movies", state.newMovies, onOpen) }
-        if (state.trendingSeries.isNotEmpty()) item { MediaRow("Trending Series", state.trendingSeries, onOpen) }
-        if (state.newSeries.isNotEmpty()) item { MediaRow("New Series", state.newSeries, onOpen) }
-        val historyMedia = state.watchHistory.map { it.media }.distinctBy { it.meta.id }
-        if (historyMedia.isNotEmpty()) {
-            item { MediaRow("Watch History", historyMedia, onOpen) }
+@Composable
+private fun SarahEditionHeader() {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 40.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text("THE SARAH EDITION", color = SarahPink, fontSize = 30.sp, fontWeight = FontWeight.Black)
+            Text("Below Deck · Housewives · Bravo · Sarah’s Picks", color = NmMuted, fontSize = 13.sp)
         }
+    }
+}
 
-        if (state.movies.isNotEmpty()) item { MediaRow("Movies", state.movies, onOpen) }
-        if (state.series.isNotEmpty()) item { MediaRow("Series", state.series, onOpen) }
-        if (state.debridItems.isNotEmpty()) item { MediaRow("My Real-Debrid Library", state.debridItems, onOpen) }
+@Composable
+private fun CuratedRow(
+    title: String,
+    media: List<AppMedia>,
+    emptyText: String,
+    onOpen: (AppMedia) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            title,
+            color = if (title == "Sarah’s Picks") SarahPink else Color.White,
+            fontSize = 23.sp,
+            fontWeight = FontWeight.Black,
+            modifier = Modifier.padding(horizontal = 40.dp)
+        )
+        if (media.isEmpty()) {
+            Box(
+                Modifier.padding(horizontal = 40.dp)
+                    .fillMaxWidth()
+                    .height(76.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(NmPanel)
+                    .border(1.dp, SarahPink.copy(alpha = .18f), RoundedCornerShape(10.dp))
+                    .padding(18.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                Text(emptyText, color = NmMuted)
+            }
+        } else {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 40.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                items(media) { PosterCard(it, onOpen) }
+            }
+        }
     }
 }
 
@@ -1391,7 +1475,7 @@ private fun DetailsScreen(
                         }
                         if (item.meta.type == "movie" || item.meta.type == "series") {
                             Button(onClick = toggleMyList) {
-                                Text(if (inMyList) "✓ My List" else "+ My List")
+                                Text(if (inMyList) "✓ Sarah’s Picks" else "+ Sarah’s Picks")
                             }
                         }
                     }
