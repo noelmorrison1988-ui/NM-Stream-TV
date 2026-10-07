@@ -452,7 +452,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val raw = value?.trim().orEmpty()
         if (raw.isBlank()) return null
 
-        Regex("""(?:youtube\\.com/(?:watch\\?v=|embed/|shorts/)|youtu\\.be/)([A-Za-z0-9_-]{6,})""")
+        Regex("""(?:youtube\.com/(?:watch\?v=|embed/|shorts/)|youtu\.be/)([A-Za-z0-9_-]{6,})""")
             .find(raw)
             ?.groupValues
             ?.getOrNull(1)
