@@ -642,6 +642,141 @@ private fun HomeScreen(
     }
 }
 @Composable
+private fun ExpandedRowScreen(
+    title: String,
+    page: Int,
+    loading: Boolean,
+    items: List<AppMedia>,
+    continueItems: List<PlaybackProgress>,
+    hasPrevious: Boolean,
+    hasNext: Boolean,
+    onHome: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onOpen: (AppMedia) -> Unit,
+    onContinue: (PlaybackProgress) -> Unit,
+    onContinueManual: (PlaybackProgress) -> Unit
+) {
+    Column(
+        Modifier.fillMaxSize().background(NmBg).padding(top = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 40.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Black)
+                Text("Page $page", color = NmMuted, fontSize = 13.sp)
+            }
+            Button(onClick = onHome) { Text("⌂  HOME") }
+            Button(onClick = onPrevious, enabled = hasPrevious && !loading) { Text("←  PREVIOUS") }
+            Button(onClick = onNext, enabled = hasNext && !loading) { Text("NEXT  →") }
+        }
+
+        if (loading) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Loading page $page…", color = NmMuted, fontSize = 18.sp)
+            }
+        } else if (items.isEmpty() && continueItems.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("No more results on this page.", color = NmMuted, fontSize = 18.sp)
+            }
+        } else if (continueItems.isNotEmpty()) {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(4),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 40.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                verticalArrangement = Arrangement.spacedBy(22.dp)
+            ) {
+                gridItems(continueItems, key = { "${it.media.meta.id}|${it.videoId}" }) { progress ->
+                    ExpandedContinueCard(progress, onContinue, onContinueManual)
+                }
+            }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(5),
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 40.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                verticalArrangement = Arrangement.spacedBy(22.dp)
+            ) {
+                gridItems(items, key = { "${it.meta.type}|${it.meta.tmdbId ?: it.meta.id}" }) { media ->
+                    ExpandedPosterCard(media, onOpen)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExpandedPosterCard(item: AppMedia, onOpen: (AppMedia) -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Column(
+        Modifier.fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
+            .clickable { onOpen(item) }
+            .focusable(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Box(
+            Modifier.fillMaxWidth().aspectRatio(2f / 3f)
+                .clip(RoundedCornerShape(8.dp))
+                .background(NmPanel)
+                .border(if (focused) 3.dp else 0.dp, if (focused) NmGold else Color.Transparent, RoundedCornerShape(8.dp))
+        ) {
+            AsyncImage(
+                model = item.meta.poster ?: item.meta.background,
+                contentDescription = item.meta.name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        Text(item.meta.name, color = Color.White, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        item.meta.releaseInfo?.let { Text(it, color = NmMuted, fontSize = 11.sp) }
+    }
+}
+
+@Composable
+private fun ExpandedContinueCard(
+    progress: PlaybackProgress,
+    onOpen: (PlaybackProgress) -> Unit,
+    onLongOpen: (PlaybackProgress) -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    Column(
+        Modifier.fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
+            .tvActivation(
+                onClick = { onOpen(progress) },
+                onLongClick = { onLongOpen(progress) }
+            )
+            .focusable(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Box(
+            Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(8.dp))
+                .background(NmPanel)
+                .border(if (focused) 3.dp else 0.dp, if (focused) NmGold else Color.Transparent, RoundedCornerShape(8.dp))
+        ) {
+            AsyncImage(
+                model = progress.media.meta.background ?: progress.media.meta.poster,
+                contentDescription = progress.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(5.dp).background(Color.White.copy(alpha = .20f))) {
+                Box(Modifier.fillMaxHeight().fillMaxWidth(progress.percent.coerceAtLeast(1) / 100f).background(NmRed))
+            }
+        }
+        Text(progress.title, color = Color.White, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("${progress.percent}% · hold for sources", color = NmMuted, fontSize = 11.sp)
+    }
+}
+@Composable
 private fun Hero(item: AppMedia, onOpen: (AppMedia) -> Unit) {
     Box(Modifier.fillMaxWidth().height(400.dp)) {
         AsyncImage(model = item.meta.background ?: item.meta.poster, contentDescription = item.meta.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
