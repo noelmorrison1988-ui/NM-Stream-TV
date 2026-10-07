@@ -169,13 +169,6 @@ class TmdbRepository(context: Context) {
         if (token.isBlank()) return@supervisorScope SarahEditionRows()
         val headers = mapOf("Authorization" to "Bearer $token")
 
-        val belowDeckTitles = listOf(
-            "Below Deck",
-            "Below Deck Mediterranean",
-            "Below Deck Sailing Yacht",
-            "Below Deck Down Under",
-            "Below Deck Adventure"
-        )
         val housewivesTitles = listOf(
             "The Real Housewives of Beverly Hills",
             "The Real Housewives of Durban",
@@ -185,7 +178,7 @@ class TmdbRepository(context: Context) {
             "The Real Housewives Ultimate Girls Trip"
         )
 
-        val belowDeckDeferred = async { curatedTvTitles(belowDeckTitles, headers) }
+        val belowDeckDeferred = async { searchTvFamily("Below Deck", "below deck", headers) }
         val housewivesDeferred = async { curatedTvTitles(housewivesTitles, headers) }
         val bravoDeferred = async {
             val discovered = fetchCollection(
@@ -212,6 +205,40 @@ class TmdbRepository(context: Context) {
             realHousewives = housewivesDeferred.await().take(limit),
             bravo = bravoDeferred.await().take(limit)
         )
+    }
+
+    private suspend fun searchTvFamily(
+        query: String,
+        prefix: String,
+        headers: Map<String, String>
+    ): List<AppMedia> {
+        val url = "$API/search/tv?query=${SimpleHttp.encode(query)}&include_adult=false&language=en-US&page=1"
+        val result = SimpleHttp.get(url, headers)
+        if (result.code !in 200..299) return emptyList()
+        val preferredOrder = listOf(
+            "below deck",
+            "below deck mediterranean",
+            "below deck sailing yacht",
+            "below deck down under",
+            "below deck adventure"
+        )
+        return JsonParser.parseString(result.body).asJsonObject
+            .getAsJsonArray("results")
+            ?.mapNotNull { element ->
+                val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+                val name = obj.get("name")?.takeUnless { it.isJsonNull }?.asString.orEmpty()
+                if (!name.lowercase().startsWith(prefix.lowercase())) return@mapNotNull null
+                tmdbCandidateToAppMedia(obj, "series")
+            }
+            ?.filter(MediaPolicy::allows)
+            ?.distinctBy { it.meta.tmdbId ?: it.meta.id }
+            ?.sortedWith(
+                compareBy<AppMedia> { item ->
+                    val key = item.meta.name.lowercase()
+                    preferredOrder.indexOf(key).takeIf { it >= 0 } ?: preferredOrder.size
+                }.thenBy { it.meta.name }
+            )
+            .orEmpty()
     }
 
     private suspend fun curatedTvTitles(
