@@ -354,193 +354,57 @@ private fun YouTubeTrailerScreen(
     youtubeId: String
 ) {
     val context = LocalContext.current
-    var webView by remember(youtubeId) { mutableStateOf<WebView?>(null) }
-    var playing by remember(youtubeId) { mutableStateOf(true) }
-    var playerError by remember(youtubeId) { mutableStateOf<Int?>(null) }
-    val playFocus = remember(youtubeId) { FocusRequester() }
-    val clientIdentity = "https://github.com/noelmorrison1988-ui/NM-Stream-TV/"
-    val externalUrl = remember(youtubeId) { "https://www.youtube.com/watch?v=$youtubeId" }
+    var launchError by remember(youtubeId) { mutableStateOf<String?>(null) }
+    var launched by remember(youtubeId) { mutableStateOf(false) }
+    val youtubeUrl = remember(youtubeId) { "https://www.youtube.com/watch?v=$youtubeId" }
 
-    val safeYoutubeId = remember(youtubeId) { youtubeId.replace("'", "\\'") }
-    val html = remember(safeYoutubeId) {
-        """
-        <!doctype html>
-        <html>
-        <head>
-          <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-          <meta name="referrer" content="strict-origin-when-cross-origin">
-          <style>
-            html,body,#player { width:100%; height:100%; margin:0; padding:0; overflow:hidden; background:#000; }
-          </style>
-        </head>
-        <body>
-          <div id="player"></div>
-          <script src="https://www.youtube.com/iframe_api"></script>
-          <script>
-            var player;
-            function onYouTubeIframeAPIReady() {
-              player = new YT.Player('player', {
-                videoId: '$safeYoutubeId',
-                playerVars: {
-                  autoplay: 1,
-                  controls: 0,
-                  rel: 0,
-                  playsinline: 1,
-                  fs: 0,
-                  origin: 'https://github.com',
-                  widget_referrer: '$clientIdentity'
-                },
-                events: {
-                  onReady: function(e) {
-                    e.target.playVideo();
-                  },
-                  onError: function(e) {
-                    window.location.href = 'nmstream://youtube-error/' + e.data;
-                  }
-                }
-              });
-            }
-            function nmPlay(){ if(player){ player.playVideo(); } }
-            function nmPause(){ if(player){ player.pauseVideo(); } }
-            function nmSeek(delta){
-              if(player && player.getCurrentTime){
-                player.seekTo(Math.max(0, player.getCurrentTime() + delta), true);
-              }
-            }
-          </script>
-        </body>
-        </html>
-        """.trimIndent()
-    }
-
-    fun openInYouTube() {
-        runCatching {
-            context.startActivity(
-                Intent(Intent.ACTION_VIEW, Uri.parse(externalUrl))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
+    fun launchYouTube() {
+        val tvIntent = Intent(Intent.ACTION_VIEW, Uri.parse(youtubeUrl)).apply {
+            setPackage("com.google.android.youtube.tv")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-    }
-
-    DisposableEffect(youtubeId) {
-        onDispose {
-            webView?.stopLoading()
-            webView?.loadUrl("about:blank")
-            webView?.destroy()
-            webView = null
+        val genericIntent = Intent(Intent.ACTION_VIEW, Uri.parse(youtubeUrl)).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
+
+        val opened = runCatching {
+            context.startActivity(tvIntent)
+            true
+        }.getOrElse {
+            runCatching {
+                context.startActivity(genericIntent)
+                true
+            }.getOrDefault(false)
+        }
+
+        launched = opened
+        launchError = if (opened) null else "No YouTube app or browser handler was available."
     }
 
     LaunchedEffect(youtubeId) {
-        delay(350)
-        runCatching { playFocus.requestFocus() }
+        delay(120)
+        launchYouTube()
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
-        AndroidView(
-            factory = { webContext ->
-                WebView(webContext).apply {
-                    webView = this
-                    setBackgroundColor(android.graphics.Color.BLACK)
-                    isFocusable = false
-                    isFocusableInTouchMode = false
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    settings.mediaPlaybackRequiresUserGesture = false
-                    settings.cacheMode = WebSettings.LOAD_DEFAULT
-                    settings.allowFileAccess = false
-                    settings.allowContentAccess = false
-                    webChromeClient = WebChromeClient()
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldOverrideUrlLoading(
-                            view: WebView?,
-                            request: WebResourceRequest?
-                        ): Boolean {
-                            val uri = request?.url ?: return false
-                            if (uri.scheme == "nmstream" && uri.host == "youtube-error") {
-                                playerError = uri.lastPathSegment?.toIntOrNull()
-                                return true
-                            }
-                            return false
-                        }
-                    }
-                    loadDataWithBaseURL(
-                        clientIdentity,
-                        html,
-                        "text/html",
-                        "UTF-8",
-                        null
-                    )
-                }
-            },
-            update = { webView = it },
-            modifier = Modifier.fillMaxSize()
-        )
-
-        Box(
-            Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    listOf(
-                        Color.Black.copy(alpha = .12f),
-                        Color.Transparent,
-                        Color.Transparent,
-                        Color.Black.copy(alpha = .78f)
-                    )
-                )
-            )
-        )
-
-        playerError?.let { errorCode ->
-            Column(
-                Modifier.align(Alignment.Center)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xEE111319))
-                    .padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text("Trailer embed unavailable", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Text("YouTube returned player error $errorCode. You can still open this trailer directly.", color = NmMuted)
-                Button(onClick = ::openInYouTube) { Text("Open in YouTube") }
-            }
-        }
-
+    Box(
+        Modifier.fillMaxSize().background(Color.Black),
+        contentAlignment = Alignment.Center
+    ) {
         Column(
-            Modifier.align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(horizontal = 34.dp, vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.padding(36.dp)
         ) {
-            Text(title, color = NmPlatinum, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                PlayerControl(
-                    label = "↶ 30",
-                    onClick = { webView?.evaluateJavascript("nmSeek(-10)", null) }
-                )
-                PlayerControl(
-                    label = if (playing) "❚❚" else "▶",
-                    primary = true,
-                    modifier = Modifier.focusRequester(playFocus),
-                    onClick = {
-                        playing = !playing
-                        webView?.evaluateJavascript(if (playing) "nmPlay()" else "nmPause()", null)
-                    }
-                )
-                PlayerControl(
-                    label = "30 ↷",
-                    onClick = { webView?.evaluateJavascript("nmSeek(10)", null) }
-                )
-                PlayerControl(
-                    label = "YOUTUBE ↗",
-                    onClick = ::openInYouTube
-                )
-                Spacer(Modifier.weight(1f))
-                Text("TRAILER · YOUTUBE", color = NmGold, fontSize = 11.sp, fontWeight = FontWeight.Black)
-            }
+            Text("TRAILER", color = NmGold, fontSize = 13.sp, fontWeight = FontWeight.Black)
+            Text(title, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            Text(
+                if (launchError != null) launchError!!
+                else if (launched) "Opened in YouTube TV. Press Back to return to NM Stream TV."
+                else "Opening trailer in YouTube TV…",
+                color = NmMuted,
+                fontSize = 15.sp
+            )
+            Button(onClick = ::launchYouTube) { Text("Open trailer in YouTube") }
         }
     }
 }
