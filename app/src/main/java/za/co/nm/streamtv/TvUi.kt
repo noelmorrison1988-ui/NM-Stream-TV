@@ -1210,9 +1210,9 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
         item { CardBox {
             Text("TMDB metadata, actor search & discovery", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text("Status: " + state.tmdbStatus, color = if (state.tmdbConfigured) NmGreen else NmMuted)
-            Text("Use the long API Read Access Token — not the short API Key. It powers artwork, actor search, New and Trending rows. Watch history and resume positions stay on this device.", color = NmMuted)
+            Text("You can use either the short TMDB API Key or the long API Read Access Token. Mobile Lite detects which one you entered automatically. It powers artwork, actor search, New and Trending rows.", color = NmMuted)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.fillMaxWidth()) { InputBox(tmdb, "Paste long TMDB API Read Access Token") { tmdb = it } }
+                Box(Modifier.fillMaxWidth()) { InputBox(tmdb, "Paste TMDB API Key or Read Access Token") { tmdb = it } }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = { vm.saveTmdbToken(tmdb); tmdb = "" }) { Text("Save") }
                     if (state.tmdbConfigured) Button(onClick = { vm.saveTmdbToken("") }) { Text("Remove") }
