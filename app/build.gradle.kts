@@ -9,11 +9,11 @@ android {
     compileSdkMinor = 1
 
     defaultConfig {
-        applicationId = "za.co.nm.streamtv.lite"
+        applicationId = "za.co.nm.streamtv.sarah"
         minSdk = 23
         targetSdk = 36
-        versionCode = 30
-        versionName = "0.15.1-mobile-lite.8"
+        versionCode = 1
+        versionName = "1.0.0-sarah.1"
     }
 
     buildFeatures {
