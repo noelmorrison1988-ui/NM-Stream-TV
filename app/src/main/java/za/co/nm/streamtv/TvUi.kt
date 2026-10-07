@@ -1221,7 +1221,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV Mobile Lite v0.15.1-mobile-lite.3 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV Mobile Lite v0.15.1-mobile-lite.4 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
