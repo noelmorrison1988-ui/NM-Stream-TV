@@ -620,15 +620,15 @@ private fun Shell(selected: String, navigate: (Screen) -> Unit, content: @Compos
                 .height(74.dp)
                 .background(
                     Brush.horizontalGradient(
-                        listOf(Color(0xFF111317), Color(0xFF08090B), Color(0xFF050607))
+                        listOf(Color(0xF23A2417), Color(0xF224150D), Color(0xF25A3822))
                     )
                 )
-                .border(0.5.dp, NmGold.copy(alpha = .22f))
+                .border(1.dp, SarahPink.copy(alpha = .35f))
                 .padding(horizontal = 30.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("NM", color = NmPlatinum, fontSize = 25.sp, fontWeight = FontWeight.Black)
-            Text(" STREAM", color = NmGold, fontSize = 25.sp, fontWeight = FontWeight.Black)
+            Text(" STREAM", color = SarahPink, fontSize = 25.sp, fontWeight = FontWeight.Black)
             Spacer(Modifier.width(24.dp))
             listOf(
                 "Home" to Screen.Home,
@@ -661,8 +661,8 @@ private fun Button(
             .background(
                 when {
                     !enabled -> Color(0xFF2B2E33)
-                    focused -> NmGold
-                    else -> Color(0xFF22252A)
+                    focused -> SarahPink
+                    else -> Color(0xCC3A2417)
                 }
             )
             .border(
@@ -687,14 +687,14 @@ private fun NavChip(label: String, selected: Boolean, onClick: () -> Unit) {
         Modifier.clip(RoundedCornerShape(20.dp))
             .background(
                 when {
-                    selected -> NmGold.copy(alpha = .18f)
+                    selected -> SarahPink.copy(alpha = .20f)
                     focused -> Color.White.copy(alpha = .08f)
                     else -> Color.Transparent
                 }
             )
             .border(
                 if (selected || focused) 1.dp else 0.dp,
-                if (selected) NmGold.copy(alpha = .75f) else Color.White.copy(alpha = .18f),
+                if (selected) SarahPink.copy(alpha = .85f) else Color.White.copy(alpha = .18f),
                 RoundedCornerShape(20.dp)
             )
             .onFocusChanged { focused = it.isFocused }
@@ -704,7 +704,7 @@ private fun NavChip(label: String, selected: Boolean, onClick: () -> Unit) {
     ) {
         Text(
             label,
-            color = if (selected) NmGold else NmPlatinum,
+            color = if (selected) SarahPink else NmPlatinum,
             fontWeight = if (selected) FontWeight.Black else FontWeight.Medium,
             fontSize = 13.sp
         )
@@ -1220,33 +1220,6 @@ private fun SearchScreen(
     }
 }
 @Composable
-private fun MyListScreen(media: List<AppMedia>, onOpen: (AppMedia) -> Unit) {
-    LazyColumn(
-        Modifier.fillMaxSize().padding(horizontal = 42.dp),
-        contentPadding = PaddingValues(top = 26.dp, bottom = 48.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
-    ) {
-        item {
-            Text("My List", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black)
-            Text("Saved only on this Mobile Lite installation. Nothing in My List is synced to other devices.", color = NmMuted)
-        }
-        if (media.isEmpty()) {
-            item {
-                CardBox {
-                    Text("Your list is empty", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    Text("Open any movie or series and choose + My List.", color = NmMuted)
-                }
-            }
-        } else {
-            items(media.chunked(6)) { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(15.dp)) {
-                    row.forEach { PosterCard(it, onOpen) }
-                }
-            }
-        }
-    }
-}
-@Composable
 private fun AddonsScreen(
     state: MainUiState,
     install: (String) -> Unit,
@@ -1371,8 +1344,8 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Text("Playback & language", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text("These preferences sync to every linked NM Stream TV device.", color = NmMuted)
 
-            Text("Mobile Lite source policy", color = Color.White, fontWeight = FontWeight.Bold)
-            Text("Pengu is the default provider. Streams above 1080p are excluded in Mobile Lite.", color = NmMuted, fontSize = 12.sp)
+            Text("Sarah Edition source policy", color = Color.White, fontWeight = FontWeight.Bold)
+            Text("Pengu is the default provider. Streams above 1080p are excluded in The Sarah Edition.", color = NmMuted, fontSize = 12.sp)
 
             Text("Preferred audio language", color = Color.White, fontWeight = FontWeight.Bold)
             Box(Modifier.fillMaxWidth()) { InputBox(audioLang, "en") { audioLang = it } }
@@ -1389,7 +1362,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Text("TMDB metadata, actor search & discovery", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text("Status: " + state.tmdbStatus, color = if (state.tmdbConfigured) NmGreen else NmMuted)
             Text(
-                "TMDB is built into Mobile Lite and works automatically for artwork, actor search, New Movies, Trending Movies, New Series and Trending Series.",
+                "TMDB is built into The Sarah Edition and powers artwork, actor search, Below Deck, The Real Housewives and Bravo rows automatically.",
                 color = NmMuted
             )
         } }
@@ -1399,7 +1372,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV Mobile Lite v0.15.1-mobile-lite.8 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV · The Sarah Edition v1.0.0-sarah.1 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
@@ -1452,7 +1425,7 @@ private fun DetailsScreen(
 
     Box(Modifier.fillMaxSize()) {
         AsyncImage(model = item.meta.background ?: item.meta.poster, contentDescription = item.meta.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(NmBg, NmBg.copy(alpha = .9f), NmBg.copy(alpha = .4f)))))
+        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(NmBg, Color(0xE6422518), Color(0x663A2014)))))
         LazyColumn(Modifier.fillMaxSize().padding(48.dp), state = detailsListState, contentPadding = PaddingValues(bottom = 50.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             item {
                 Column(Modifier.widthIn(max = 720.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1655,7 +1628,7 @@ private fun SourcesScreen(
         item {
             Text(title, color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Black)
             Text("$subtitleCount subtitle tracks found", color = NmMuted)
-            Text("Mobile Lite default: Pengu · maximum 1080p", color = NmGreen, fontSize = 13.sp)
+            Text("Sarah Edition default: Pengu · maximum 1080p", color = NmGreen, fontSize = 13.sp)
         }
 
         if (!loading && recommended != null) {
