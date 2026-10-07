@@ -5,9 +5,9 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
 class MyListStore(context: Context) {
-    private val prefs = context.getSharedPreferences("nm_stream_mobile_lite_local", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences("nm_stream_sarah_edition_local", Context.MODE_PRIVATE)
     private val gson = Gson()
-    private val key = "my_list"
+    private val key = "sarah_picks"
 
     fun load(): List<AppMedia> {
         val json = prefs.getString(key, null) ?: return emptyList()
