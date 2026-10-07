@@ -1133,6 +1133,60 @@ private fun PosterCard(
 }
 
 @Composable
+private fun QuickMyListMenu(
+    item: AppMedia,
+    inMyList: Boolean,
+    onToggle: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val firstFocus = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        delay(100)
+        runCatching { firstFocus.requestFocus() }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier.widthIn(min = 360.dp, max = 520.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFF111319))
+                .border(3.dp, Color.White, RoundedCornerShape(14.dp))
+                .padding(22.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text(
+                item.meta.name,
+                color = Color.White,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Black,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                "Quick action",
+                color = NmMuted,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Button(
+                onClick = onToggle,
+                selected = inMyList,
+                modifier = Modifier.fillMaxWidth().focusRequester(firstFocus)
+            ) {
+                Text(if (inMyList) "✓ Remove from My List" else "+ Add to My List")
+            }
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Continue browsing")
+            }
+        }
+    }
+}
+
+@Composable
 private fun ContinueRow(
     media: List<PlaybackProgress>,
     onOpen: (PlaybackProgress) -> Unit,
