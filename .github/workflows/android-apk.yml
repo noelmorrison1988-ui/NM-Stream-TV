@@ -3,7 +3,7 @@ name: Build NM Stream TV APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main, lite ]
+    branches: [ main, lite, sarah-edition ]
   pull_request:
     branches: [ main ]
 
@@ -75,7 +75,7 @@ jobs:
         shell: bash
         run: |
           VERSION_NAME=$(grep -m1 'versionName' app/build.gradle.kts | cut -d'"' -f2)
-          APK_NAME="NM-Stream-TV-Mobile-Lite-v${VERSION_NAME}-debug"
+          APK_NAME="NM-Stream-TV-The-Sarah-Edition-v${VERSION_NAME}-debug"
           mkdir -p dist
           cp app/build/outputs/apk/debug/app-debug.apk "dist/${APK_NAME}.apk"
           echo "apk_name=${APK_NAME}" >> "$GITHUB_OUTPUT"
