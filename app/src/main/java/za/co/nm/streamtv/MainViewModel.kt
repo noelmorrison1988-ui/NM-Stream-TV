@@ -470,6 +470,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 .sortedWith(
                     compareBy<StreamOption> { option ->
+                        when (option.detectedQuality) {
+                            720 -> 0
+                            1080 -> 1
+                            576 -> 2
+                            480 -> 3
+                            360 -> 4
+                            null -> 5
+                            else -> 6
+                        }
+                    }.thenBy { option ->
                         val hash = option.stream.infoHash?.lowercase()
                         when {
                             hash != null && instantlyAvailableRdHashes != null &&
@@ -479,22 +489,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             else -> 3
                         }
                     }.thenBy { option ->
-                        if (option.addonName.contains("pengu", ignoreCase = true)) 0 else 1
-                    }.thenBy { option ->
                         when {
                             option.playableUrl != null -> 0
                             option.isP2p -> 1
                             else -> 2
-                        }
-                    }.thenBy { option ->
-                        when (option.detectedQuality) {
-                            1080 -> 0
-                            720 -> 1
-                            576 -> 2
-                            480 -> 3
-                            360 -> 4
-                            null -> 5
-                            else -> 6
                         }
                     }.thenByDescending { it.stream.behaviorHints?.videoSize ?: 0L }
                 )
