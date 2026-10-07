@@ -406,7 +406,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             tmdbConfigured = tmdb.configured(),
             tmdbStatus = tmdb.maskedToken(),
-            message = if (token.isBlank()) "TMDB token removed" else "TMDB metadata and recommendations enabled"
+            message = if (token.isBlank()) "TMDB token removed" else "TMDB metadata enabled"
         )
         refreshEverything()
     }
@@ -490,6 +490,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun saveMobileLiteLanguagePreferences(
+        audioLanguage: String,
+        subtitleLanguage: String
+    ) {
+        val existing = nmAccount.playbackPreferences()
+        val prefs = existing.copy(
+            preferredAudioLanguage = audioLanguage.trim().ifBlank { "en" },
+            subtitleLanguage = subtitleLanguage.trim().ifBlank { "en" }
+        )
+        nmAccount.savePlaybackPreferences(prefs)
+        _uiState.value = _uiState.value.copy(
+            preferredAudioLanguage = prefs.preferredAudioLanguage,
+            preferredSubtitleLanguage = prefs.subtitleLanguage,
+            message = "Language preferences saved"
+        )
+        viewModelScope.launch {
+            if (nmAccount.isLinked()) {
+                runCatching { nmAccount.pushPlaybackPreferences(prefs) }
+                    .onFailure { error ->
+                        _uiState.value = _uiState.value.copy(
+                            message = error.message ?: "Saved locally, but cloud sync failed"
+                        )
+                    }
+            }
+        }
+    }
     fun beginNmAccountPairing() {
         nmPairJob?.cancel()
         nmPairJob = viewModelScope.launch {
