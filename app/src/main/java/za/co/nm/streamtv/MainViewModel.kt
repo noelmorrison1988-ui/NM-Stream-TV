@@ -874,6 +874,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun lastPlaybackSession(item: AppMedia, videoId: String): LastPlaybackSession? =
         playback.lastSession(item, videoId)
 
+    fun forgetLastPlaybackSession(item: AppMedia, videoId: String) {
+        playback.clearLastSession(item, videoId)
+    }
+
     fun onPlaybackStarted(
         item: AppMedia,
         videoId: String,
