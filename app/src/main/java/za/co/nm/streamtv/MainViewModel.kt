@@ -25,6 +25,10 @@ data class MainUiState(
     val continueWatching: List<PlaybackProgress> = emptyList(),
     val watchHistory: List<PlaybackProgress> = emptyList(),
     val myList: List<AppMedia> = emptyList(),
+    val newMovies: List<AppMedia> = emptyList(),
+    val trendingMovies: List<AppMedia> = emptyList(),
+    val newSeries: List<AppMedia> = emptyList(),
+    val trendingSeries: List<AppMedia> = emptyList(),
     val recentSearches: List<String> = emptyList(),
     val searchResults: List<AppMedia> = emptyList(),
     val searchLoading: Boolean = false,
@@ -104,6 +108,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     .getOrDefault(emptyList<AppMedia>() to emptyList())
             }
             val rdUserDeferred = async { runCatching { realDebrid.getUser() }.getOrNull() }
+            val discoveryDeferred = async {
+                if (tmdb.configured()) {
+                    runCatching { tmdb.discoveryRows(18) }.getOrDefault(TmdbDiscoveryRows())
+                } else TmdbDiscoveryRows()
+            }
 
             val (rawMovies, rawSeries) = homeDeferred.await()
             val movies = MediaPolicy.filter(
@@ -129,6 +138,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 enrichProgress(rawHistory, 15)
             } else rawHistory
 
+            val discovery = discoveryDeferred.await()
             val nmPrefs = nmAccount.playbackPreferences()
 
             _uiState.value = _uiState.value.copy(
@@ -143,6 +153,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 continueWatching = playback.load().filter { MediaPolicy.allows(it.media) }.take(30),
                 watchHistory = watchHistory,
                 myList = myListStore.load(),
+                newMovies = discovery.newMovies,
+                trendingMovies = discovery.trendingMovies,
+                newSeries = discovery.newSeries,
+                trendingSeries = discovery.trendingSeries,
                 recentSearches = searchHistoryStore.load(),
                 rdDeviceCode = null,
                 rdConnecting = false,
@@ -228,13 +242,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 recentSearches = searchHistoryStore.record(submittedQuery),
                 message = null
             )
-            val raw = runCatching { addons.search(_uiState.value.addons, submittedQuery) }.getOrElse {
-                _uiState.value = _uiState.value.copy(message = it.message)
-                emptyList()
+            val addonDeferred = async {
+                runCatching { addons.search(_uiState.value.addons, submittedQuery) }
+                    .getOrDefault(emptyList())
             }
-            val results = MediaPolicy.filter(
+            val actorDeferred = async {
+                if (tmdb.configured()) {
+                    runCatching { tmdb.searchPersonCredits(submittedQuery, 40) }
+                        .getOrDefault(emptyList())
+                } else emptyList()
+            }
+
+            val raw = addonDeferred.await()
+            val titleResults = MediaPolicy.filter(
                 if (tmdb.configured()) runCatching { tmdb.enrichBatch(raw, 40) }.getOrDefault(raw) else raw
             )
+            val actorResults = actorDeferred.await()
+            val results = (titleResults + actorResults)
+                .filter(MediaPolicy::allows)
+                .distinctBy { mediaSearchKey(it) }
+                .take(80)
+
             _uiState.value = _uiState.value.copy(searchLoading = false, searchResults = results)
         }
     }
@@ -826,6 +854,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .take(300)
     }
 
+    private fun mediaSearchKey(item: AppMedia): String =
+        item.meta.tmdbId?.let { "tmdb|${item.meta.type}|$it" }
+            ?: "${item.meta.type}|${mediaTitleKey(item.meta.name)}"
     private fun mediaTitleKey(value: String): String =
         value.lowercase()
             .replace(Regex("[^a-z0-9]+"), " ")
