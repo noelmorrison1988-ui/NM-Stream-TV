@@ -1238,7 +1238,10 @@ private fun SearchScreen(
                     SearchCategory.SERIES to "TV Series",
                     SearchCategory.PERSON to "Actor / Person"
                 ).forEach { (value, label) ->
-                    Button(onClick = { selectCategory(value) }) {
+                    Button(
+                        onClick = { selectCategory(value) },
+                        selected = category == value
+                    ) {
                         Text(if (category == value) "✓ $label" else label)
                     }
                 }
@@ -1541,7 +1544,7 @@ private fun DetailsScreen(
                             }
                         }
                         if (item.meta.type == "movie" || item.meta.type == "series") {
-                            Button(onClick = toggleMyList) {
+                            Button(onClick = toggleMyList, selected = inMyList) {
                                 Text(if (inMyList) "✓ My List" else "+ My List")
                             }
                         }
@@ -1563,7 +1566,10 @@ private fun DetailsScreen(
                         contentPadding = PaddingValues(vertical = 4.dp)
                     ) {
                         items(seasons) { season ->
-                            Button(onClick = { rememberSeason(season) }) {
+                            Button(
+                                onClick = { rememberSeason(season) },
+                                selected = selectedSeason == season
+                            ) {
                                 Text(if (selectedSeason == season) "✓ Season $season" else "Season $season")
                             }
                         }
@@ -1583,10 +1589,15 @@ private fun DetailsScreen(
                         Modifier.fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
                             .background(when {
-                                focused -> NmPanelFocus
-                                ep.id == rememberedEpisodeId -> NmGold.copy(alpha = .14f)
+                                focused -> NmRed
+                                ep.id == rememberedEpisodeId -> NmGold.copy(alpha = .24f)
                                 else -> NmPanel
                             })
+                            .border(
+                                if (focused) 3.dp else if (ep.id == rememberedEpisodeId) 2.dp else 0.dp,
+                                if (focused) Color.White else if (ep.id == rememberedEpisodeId) NmGold else Color.Transparent,
+                                RoundedCornerShape(8.dp)
+                            )
                             .onFocusChanged { focused = it.isFocused }
                             .tvActivation(
                                 onClick = {
@@ -2489,7 +2500,7 @@ private fun PlayerScreen(
                                 .setOverrideForType(override)
                                 .build()
                             showAudioMenu = false
-                        }, modifier = Modifier.fillMaxWidth()) {
+                        }, modifier = Modifier.fillMaxWidth(), selected = audioMenuIndex == index) {
                             Text(if (audioMenuIndex == index) "▶  ${choice.label}" else choice.label)
                         }
                     }
@@ -2525,7 +2536,7 @@ private fun PlayerScreen(
                             .build()
                         subtitlesEnabled = false
                         showSubtitleMenu = false
-                    }, modifier = Modifier.fillMaxWidth()) {
+                    }, modifier = Modifier.fillMaxWidth(), selected = subtitleMenuIndex == 0) {
                         Text(if (subtitleMenuIndex == 0) "▶  Off" else "Off")
                     }
                 }
@@ -2542,7 +2553,7 @@ private fun PlayerScreen(
                             .build()
                         subtitlesEnabled = true
                         showSubtitleMenu = false
-                    }, modifier = Modifier.fillMaxWidth()) {
+                    }, modifier = Modifier.fillMaxWidth(), selected = subtitleMenuIndex == index + 1) {
                         Text(if (subtitleMenuIndex == index + 1) "▶  ${choice.label}" else choice.label)
                     }
                 }
