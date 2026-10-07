@@ -87,6 +87,9 @@ private sealed interface Screen {
         val videoId: String,
         val title: String,
         val source: StreamOption,
+        val fallbackSources: List<StreamOption> = emptyList(),
+        val resumeOverrideMs: Long? = null,
+        val notice: String? = null,
         val returnToSources: Boolean = true
     ) : Screen
     data class Trailer(val item: AppMedia, val title: String, val source: StreamOption) : Screen
@@ -228,35 +231,39 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             state.sourceRequestKey == current.requestKey &&
                             !state.streamsLoading
                         ) {
-                            val best = state.streamOptions.firstOrNull { option ->
-                                option.playableUrl != null ||
+                            val playableCandidates = preferredPlayableSources(state.streamOptions)
+                            val best = playableCandidates.firstOrNull()
+                            val bestOther = state.streamOptions.firstOrNull { option ->
+                                !option.isKnownUncached() && (
                                     option.youtubeUrl != null ||
-                                    !option.stream.externalUrl.isNullOrBlank()
+                                        !option.stream.externalUrl.isNullOrBlank()
+                                    )
                             }
 
                             when {
-                                best?.playableUrl != null -> {
+                                best != null -> {
                                     screen = Screen.Player(
                                         current.item,
                                         current.videoId,
                                         current.title,
                                         best,
+                                        fallbackSources = playableCandidates.drop(1),
                                         returnToSources = false
                                     )
                                 }
-                                best?.youtubeUrl != null -> {
+                                bestOther?.youtubeUrl != null -> {
                                     runCatching {
                                         context.startActivity(
-                                            Intent(Intent.ACTION_VIEW, Uri.parse(best.youtubeUrl))
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(bestOther.youtubeUrl))
                                                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                         )
                                     }
                                     screen = Screen.Details(current.item)
                                 }
-                                !best?.stream?.externalUrl.isNullOrBlank() -> {
+                                !bestOther?.stream?.externalUrl.isNullOrBlank() -> {
                                     runCatching {
                                         context.startActivity(
-                                            Intent(Intent.ACTION_VIEW, Uri.parse(best?.stream?.externalUrl))
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(bestOther?.stream?.externalUrl))
                                                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                         )
                                     }
@@ -271,7 +278,17 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                 }
                 is Screen.Sources -> SourcesScreen(current.title, state.streamsLoading, state.streamOptions, state.subtitleOptions.size) { source ->
                     when {
-                        source.playableUrl != null -> screen = Screen.Player(current.item, current.videoId, current.title, source)
+                        source.playableUrl != null -> {
+                            val fallbacks = preferredPlayableSources(state.streamOptions)
+                                .filterNot { it.playableUrl == source.playableUrl }
+                            screen = Screen.Player(
+                                current.item,
+                                current.videoId,
+                                current.title,
+                                source,
+                                fallbackSources = fallbacks
+                            )
+                        }
                         source.youtubeUrl != null -> runCatching {
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(source.youtubeUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                         }
@@ -293,11 +310,13 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     subtitles = emptyList(),
                     resumeMs = 0L,
                     resumePercent = null,
+                    sourceNotice = null,
                     preferredAudioLanguage = state.preferredAudioLanguage,
                     preferredSubtitleLanguage = state.preferredSubtitleLanguage,
                     onStarted = { _, _ -> },
                     onProgress = { _, _ -> },
-                    onStopped = { _, _ -> }
+                    onStopped = { _, _ -> },
+                    onPlaybackProblem = { _, _ -> }
                 )
                 is Screen.Player -> PlayerScreen(
                     item = current.item,
@@ -306,13 +325,33 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     url = current.source.playableUrl.orEmpty(),
                     headers = current.source.requestHeaders,
                     subtitles = state.subtitleOptions,
-                    resumeMs = viewModel.resumePosition(current.item, current.videoId),
-                    resumePercent = viewModel.resumeCloudPercent(current.item, current.videoId),
+                    resumeMs = current.resumeOverrideMs
+                        ?: viewModel.resumePosition(current.item, current.videoId),
+                    resumePercent = if (current.resumeOverrideMs != null) {
+                        null
+                    } else {
+                        viewModel.resumeCloudPercent(current.item, current.videoId)
+                    },
+                    sourceNotice = current.notice,
                     preferredAudioLanguage = state.preferredAudioLanguage,
                     preferredSubtitleLanguage = state.preferredSubtitleLanguage,
                     onStarted = { p, d -> viewModel.onPlaybackStarted(current.item, current.videoId, p, d) },
                     onProgress = { p, d -> viewModel.onPlaybackProgress(current.item, current.videoId, current.title, p, d) },
-                    onStopped = { p, d -> viewModel.onPlaybackStopped(current.item, current.videoId, current.title, p, d) }
+                    onStopped = { p, d -> viewModel.onPlaybackStopped(current.item, current.videoId, current.title, p, d) },
+                    onPlaybackProblem = { positionMs, reason ->
+                        val next = current.fallbackSources.firstOrNull()
+                        if (next != null) {
+                            screen = current.copy(
+                                source = next,
+                                fallbackSources = current.fallbackSources.drop(1),
+                                resumeOverrideMs = if (positionMs > 0L) positionMs else current.resumeOverrideMs,
+                                notice = "Source switched automatically · $reason"
+                            )
+                        } else {
+                            viewModel.loadSources(current.item, current.videoId)
+                            screen = Screen.Sources(current.item, current.videoId, current.title)
+                        }
+                    }
                 )
             }
                 state.message?.let {
@@ -1190,7 +1229,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV v0.15.0 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV v${BuildConfig.VERSION_NAME} · Morrison Entertainment", color = NmMuted) }
     }
 }
 
@@ -1301,7 +1340,7 @@ private fun AutoPlayScreen(title: String) {
         ) {
             Text("Finding the best source…", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
             Text(title, color = NmMuted, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("720p preferred · Debrid/HTTP before P2P", color = NmGreen, fontSize = 14.sp)
+            Text("Cached/ready sources first · 720p preferred · automatic failover", color = NmGreen, fontSize = 14.sp)
         }
     }
 }
@@ -1372,13 +1411,14 @@ private fun Modifier.tvActivation(
 
 @Composable
 private fun SourcesScreen(title: String, loading: Boolean, sources: List<StreamOption>, subtitleCount: Int, select: (StreamOption) -> Unit) {
-    val recommended = sources.firstOrNull()
+    val visibleSources = sources.filterNot { it.isKnownUncached() }
+    val recommended = preferredPlayableSources(visibleSources).firstOrNull()
 
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 46.dp), contentPadding = PaddingValues(top = 34.dp, bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Text(title, color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Black)
             Text(subtitleCount.toString() + " subtitle tracks found", color = NmMuted)
-            Text("Default preference: 720p · Debrid/HTTP first · P2P last", color = NmGreen, fontSize = 13.sp)
+            Text("Cached/ready sources only by default · 720p preferred · automatic failover", color = NmGreen, fontSize = 13.sp)
         }
 
         if (!loading && recommended != null && (
@@ -1395,8 +1435,8 @@ private fun SourcesScreen(title: String, loading: Boolean, sources: List<StreamO
         }
 
         if (loading) item { Text("Checking installed sources…", color = NmMuted) }
-        else if (sources.isEmpty()) item { Text("No stream sources were returned.", color = NmMuted) }
-        else itemsIndexed(sources) { index, source ->
+        else if (visibleSources.isEmpty()) item { Text("No cached/ready stream sources are available yet.", color = NmMuted) }
+        else itemsIndexed(visibleSources) { index, source ->
             var focused by remember { mutableStateOf(false) }
             Row(
                 Modifier.fillMaxWidth()
@@ -1426,6 +1466,66 @@ private fun SourcesScreen(title: String, loading: Boolean, sources: List<StreamO
     }
 }
 
+private fun StreamOption.cacheSignalText(): String = listOfNotNull(
+    addonName,
+    stream.name,
+    stream.title,
+    stream.behaviorHints?.filename,
+    stream.url
+).joinToString(" ").lowercase()
+
+private fun StreamOption.isKnownUncached(): Boolean {
+    val text = cacheSignalText()
+    val negativeMarkers = listOf(
+        "media_not_cached_yet",
+        "media not cached yet",
+        "not cached",
+        "not_cached",
+        "not-cached",
+        "uncached",
+        "cache miss",
+        "cache-miss",
+        "not ready",
+        "not-ready",
+        "needs caching",
+        "needs download",
+        "download to debrid",
+        "downloading",
+        "queued for download"
+    )
+    return negativeMarkers.any(text::contains) ||
+        (isDebrid && stream.behaviorHints?.notWebReady == true)
+}
+
+private fun StreamOption.isExplicitlyCached(): Boolean {
+    if (isKnownUncached()) return false
+    val text = cacheSignalText()
+    return listOf(
+        "cached",
+        "cache hit",
+        "instant",
+        "rd+",
+        "real-debrid+",
+        "⚡"
+    ).any(text::contains)
+}
+
+private fun preferredPlayableSources(sources: List<StreamOption>): List<StreamOption> =
+    sources.withIndex()
+        .filter { indexed ->
+            indexed.value.playableUrl != null && !indexed.value.isKnownUncached()
+        }
+        .sortedWith(
+            compareBy<IndexedValue<StreamOption>> { indexed ->
+                when {
+                    indexed.value.isExplicitlyCached() -> 0
+                    indexed.value.isDebrid -> 1
+                    else -> 2
+                }
+            }.thenBy { it.index }
+        )
+        .map { it.value }
+
 private data class PlayerTrackChoice(
     val group: Tracks.Group,
     val trackIndex: Int,
@@ -1450,11 +1550,13 @@ private fun PlayerScreen(
     subtitles: List<SubtitleOption>,
     resumeMs: Long,
     resumePercent: Double?,
+    sourceNotice: String?,
     preferredAudioLanguage: String,
     preferredSubtitleLanguage: String,
     onStarted: (Long, Long) -> Unit,
     onProgress: (Long, Long) -> Unit,
-    onStopped: (Long, Long) -> Unit
+    onStopped: (Long, Long) -> Unit,
+    onPlaybackProblem: (Long, String) -> Unit
 ) {
     val context = LocalContext.current
 
@@ -1531,6 +1633,11 @@ private fun PlayerScreen(
     var playerDurationMs by remember(player) { mutableLongStateOf(0L) }
     var isPlaying by remember(player) { mutableStateOf(false) }
     var fillVideo by remember(player) { mutableStateOf(false) }
+    var playbackState by remember(player) { mutableIntStateOf(player.playbackState) }
+    var reachedReady by remember(player) { mutableStateOf(false) }
+    var failureSent by remember(player) { mutableStateOf(false) }
+    val stallEvents = remember(player) { mutableStateListOf<Long>() }
+    var showSourceNotice by remember(url, sourceNotice) { mutableStateOf(!sourceNotice.isNullOrBlank()) }
     val advisoryItems = remember(item.meta.contentRating, item.meta.contentAdvisories) {
         buildList {
             item.meta.contentRating?.takeIf { it.isNotBlank() }?.let { add("Rated " + it) }
@@ -1549,6 +1656,41 @@ private fun PlayerScreen(
                 isPlaying = value
                 controlsRevision = System.currentTimeMillis()
             }
+
+            override fun onPlaybackStateChanged(state: Int) {
+                val previous = playbackState
+                playbackState = state
+                if (state == Player.STATE_READY) {
+                    reachedReady = true
+                }
+                if (
+                    state == Player.STATE_BUFFERING &&
+                    previous != Player.STATE_BUFFERING &&
+                    reachedReady &&
+                    player.playWhenReady
+                ) {
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    stallEvents.removeAll { now - it > 300_000L }
+                    stallEvents.add(now)
+                    if (stallEvents.size >= 3 && !failureSent) {
+                        failureSent = true
+                        onPlaybackProblem(
+                            player.currentPosition.coerceAtLeast(0L),
+                            "3 stalls within 5 minutes"
+                        )
+                    }
+                }
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                if (!failureSent) {
+                    failureSent = true
+                    onPlaybackProblem(
+                        player.currentPosition.coerceAtLeast(0L),
+                        "Playback error: ${error.errorCodeName}"
+                    )
+                }
+            }
         }
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
@@ -1560,6 +1702,40 @@ private fun PlayerScreen(
             .setPreferredAudioLanguage(preferredAudioLanguage)
             .setPreferredTextLanguage(preferredSubtitleLanguage)
             .build()
+    }
+
+    LaunchedEffect(player, playbackState, reachedReady, failureSent) {
+        if (
+            playbackState == Player.STATE_BUFFERING &&
+            player.playWhenReady &&
+            !failureSent
+        ) {
+            val timeoutMs = if (reachedReady) 15_000L else 25_000L
+            delay(timeoutMs)
+            if (
+                player.playbackState == Player.STATE_BUFFERING &&
+                player.playWhenReady &&
+                !failureSent
+            ) {
+                failureSent = true
+                onPlaybackProblem(
+                    player.currentPosition.coerceAtLeast(0L),
+                    if (reachedReady) {
+                        "stream froze for 15 seconds"
+                    } else {
+                        "source did not start within 25 seconds"
+                    }
+                )
+            }
+        }
+    }
+
+    LaunchedEffect(url, sourceNotice) {
+        showSourceNotice = !sourceNotice.isNullOrBlank()
+        if (showSourceNotice) {
+            delay(4_500L)
+            showSourceNotice = false
+        }
     }
 
     val audioTracks = remember(player, trackRevision) {
@@ -1706,6 +1882,19 @@ private fun PlayerScreen(
             ) {
                 Text("CONTENT ADVISORY", color = NmGold, fontSize = 10.sp, fontWeight = FontWeight.Black)
                 Text(advisoryItems.joinToString("  ·  "), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        if (showSourceNotice && !sourceNotice.isNullOrBlank()) {
+            Box(
+                Modifier.align(Alignment.TopCenter)
+                    .padding(top = 28.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xEE15181E))
+                    .border(1.dp, NmGold.copy(alpha = .75f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 18.dp, vertical = 11.dp)
+            ) {
+                Text(sourceNotice, color = NmPlatinum, fontWeight = FontWeight.Bold)
             }
         }
 
