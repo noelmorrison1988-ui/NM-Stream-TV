@@ -121,7 +121,7 @@ class TmdbRepository(context: Context) {
                     "tv" -> "series"
                     else -> return@mapNotNull null
                 }
-                tmdbCandidateToAppMedia(candidate, type)
+                tmdbCandidateToAppMedia(candidate, type)?.copy(originAddonName = "TMDB Person Search")
             }
             ?.filter(MediaPolicy::allows)
             ?.distinctBy { "${it.meta.type}:${it.meta.tmdbId ?: it.meta.id}" }
@@ -335,12 +335,13 @@ class TmdbRepository(context: Context) {
                     { if (it.official == true) 0 else 1 },
                     {
                         when (it.quality) {
-                            720 -> 0
-                            1080 -> 1
-                            480 -> 2
-                            2160 -> 3
-                            null -> 5
-                            else -> 4
+                            1080 -> 0
+                            2160 -> 1
+                            720 -> 2
+                            480 -> 3
+                            360 -> 4
+                            null -> 6
+                            else -> 5
                         }
                     }
                 )
