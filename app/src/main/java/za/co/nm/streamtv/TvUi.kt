@@ -686,7 +686,7 @@ private fun HomeScreen(
     onContinueManual: (PlaybackProgress) -> Unit
 ) {
     if (state.loading) {
-        CenterText("Loading NM Stream TV TV Box Lite…")
+        CenterText("Loading NM Stream TV Box Lite…")
         return
     }
     val hero = state.movies.firstOrNull()
