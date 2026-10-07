@@ -517,7 +517,7 @@ private fun DeviceBlockedScreen() {
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            "Resume this TV from ${NmAccountRepository.DASHBOARD_URL}",
+            "Only the NM administrator can restore access to this device.",
             color = NmMuted,
             fontSize = 14.sp
         )
@@ -1152,7 +1152,6 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
     var tmdb by remember { mutableStateOf("") }
     var audioLang by remember(state.preferredAudioLanguage) { mutableStateOf(state.preferredAudioLanguage) }
     var subtitleLang by remember(state.preferredSubtitleLanguage) { mutableStateOf(state.preferredSubtitleLanguage) }
-    val context = LocalContext.current
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 24.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 55.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text("Settings", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black) }
         item { CardBox {
@@ -1169,7 +1168,6 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
                 "Pair this device once, then manage synced add-ons, playback language and Real-Debrid settings from your phone.",
                 color = NmMuted
             )
-            Text("Phone dashboard: ${NmAccountRepository.DASHBOARD_URL}", color = NmMuted, fontSize = 12.sp)
             if (state.nmAccountLinked) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = vm::syncNmAccountNow) { Text("Sync now") }
@@ -1183,17 +1181,9 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
                 ) { Text(if (state.nmPairing) "Waiting for phone…" else "Link this device") }
 
                 state.nmPairCode?.let { code ->
-                    DeviceCode("NM Account", code, NmAccountRepository.DASHBOARD_URL)
+                    DeviceCode("NM Account", code)
                 }
             }
-            Button(onClick = {
-                runCatching {
-                    context.startActivity(
-                        Intent(Intent.ACTION_VIEW, Uri.parse(NmAccountRepository.DASHBOARD_URL))
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    )
-                }
-            }) { Text("Open phone control panel") }
         } }
         item { CardBox {
             Text("Playback & language", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
@@ -1236,10 +1226,14 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
 }
 
 @Composable
-private fun DeviceCode(service: String, code: String, url: String) {
+private fun DeviceCode(service: String, code: String, url: String? = null) {
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color(0xFF0C0D11)).padding(14.dp)) {
         Text("Connect " + service, color = Color.White, fontWeight = FontWeight.Bold)
-        Text("Visit " + url + " and enter:", color = NmMuted)
+        if (!url.isNullOrBlank()) {
+            Text("Visit " + url + " and enter:", color = NmMuted)
+        } else {
+            Text("Enter this code in the private NM administrator panel.", color = NmMuted)
+        }
         Text(code, color = NmRed, fontSize = 30.sp, fontWeight = FontWeight.Black)
     }
 }
