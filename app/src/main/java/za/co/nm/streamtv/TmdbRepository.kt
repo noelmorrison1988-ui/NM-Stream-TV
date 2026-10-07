@@ -7,6 +7,13 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.supervisorScope
 
+data class TmdbDiscoveryRows(
+    val newMovies: List<AppMedia> = emptyList(),
+    val trendingMovies: List<AppMedia> = emptyList(),
+    val newSeries: List<AppMedia> = emptyList(),
+    val trendingSeries: List<AppMedia> = emptyList()
+)
+
 class TmdbRepository(context: Context) {
     companion object {
         private const val TOKEN_KEY = "tmdb_read_access_token"
@@ -98,6 +105,44 @@ class TmdbRepository(context: Context) {
             .take(limit)
     }
 
+    suspend fun discoveryRows(limit: Int = 18): TmdbDiscoveryRows = supervisorScope {
+        val token = secureStore.get(TOKEN_KEY)?.trim().orEmpty()
+        if (token.isBlank()) return@supervisorScope TmdbDiscoveryRows()
+        val headers = mapOf("Authorization" to "Bearer $token")
+
+        val newMovies = async { fetchCollection("movie/now_playing", "movie", headers, limit) }
+        val trendingMovies = async { fetchCollection("trending/movie/week", "movie", headers, limit) }
+        val newSeries = async { fetchCollection("tv/on_the_air", "series", headers, limit) }
+        val trendingSeries = async { fetchCollection("trending/tv/week", "series", headers, limit) }
+
+        TmdbDiscoveryRows(
+            newMovies = newMovies.await(),
+            trendingMovies = trendingMovies.await(),
+            newSeries = newSeries.await(),
+            trendingSeries = trendingSeries.await()
+        )
+    }
+
+    private suspend fun fetchCollection(
+        path: String,
+        type: String,
+        headers: Map<String, String>,
+        limit: Int
+    ): List<AppMedia> {
+        val separator = if (path.contains("?")) "&" else "?"
+        val result = SimpleHttp.get("$API/$path${separator}language=en-US&page=1", headers)
+        if (result.code !in 200..299) return emptyList()
+        val root = JsonParser.parseString(result.body).asJsonObject
+        return root.getAsJsonArray("results")
+            ?.mapNotNull { element ->
+                val candidate = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+                tmdbCandidateToAppMedia(candidate, type)
+            }
+            ?.filter(MediaPolicy::allows)
+            ?.distinctBy { "${it.meta.type}:${it.meta.tmdbId ?: it.meta.id}" }
+            ?.take(limit)
+            .orEmpty()
+    }
     private suspend fun recommendationsForSeed(
         item: AppMedia,
         headers: Map<String, String>
