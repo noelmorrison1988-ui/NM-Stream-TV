@@ -119,6 +119,12 @@ data class AddonSubtitle(
     val lang: String = "und"
 )
 
+enum class SearchCategory {
+    MOVIE,
+    SERIES,
+    PERSON
+}
+
 data class AppMedia(
     val meta: MetaItem,
     val originManifestUrl: String? = null,
