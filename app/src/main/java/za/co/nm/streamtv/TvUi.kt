@@ -686,7 +686,7 @@ private fun HomeScreen(
     onContinueManual: (PlaybackProgress) -> Unit
 ) {
     if (state.loading) {
-        CenterText("Loading NM Stream TV Mobile Lite…")
+        CenterText("Loading NM Stream TV TV Box Lite…")
         return
     }
     val hero = state.movies.firstOrNull()
@@ -1148,7 +1148,7 @@ private fun MyListScreen(media: List<AppMedia>, onOpen: (AppMedia) -> Unit) {
     ) {
         item {
             Text("My List", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black)
-            Text("Saved only on this Mobile Lite installation. Nothing in My List is synced to other devices.", color = NmMuted)
+            Text("Saved only on this TV Box Lite installation. Nothing in My List is synced to other devices.", color = NmMuted)
         }
         if (media.isEmpty()) {
             item {
@@ -1291,8 +1291,8 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Text("Playback & language", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text("These preferences sync to every linked NM Stream TV device.", color = NmMuted)
 
-            Text("Mobile Lite source policy", color = Color.White, fontWeight = FontWeight.Bold)
-            Text("Pengu is the default provider. Streams above 1080p are excluded in Mobile Lite.", color = NmMuted, fontSize = 12.sp)
+            Text("TV Box Lite source policy", color = Color.White, fontWeight = FontWeight.Bold)
+            Text("Pengu is the default provider. Streams above 1080p are excluded in TV Box Lite.", color = NmMuted, fontSize = 12.sp)
 
             Text("Preferred audio language", color = Color.White, fontWeight = FontWeight.Bold)
             Box(Modifier.fillMaxWidth()) { InputBox(audioLang, "en") { audioLang = it } }
@@ -1309,7 +1309,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Text("TMDB metadata, actor search & discovery", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text("Status: " + state.tmdbStatus, color = if (state.tmdbConfigured) NmGreen else NmMuted)
             Text(
-                "TMDB is built into Mobile Lite and works automatically for artwork, actor search, New Movies, Trending Movies, New Series and Trending Series.",
+                "TMDB is built into TV Box Lite and works automatically for artwork, actor search, New Movies, Trending Movies, New Series and Trending Series.",
                 color = NmMuted
             )
         } }
@@ -1319,7 +1319,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV Mobile Lite v0.15.1-mobile-lite.8 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV Box Lite v1.0.0-tvbox.1 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
@@ -1575,7 +1575,7 @@ private fun SourcesScreen(
         item {
             Text(title, color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Black)
             Text("$subtitleCount subtitle tracks found", color = NmMuted)
-            Text("Mobile Lite default: Pengu · maximum 1080p", color = NmGreen, fontSize = 13.sp)
+            Text("TV Box Lite default: Pengu · maximum 1080p", color = NmGreen, fontSize = 13.sp)
         }
 
         if (!loading && recommended != null) {
