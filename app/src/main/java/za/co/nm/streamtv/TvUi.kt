@@ -937,9 +937,15 @@ private fun formatGuideTime(timeMs: Long): String =
     SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(timeMs))
 
 @Composable
-private fun SearchScreen(state: MainUiState, onSearch: (String) -> Unit, onOpen: (AppMedia) -> Unit) {
+private fun SearchScreen(
+    state: MainUiState,
+    onSearch: (String, SearchCategory) -> Unit,
+    onOpen: (AppMedia) -> Unit
+) {
     var query by remember { mutableStateOf("") }
     var submittedQuery by remember { mutableStateOf("") }
+    var category by remember { mutableStateOf(SearchCategory.MOVIE) }
+    var submittedCategory by remember { mutableStateOf(SearchCategory.MOVIE) }
     var editing by remember { mutableStateOf(false) }
     val searchFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -957,9 +963,24 @@ private fun SearchScreen(state: MainUiState, onSearch: (String) -> Unit, onOpen:
         if (submitted.isBlank()) return
         query = submitted
         submittedQuery = submitted
+        submittedCategory = category
         editing = false
         keyboard?.hide()
-        onSearch(submitted)
+        onSearch(submitted, category)
+    }
+
+    fun selectCategory(next: SearchCategory) {
+        category = next
+        if (submittedQuery.isNotBlank()) {
+            submittedCategory = next
+            onSearch(submittedQuery, next)
+        }
+    }
+
+    val resultLabel = when (submittedCategory) {
+        SearchCategory.MOVIE -> "Movie results"
+        SearchCategory.SERIES -> "TV Series results"
+        SearchCategory.PERSON -> "Titles featuring this actor/person"
     }
 
     LazyColumn(
@@ -980,7 +1001,7 @@ private fun SearchScreen(state: MainUiState, onSearch: (String) -> Unit, onOpen:
                         .padding(horizontal = 14.dp, vertical = 14.dp)
                 ) {
                     Text(
-                        if (query.isBlank()) "Tap here to search titles or actors" else query,
+                        if (query.isBlank()) "Tap here to search" else query,
                         color = if (query.isBlank()) NmMuted.copy(alpha = .7f) else Color.White,
                         fontSize = 16.sp
                     )
@@ -994,7 +1015,7 @@ private fun SearchScreen(state: MainUiState, onSearch: (String) -> Unit, onOpen:
                             .border(2.dp, Color.White, RoundedCornerShape(8.dp))
                             .padding(horizontal = 14.dp, vertical = 12.dp)
                     ) {
-                        if (query.isBlank()) Text("Search movies, series or actors", color = NmMuted.copy(alpha = .7f))
+                        if (query.isBlank()) Text("Search by title or person name", color = NmMuted.copy(alpha = .7f))
                         BasicTextField(
                             value = query,
                             onValueChange = { query = it },
@@ -1008,6 +1029,19 @@ private fun SearchScreen(state: MainUiState, onSearch: (String) -> Unit, onOpen:
                         onClick = { submit(query) },
                         enabled = query.isNotBlank() && !state.searchLoading
                     ) { Text(if (state.searchLoading) "Searching…" else "Search") }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(
+                    SearchCategory.MOVIE to "Movie",
+                    SearchCategory.SERIES to "TV Series",
+                    SearchCategory.PERSON to "Actor / Person"
+                ).forEach { (value, label) ->
+                    Button(onClick = { selectCategory(value) }) {
+                        Text(if (category == value) "✓ $label" else label)
+                    }
                 }
             }
         }
@@ -1026,15 +1060,26 @@ private fun SearchScreen(state: MainUiState, onSearch: (String) -> Unit, onOpen:
             }
         }
 
-        if (state.searchLoading) item { Text("Searching…", color = NmMuted) }
-        else if (submittedQuery.isNotBlank()) item {
-            if (state.searchResults.isEmpty()) {
-                Text("No results found for “$submittedQuery”.", color = NmMuted)
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    state.searchResults.chunked(6).forEach { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(15.dp)) {
-                            row.forEach { PosterCard(it, onOpen) }
+        if (state.searchLoading) {
+            item { Text("Searching…", color = NmMuted) }
+        } else if (submittedQuery.isNotBlank()) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(resultLabel, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    if (submittedCategory == SearchCategory.PERSON) {
+                        Text("Showing movies and series credited to the closest TMDB person match.", color = NmMuted, fontSize = 12.sp)
+                    }
+                }
+            }
+            item {
+                if (state.searchResults.isEmpty()) {
+                    Text("No results found for “$submittedQuery”.", color = NmMuted)
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        state.searchResults.chunked(6).forEach { row ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(15.dp)) {
+                                row.forEach { PosterCard(it, onOpen) }
+                            }
                         }
                     }
                 }
