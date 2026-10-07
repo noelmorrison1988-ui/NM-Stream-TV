@@ -586,34 +586,61 @@ private fun HomeScreen(
     state: MainUiState,
     onOpen: (AppMedia) -> Unit,
     onContinue: (PlaybackProgress) -> Unit,
-    onContinueManual: (PlaybackProgress) -> Unit
+    onContinueManual: (PlaybackProgress) -> Unit,
+    onExpand: (String, String) -> Unit
 ) {
     if (state.loading) {
-        CenterText("Loading NM Stream TV Mobile Lite…")
+        CenterText("Loading NM Stream TV TV Box Lite…")
         return
     }
-    val hero = state.movies.firstOrNull()
-        ?: state.series.firstOrNull()
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+    val hero = state.movies.firstOrNull() ?: state.series.firstOrNull()
+    val historyMedia = state.watchHistory.map { it.media }.distinctBy { it.meta.id }
+
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 48.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp)
+    ) {
         item { if (hero != null) Hero(hero, onOpen) else EmptyHero(state.addons.isEmpty()) }
 
-        item { ContinueRow(state.continueWatching, onContinue, onContinueManual) }
-
-        if (state.trendingMovies.isNotEmpty()) item { MediaRow("Trending Movies", state.trendingMovies, onOpen) }
-        if (state.newMovies.isNotEmpty()) item { MediaRow("New Movies", state.newMovies, onOpen) }
-        if (state.trendingSeries.isNotEmpty()) item { MediaRow("Trending Series", state.trendingSeries, onOpen) }
-        if (state.newSeries.isNotEmpty()) item { MediaRow("New Series", state.newSeries, onOpen) }
-        val historyMedia = state.watchHistory.map { it.media }.distinctBy { it.meta.id }
-        if (historyMedia.isNotEmpty()) {
-            item { MediaRow("Watch History", historyMedia, onOpen) }
+        item {
+            ContinueRow(
+                media = state.continueWatching,
+                onOpen = onContinue,
+                onLongOpen = onContinueManual,
+                onExpand = { onExpand("Continue Watching", "continue_watching") }
+            )
         }
 
-        if (state.movies.isNotEmpty()) item { MediaRow("Movies", state.movies, onOpen) }
-        if (state.series.isNotEmpty()) item { MediaRow("Series", state.series, onOpen) }
-        if (state.debridItems.isNotEmpty()) item { MediaRow("My Real-Debrid Library", state.debridItems, onOpen) }
+        if (state.trendingMovies.isNotEmpty()) item {
+            MediaRow("Trending Movies", state.trendingMovies, onOpen) { onExpand("Trending Movies", "trending_movies") }
+        }
+        if (state.newMovies.isNotEmpty()) item {
+            MediaRow("New Movies", state.newMovies, onOpen) { onExpand("New Movies", "new_movies") }
+        }
+        if (state.trendingSeries.isNotEmpty()) item {
+            MediaRow("Trending Series", state.trendingSeries, onOpen) { onExpand("Trending Series", "trending_series") }
+        }
+        if (state.newSeries.isNotEmpty()) item {
+            MediaRow("New Series", state.newSeries, onOpen) { onExpand("New Series", "new_series") }
+        }
+        if (state.nowAiringSeries.isNotEmpty()) item {
+            MediaRow("Now Airing TV Shows", state.nowAiringSeries, onOpen) { onExpand("Now Airing TV Shows", "now_airing_series") }
+        }
+        if (historyMedia.isNotEmpty()) item {
+            MediaRow("Watch History", historyMedia, onOpen) { onExpand("Watch History", "watch_history") }
+        }
+        if (state.movies.isNotEmpty()) item {
+            MediaRow("Movies", state.movies, onOpen) { onExpand("Movies", "movies") }
+        }
+        if (state.series.isNotEmpty()) item {
+            MediaRow("Series", state.series, onOpen) { onExpand("Series", "series") }
+        }
+        if (state.debridItems.isNotEmpty()) item {
+            MediaRow("My Real-Debrid Library", state.debridItems, onOpen) { onExpand("My Real-Debrid Library", "real_debrid") }
+        }
     }
 }
-
 @Composable
 private fun Hero(item: AppMedia, onOpen: (AppMedia) -> Unit) {
     Box(Modifier.fillMaxWidth().height(400.dp)) {
@@ -686,15 +713,31 @@ private fun PersonalMediaRow(
 }
 
 @Composable
-private fun MediaRow(title: String, media: List<AppMedia>, onOpen: (AppMedia) -> Unit) {
+private fun MediaRow(
+    title: String,
+    media: List<AppMedia>,
+    onOpen: (AppMedia) -> Unit,
+    onExpand: (() -> Unit)? = null
+) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(title, color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 40.dp))
-        LazyRow(contentPadding = PaddingValues(horizontal = 40.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 40.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(title, color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            onExpand?.let { action ->
+                Button(onClick = action) { Text("EXPAND  ↗") }
+            }
+        }
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 40.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
             items(media) { PosterCard(it, onOpen) }
         }
     }
 }
-
 @Composable
 private fun PosterCard(item: AppMedia, onOpen: (AppMedia) -> Unit) {
     var focused by remember { mutableStateOf(false) }
@@ -712,10 +755,18 @@ private fun PosterCard(item: AppMedia, onOpen: (AppMedia) -> Unit) {
 private fun ContinueRow(
     media: List<PlaybackProgress>,
     onOpen: (PlaybackProgress) -> Unit,
-    onLongOpen: (PlaybackProgress) -> Unit
+    onLongOpen: (PlaybackProgress) -> Unit,
+    onExpand: (() -> Unit)? = null
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Continue Watching", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 40.dp))
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 40.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Continue Watching", color = Color.White, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            onExpand?.let { action -> Button(onClick = action) { Text("EXPAND  ↗") } }
+        }
         if (media.isEmpty()) {
             Box(
                 Modifier
