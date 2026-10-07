@@ -97,9 +97,11 @@ private sealed interface Screen {
         val videoId: String,
         val title: String,
         val requestKey: String,
-        val excludedUrl: String? = null,
+        val excludedUrls: Set<String> = emptySet(),
         val resumeMsOverride: Long? = null,
-        val resumeSubtitles: List<SubtitleOption>? = null
+        val resumeSubtitles: List<SubtitleOption>? = null,
+        val switchFromLabel: String? = null,
+        val switchReason: String? = null
     ) : Screen
     data class Player(
         val item: AppMedia,
@@ -108,7 +110,9 @@ private sealed interface Screen {
         val source: StreamOption,
         val returnToSources: Boolean = true,
         val resumeMsOverride: Long? = null,
-        val resumeSubtitles: List<SubtitleOption>? = null
+        val resumeSubtitles: List<SubtitleOption>? = null,
+        val excludedUrls: Set<String> = emptySet(),
+        val switchNotice: String? = null
     ) : Screen
     data class Trailer(val item: AppMedia, val title: String, val source: StreamOption) : Screen
     data class YouTubeTrailer(val item: AppMedia, val title: String, val youtubeId: String) : Screen
@@ -316,12 +320,13 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     )
                 }
                 is Screen.AutoPlay -> {
-                    AutoPlayScreen(current.title, switching = current.excludedUrl != null)
+                    AutoPlayScreen(current.title, switching = current.excludedUrls.isNotEmpty())
                     LaunchedEffect(
                         current.requestKey,
                         state.sourceRequestKey,
                         state.streamsLoading,
-                        state.streamOptions
+                        state.streamOptions,
+                        current.excludedUrls
                     ) {
                         if (
                             state.sourceRequestKey == current.requestKey &&
@@ -331,14 +336,19 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                                 val playable = option.playableUrl != null ||
                                     option.youtubeUrl != null ||
                                     !option.stream.externalUrl.isNullOrBlank()
-                                val differentUrl = current.excludedUrl == null ||
-                                    option.playableUrl == null ||
-                                    option.playableUrl != current.excludedUrl
-                                playable && differentUrl
+                                val ready = !option.isKnownUncached
+                                val notFailed = option.playableUrl == null ||
+                                    option.playableUrl !in current.excludedUrls
+                                playable && ready && notFailed
                             }
 
                             when {
                                 best?.playableUrl != null -> {
+                                    val notice = current.switchFromLabel?.let { from ->
+                                        "Source switched automatically · " +
+                                            (current.switchReason ?: "recovery") +
+                                            " · $from → ${best.addonName} · ${best.qualityLabel()}"
+                                    }
                                     screen = Screen.Player(
                                         current.item,
                                         current.videoId,
@@ -346,7 +356,9 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                                         best,
                                         returnToSources = false,
                                         resumeMsOverride = current.resumeMsOverride,
-                                        resumeSubtitles = current.resumeSubtitles
+                                        resumeSubtitles = current.resumeSubtitles,
+                                        excludedUrls = current.excludedUrls,
+                                        switchNotice = notice
                                     )
                                 }
                                 best?.youtubeUrl != null -> {
@@ -376,7 +388,13 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                 }
                 is Screen.Sources -> SourcesScreen(current.title, state.streamsLoading, state.streamOptions, state.subtitleOptions.size) { source ->
                     when {
-                        source.playableUrl != null -> screen = Screen.Player(current.item, current.videoId, current.title, source)
+                        source.playableUrl != null -> screen = Screen.Player(
+                            current.item,
+                            current.videoId,
+                            current.title,
+                            source,
+                            excludedUrls = emptySet()
+                        )
                         source.youtubeUrl != null -> runCatching {
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(source.youtubeUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                         }
@@ -398,6 +416,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     subtitles = emptyList(),
                     resumeMs = 0L,
                     resumePercent = null,
+                    sourceNotice = null,
                     preferredAudioLanguage = state.preferredAudioLanguage,
                     preferredSubtitleLanguage = state.preferredSubtitleLanguage,
                     onStarted = { _, _ -> },
@@ -415,7 +434,12 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         subtitles = activeSubtitles,
                         resumeMs = current.resumeMsOverride
                             ?: viewModel.resumePosition(current.item, current.videoId),
-                        resumePercent = viewModel.resumeCloudPercent(current.item, current.videoId),
+                        resumePercent = if (current.resumeMsOverride != null) {
+                            null
+                        } else {
+                            viewModel.resumeCloudPercent(current.item, current.videoId)
+                        },
+                        sourceNotice = current.switchNotice,
                         preferredAudioLanguage = state.preferredAudioLanguage,
                         preferredSubtitleLanguage = state.preferredSubtitleLanguage,
                         onStarted = { p, d ->
@@ -451,18 +475,26 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                                 d
                             )
                         },
-                        onSourceSwitch = { positionMs, _ ->
+                        onSourceSwitch = { positionMs, reason ->
                             viewModel.forgetLastPlaybackSession(current.item, current.videoId)
                             val requestKey = viewModel.sourceRequestKey(current.item, current.videoId)
+                            val failedUrl = current.source.playableUrl
+                            val excluded = if (failedUrl.isNullOrBlank()) {
+                                current.excludedUrls
+                            } else {
+                                current.excludedUrls + failedUrl
+                            }
                             viewModel.loadSources(current.item, current.videoId)
                             screen = Screen.AutoPlay(
                                 item = current.item,
                                 videoId = current.videoId,
                                 title = current.title,
                                 requestKey = requestKey,
-                                excludedUrl = current.source.playableUrl,
+                                excludedUrls = excluded,
                                 resumeMsOverride = positionMs,
-                                resumeSubtitles = activeSubtitles
+                                resumeSubtitles = activeSubtitles,
+                                switchFromLabel = "${current.source.addonName} · ${current.source.qualityLabel()}",
+                                switchReason = reason
                             )
                         }
                     )
@@ -1975,12 +2007,13 @@ private fun SourcesScreen(
     subtitleCount: Int,
     select: (StreamOption) -> Unit
 ) {
-    val recommended = sources.firstOrNull {
+    val visibleSources = sources.filterNot { it.isKnownUncached }
+    val recommended = visibleSources.firstOrNull {
         it.playableUrl != null || it.youtubeUrl != null || !it.stream.externalUrl.isNullOrBlank()
     }
-    val httpSources = sources.filter { it.playableUrl != null }
-    val p2pSources = sources.filter { it.isP2p }
-    val otherSources = sources.filter { it.playableUrl == null && !it.isP2p }
+    val httpSources = visibleSources.filter { it.playableUrl != null }
+    val p2pSources = visibleSources.filter { it.isP2p }
+    val otherSources = visibleSources.filter { it.playableUrl == null && !it.isP2p }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 46.dp),
@@ -1990,7 +2023,7 @@ private fun SourcesScreen(
         item {
             Text(title, color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Black)
             Text("$subtitleCount subtitle tracks found", color = NmMuted)
-            Text("TV Box Lite default: Pengu · maximum 1080p", color = NmGreen, fontSize = 13.sp)
+            Text("TV Box Lite: cached/ready first · Pengu preferred · maximum 1080p · auto failover", color = NmGreen, fontSize = 13.sp)
         }
 
         if (!loading && recommended != null) {
@@ -2003,8 +2036,8 @@ private fun SourcesScreen(
 
         if (loading) {
             item { Text("Checking installed sources…", color = NmMuted) }
-        } else if (sources.isEmpty()) {
-            item { Text("No streams at 1080p or below were returned.", color = NmMuted) }
+        } else if (visibleSources.isEmpty()) {
+            item { Text("No cached/ready streams at 1080p or below are available yet.", color = NmMuted) }
         } else {
             if (httpSources.isNotEmpty()) {
                 item { SourceSectionHeading("HTTP", "Direct HTTP and debrid-ready streams") }
@@ -2090,6 +2123,7 @@ private fun PlayerScreen(
     subtitles: List<SubtitleOption>,
     resumeMs: Long,
     resumePercent: Double?,
+    sourceNotice: String?,
     preferredAudioLanguage: String,
     preferredSubtitleLanguage: String,
     onStarted: (Long, Long) -> Unit,
@@ -2180,6 +2214,9 @@ private fun PlayerScreen(
     var freezeEventsMs by remember(player) { mutableStateOf<List<Long>>(emptyList()) }
     var sourceSwitchRequested by remember(player) { mutableStateOf(false) }
     var recoveryMessage by remember(player) { mutableStateOf<String?>(null) }
+    var showSourceNotice by remember(player, sourceNotice) {
+        mutableStateOf(!sourceNotice.isNullOrBlank())
+    }
     val advisoryItems = remember(item.meta.contentRating, item.meta.contentAdvisories) {
         buildList {
             item.meta.contentRating?.takeIf { it.isNotBlank() }?.let { add("Rated " + it) }
@@ -2225,6 +2262,14 @@ private fun PlayerScreen(
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
             .build()
         subtitlesEnabled = false
+    }
+
+    LaunchedEffect(player, sourceNotice) {
+        showSourceNotice = !sourceNotice.isNullOrBlank()
+        if (showSourceNotice) {
+            delay(4_500L)
+            showSourceNotice = false
+        }
     }
 
     val audioTracks = remember(player, trackRevision) {
@@ -2494,11 +2539,50 @@ private fun PlayerScreen(
     LaunchedEffect(player) {
         while (true) {
             delay(500)
-            if (!started || sourceSwitchRequested) continue
+            if (sourceSwitchRequested) continue
 
             val now = System.currentTimeMillis()
             val bufferStart = bufferingSinceMs
             val stalledForMs = if (bufferStart > 0L) now - bufferStart else 0L
+            val playerError = player.playerError
+
+            if (playerError != null) {
+                sourceSwitchRequested = true
+                val resumeAt = player.currentPosition.coerceAtLeast(0L)
+                val errorText = listOfNotNull(
+                    playerError.message,
+                    playerError.cause?.message
+                ).joinToString(" ")
+
+                val reason = if (
+                    errorText.contains("MEDIA_NOT_CACHED_YET", ignoreCase = true) ||
+                    errorText.contains("not cached", ignoreCase = true)
+                ) {
+                    "Media not cached yet"
+                } else {
+                    "Playback error"
+                }
+
+                recoveryMessage = if (reason == "Media not cached yet") {
+                    "Source is not cached · switching immediately…"
+                } else {
+                    "Stream error · switching source…"
+                }
+                onSourceSwitch(resumeAt, reason)
+                continue
+            }
+
+            if (!started) {
+                if (bufferStart > 0L && stalledForMs >= 25_000L) {
+                    sourceSwitchRequested = true
+                    recoveryMessage = "Source did not start · switching source…"
+                    onSourceSwitch(
+                        player.currentPosition.coerceAtLeast(0L),
+                        "Source did not start within 25 seconds"
+                    )
+                }
+                continue
+            }
 
             if (bufferStart > 0L && stalledForMs >= 3_000L && countedBufferStartMs != bufferStart) {
                 countedBufferStartMs = bufferStart
@@ -2515,18 +2599,11 @@ private fun PlayerScreen(
                 }
             }
 
-            if (player.playerError != null || stalledForMs >= 8_000L) {
+            if (stalledForMs >= 8_000L) {
                 sourceSwitchRequested = true
                 val resumeAt = player.currentPosition.coerceAtLeast(0L)
-                recoveryMessage = if (player.playerError != null) {
-                    "Stream error · switching source…"
-                } else {
-                    "Buffer stalled too long · switching source…"
-                }
-                onSourceSwitch(
-                    resumeAt,
-                    if (player.playerError != null) "Playback error" else "Buffering exceeded 8 seconds"
-                )
+                recoveryMessage = "Buffer stalled too long · switching source…"
+                onSourceSwitch(resumeAt, "Buffering exceeded 8 seconds")
             }
         }
     }
@@ -2639,7 +2716,9 @@ private fun PlayerScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        recoveryMessage?.let { message ->
+        val statusMessage = recoveryMessage
+            ?: sourceNotice?.takeIf { showSourceNotice }
+        statusMessage?.let { message ->
             Box(
                 Modifier.align(Alignment.TopCenter)
                     .padding(top = 22.dp)

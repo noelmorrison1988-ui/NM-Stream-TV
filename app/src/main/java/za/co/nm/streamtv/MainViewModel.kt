@@ -438,13 +438,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             val prefs = nmAccount.playbackPreferences()
-            val sortedStreams = streamsDeferred.await()
+            val loadedStreams = streamsDeferred.await()
+
+            val rdHashesToVerify = loadedStreams
+                .filter { option ->
+                    option.isRealDebrid && !option.stream.infoHash.isNullOrBlank()
+                }
+                .mapNotNull { it.stream.infoHash?.lowercase() }
+                .distinct()
+
+            val instantlyAvailableRdHashes = if (rdHashesToVerify.isNotEmpty()) {
+                runCatching {
+                    realDebrid.instantlyAvailableHashes(rdHashesToVerify)
+                }.getOrNull()
+            } else {
+                null
+            }
+
+            val sortedStreams = loadedStreams
+                .filterNot { it.isKnownUncached }
+                .filter { option ->
+                    val hash = option.stream.infoHash?.lowercase()
+                    hash == null ||
+                        !option.isRealDebrid ||
+                        instantlyAvailableRdHashes == null ||
+                        hash in instantlyAvailableRdHashes
+                }
                 .filter { option ->
                     val quality = option.detectedQuality
                     quality == null || quality <= 1080
                 }
                 .sortedWith(
                     compareBy<StreamOption> { option ->
+                        val hash = option.stream.infoHash?.lowercase()
+                        when {
+                            hash != null && instantlyAvailableRdHashes != null &&
+                                hash in instantlyAvailableRdHashes -> 0
+                            option.isExplicitlyCached -> 1
+                            option.isDebrid -> 2
+                            else -> 3
+                        }
+                    }.thenBy { option ->
                         if (option.addonName.contains("pengu", ignoreCase = true)) 0 else 1
                     }.thenBy { option ->
                         when {

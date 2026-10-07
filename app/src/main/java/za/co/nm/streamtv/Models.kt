@@ -186,8 +186,64 @@ data class StreamOption(
     val isDebrid: Boolean
         get() = listOf(
             "debrid", "real-debrid", "real debrid", "alldebrid", "all-debrid",
-            "premiumize", "torbox", "debrid-link", "stremthru"
+            "premiumize", "torbox", "debrid-link", "stremthru", "rd+"
         ).any { searchableText.contains(it) }
+
+    val cacheSignalText: String
+        get() = listOfNotNull(
+            addonName,
+            stream.name,
+            stream.title,
+            stream.behaviorHints?.filename,
+            stream.url,
+            stream.externalUrl
+        ).joinToString(" ").lowercase()
+
+    val isKnownUncached: Boolean
+        get() {
+            val text = cacheSignalText
+            val negativeMarkers = listOf(
+                "media_not_cached_yet",
+                "media not cached yet",
+                "not cached",
+                "not_cached",
+                "not-cached",
+                "uncached",
+                "cache miss",
+                "cache-miss",
+                "not ready",
+                "not-ready",
+                "needs caching",
+                "needs download",
+                "download to debrid",
+                "queued for download"
+            )
+            return negativeMarkers.any(text::contains) ||
+                (isDebrid && stream.behaviorHints?.notWebReady == true)
+        }
+
+    val isExplicitlyCached: Boolean
+        get() {
+            if (isKnownUncached) return false
+            val text = cacheSignalText
+            return listOf(
+                "cached",
+                "cache hit",
+                "instant",
+                "rd+",
+                "real-debrid+",
+                "⚡"
+            ).any(text::contains)
+        }
+
+    val isRealDebrid: Boolean
+        get() {
+            val text = cacheSignalText
+            return text.contains("real-debrid") ||
+                text.contains("real debrid") ||
+                text.contains("realdebrid") ||
+                Regex("""(^|[^a-z0-9])rd\+?([^a-z0-9]|$)""").containsMatchIn(text)
+        }
 
     val isP2p: Boolean
         get() = !stream.infoHash.isNullOrBlank() && playableUrl == null
