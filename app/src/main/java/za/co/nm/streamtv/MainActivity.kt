@@ -69,6 +69,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (TvRemoteKeyRouter.dispatch(event)) return true
+        return super.dispatchKeyEvent(event)
+    }
     override fun onResume() {
         super.onResume()
         applyImmersiveNavigation()
