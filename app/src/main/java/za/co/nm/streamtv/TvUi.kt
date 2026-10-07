@@ -642,6 +642,10 @@ private fun HomeScreen(
 
         item { ContinueRow(state.continueWatching, onContinue, onContinueManual) }
 
+        if (state.trendingMovies.isNotEmpty()) item { MediaRow("Trending Movies", state.trendingMovies, onOpen) }
+        if (state.newMovies.isNotEmpty()) item { MediaRow("New Movies", state.newMovies, onOpen) }
+        if (state.trendingSeries.isNotEmpty()) item { MediaRow("Trending Series", state.trendingSeries, onOpen) }
+        if (state.newSeries.isNotEmpty()) item { MediaRow("New Series", state.newSeries, onOpen) }
         val historyMedia = state.watchHistory.map { it.media }.distinctBy { it.meta.id }
         if (historyMedia.isNotEmpty()) {
             item { MediaRow("Watch History", historyMedia, onOpen) }
@@ -974,7 +978,7 @@ private fun SearchScreen(state: MainUiState, onSearch: (String) -> Unit, onOpen:
                         .padding(horizontal = 14.dp, vertical = 14.dp)
                 ) {
                     Text(
-                        if (query.isBlank()) "Tap here to search movies and series" else query,
+                        if (query.isBlank()) "Tap here to search titles or actors" else query,
                         color = if (query.isBlank()) NmMuted.copy(alpha = .7f) else Color.White,
                         fontSize = 16.sp
                     )
@@ -988,7 +992,7 @@ private fun SearchScreen(state: MainUiState, onSearch: (String) -> Unit, onOpen:
                             .border(2.dp, Color.White, RoundedCornerShape(8.dp))
                             .padding(horizontal = 14.dp, vertical = 12.dp)
                     ) {
-                        if (query.isBlank()) Text("Search movies and series", color = NmMuted.copy(alpha = .7f))
+                        if (query.isBlank()) Text("Search movies, series or actors", color = NmMuted.copy(alpha = .7f))
                         BasicTextField(
                             value = query,
                             onValueChange = { query = it },
@@ -1204,11 +1208,11 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             }) { Text("Save & sync language preferences") }
         } }
         item { CardBox {
-            Text("TMDB metadata", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text("TMDB metadata, actor search & discovery", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text("Status: " + state.tmdbStatus, color = if (state.tmdbConfigured) NmGreen else NmMuted)
-            Text("TMDB is used for title matching and artwork only in Mobile Lite. Watch history and resume positions stay on this device.", color = NmMuted)
+            Text("Use the long API Read Access Token — not the short API Key. It powers artwork, actor search, New and Trending rows. Watch history and resume positions stay on this device.", color = NmMuted)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.fillMaxWidth()) { InputBox(tmdb, "TMDB API Read Access Token") { tmdb = it } }
+                Box(Modifier.fillMaxWidth()) { InputBox(tmdb, "Paste long TMDB API Read Access Token") { tmdb = it } }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = { vm.saveTmdbToken(tmdb); tmdb = "" }) { Text("Save") }
                     if (state.tmdbConfigured) Button(onClick = { vm.saveTmdbToken("") }) { Text("Remove") }
@@ -1386,7 +1390,6 @@ private fun AutoPlayScreen(title: String) {
         ) {
             Text("Finding the best source…", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
             Text(title, color = NmMuted, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("720p preferred · Debrid/HTTP before P2P", color = NmGreen, fontSize = 14.sp)
         }
     }
 }
