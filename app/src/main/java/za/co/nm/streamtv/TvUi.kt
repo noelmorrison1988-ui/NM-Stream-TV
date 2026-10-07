@@ -2023,7 +2023,7 @@ private fun SourcesScreen(
         item {
             Text(title, color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Black)
             Text("$subtitleCount subtitle tracks found", color = NmMuted)
-            Text("TV Box Lite: cached/ready first · Pengu preferred · maximum 1080p · auto failover", color = NmGreen, fontSize = 13.sp)
+            Text("TV Box Lite: 720p preferred · 1080p fallback · cached/ready only · auto failover", color = NmGreen, fontSize = 13.sp)
         }
 
         if (!loading && recommended != null) {
@@ -2085,9 +2085,6 @@ private fun SourceResultRow(source: StreamOption, isDefault: Boolean, select: (S
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(source.displayTitle(), color = Color.White, fontWeight = FontWeight.Bold)
                 if (isDefault) Text("DEFAULT", color = NmGreen, fontSize = 11.sp, fontWeight = FontWeight.Black)
-                if (source.addonName.contains("pengu", ignoreCase = true)) {
-                    Text("PENGU", color = NmGold, fontSize = 11.sp, fontWeight = FontWeight.Black)
-                }
             }
             Text(source.addonName, color = NmRed)
             Text(source.statusText(), color = NmMuted)
