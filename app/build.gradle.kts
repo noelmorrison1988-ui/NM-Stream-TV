@@ -12,8 +12,8 @@ android {
         applicationId = "za.co.nm.streamtv.lite"
         minSdk = 23
         targetSdk = 36
-        versionCode = 27
-        versionName = "0.15.1-mobile-lite.5"
+        versionCode = 28
+        versionName = "0.15.1-mobile-lite.6"
     }
 
     buildFeatures {
