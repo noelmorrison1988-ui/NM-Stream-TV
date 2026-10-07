@@ -56,6 +56,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -1848,16 +1849,18 @@ private fun PlayerScreen(
         val dataSource = DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(headers)
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(20_000)
-            .setReadTimeoutMs(45_000)
+            .setConnectTimeoutMs(30_000)
+            .setReadTimeoutMs(90_000)
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                30_000,
-                120_000,
-                2_500,
-                5_000
+                60_000,
+                150_000,
+                3_500,
+                8_000
             )
+            .setBackBuffer(30_000, true)
+            .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
         ExoPlayer.Builder(context)
@@ -1915,6 +1918,9 @@ private fun PlayerScreen(
     var subtitleMenuIndex by remember(player) { mutableIntStateOf(0) }
     var scrubMode by remember(player) { mutableStateOf(false) }
     var scrubPositionMs by remember(player) { mutableLongStateOf(0L) }
+    var bufferingSinceMs by remember(player) { mutableLongStateOf(0L) }
+    var autoRecoveryCount by remember(player) { mutableIntStateOf(0) }
+    var recoveryMessage by remember(player) { mutableStateOf<String?>(null) }
     val advisoryItems = remember(item.meta.contentRating, item.meta.contentAdvisories) {
         buildList {
             item.meta.contentRating?.takeIf { it.isNotBlank() }?.let { add("Rated " + it) }
@@ -1932,6 +1938,20 @@ private fun PlayerScreen(
             override fun onIsPlayingChanged(value: Boolean) {
                 isPlaying = value
                 controlsRevision = System.currentTimeMillis()
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_BUFFERING) {
+                    if (bufferingSinceMs == 0L) bufferingSinceMs = System.currentTimeMillis()
+                } else if (playbackState == Player.STATE_READY) {
+                    bufferingSinceMs = 0L
+                    if (player.isPlaying) autoRecoveryCount = 0
+                    recoveryMessage = null
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                recoveryMessage = "Stream interrupted · reconnecting…"
             }
         }
         player.addListener(listener)
