@@ -23,14 +23,25 @@ class TmdbRepository(context: Context) {
 
     private val secureStore = SecretStore(context)
 
-    fun configured(): Boolean = !secureStore.get(TOKEN_KEY).isNullOrBlank()
+    private fun activeToken(): String =
+        TmdbBuildSecret.TOKEN.trim()
+            .ifBlank { activeToken() }
+
+    fun configured(): Boolean = activeToken().isNotBlank()
+
     fun saveToken(token: String) {
+        if (TmdbBuildSecret.TOKEN.isNotBlank()) return
         if (token.isBlank()) secureStore.remove(TOKEN_KEY) else secureStore.put(TOKEN_KEY, token.trim())
     }
-    fun maskedToken(): String = secureStore.get(TOKEN_KEY)?.let { if (it.length > 12) "••••${it.takeLast(6)}" else "Saved" } ?: "Not configured"
+
+    fun maskedToken(): String = when {
+        TmdbBuildSecret.TOKEN.isNotBlank() -> "Built in · Connected"
+        activeToken().isNotBlank() -> "Local token fallback"
+        else -> "Not configured"
+    }
 
     suspend fun enrich(item: AppMedia): AppMedia {
-        val token = secureStore.get(TOKEN_KEY)?.trim().orEmpty()
+        val token = activeToken()
         if (token.isBlank() || item.meta.type == "rd") return item
         val headers = mapOf("Authorization" to "Bearer $token")
         val candidate = when {
@@ -81,7 +92,7 @@ class TmdbRepository(context: Context) {
     }
 
     suspend fun searchPersonCredits(query: String, limit: Int = 40): List<AppMedia> {
-        val token = secureStore.get(TOKEN_KEY)?.trim().orEmpty()
+        val token = activeToken()
         if (token.isBlank() || query.isBlank()) return emptyList()
         val headers = mapOf("Authorization" to "Bearer $token")
 
@@ -123,7 +134,7 @@ class TmdbRepository(context: Context) {
             .orEmpty()
     }
     suspend fun recommendationsFor(history: List<AppMedia>, limit: Int = 24): List<AppMedia> = supervisorScope {
-        val token = secureStore.get(TOKEN_KEY)?.trim().orEmpty()
+        val token = activeToken()
         if (token.isBlank()) return@supervisorScope emptyList()
         val headers = mapOf("Authorization" to "Bearer $token")
 
@@ -148,7 +159,7 @@ class TmdbRepository(context: Context) {
     }
 
     suspend fun discoveryRows(limit: Int = 18): TmdbDiscoveryRows = supervisorScope {
-        val token = secureStore.get(TOKEN_KEY)?.trim().orEmpty()
+        val token = activeToken()
         if (token.isBlank()) return@supervisorScope TmdbDiscoveryRows()
         val headers = mapOf("Authorization" to "Bearer $token")
 
