@@ -11,7 +11,8 @@ data class TmdbDiscoveryRows(
     val newMovies: List<AppMedia> = emptyList(),
     val trendingMovies: List<AppMedia> = emptyList(),
     val newSeries: List<AppMedia> = emptyList(),
-    val trendingSeries: List<AppMedia> = emptyList()
+    val trendingSeries: List<AppMedia> = emptyList(),
+    val nowAiringSeries: List<AppMedia> = emptyList()
 )
 
 class TmdbRepository(context: Context) {
@@ -167,23 +168,46 @@ class TmdbRepository(context: Context) {
         val trendingMovies = async { fetchCollection("trending/movie/week", "movie", headers, limit) }
         val newSeries = async { fetchCollection("tv/on_the_air", "series", headers, limit) }
         val trendingSeries = async { fetchCollection("trending/tv/week", "series", headers, limit) }
+        val nowAiringSeries = async { fetchCollection("tv/airing_today", "series", headers, limit) }
 
         TmdbDiscoveryRows(
             newMovies = newMovies.await(),
             trendingMovies = trendingMovies.await(),
             newSeries = newSeries.await(),
-            trendingSeries = trendingSeries.await()
+            trendingSeries = trendingSeries.await(),
+            nowAiringSeries = nowAiringSeries.await()
         )
     }
 
+    suspend fun browseCollection(
+        key: String,
+        page: Int,
+        limit: Int = 20
+    ): List<AppMedia> {
+        val token = activeToken()
+        if (token.isBlank()) return emptyList()
+        val headers = mapOf("Authorization" to "Bearer $token")
+        val safePage = page.coerceAtLeast(1)
+        val pair = when (key) {
+            "trending_movies" -> "trending/movie/week" to "movie"
+            "new_movies" -> "movie/now_playing" to "movie"
+            "trending_series" -> "trending/tv/week" to "series"
+            "new_series" -> "tv/on_the_air" to "series"
+            "now_airing_series" -> "tv/airing_today" to "series"
+            else -> return emptyList()
+        }
+        return fetchCollection(pair.first, pair.second, headers, limit, safePage)
+    }
     private suspend fun fetchCollection(
         path: String,
         type: String,
         headers: Map<String, String>,
-        limit: Int
+        limit: Int,
+        page: Int = 1
     ): List<AppMedia> {
         val separator = if (path.contains("?")) "&" else "?"
-        val result = SimpleHttp.get("$API/$path${separator}language=en-US&page=1", headers)
+        val safePage = page.coerceAtLeast(1)
+        val result = SimpleHttp.get("$API/$path${separator}language=en-US&page=$safePage", headers)
         if (result.code !in 200..299) return emptyList()
         val root = JsonParser.parseString(result.body).asJsonObject
         return root.getAsJsonArray("results")
