@@ -230,7 +230,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun search(query: String) {
+    fun search(query: String, category: SearchCategory = SearchCategory.MOVIE) {
         viewModelScope.launch {
             val submittedQuery = query.trim()
             if (submittedQuery.isBlank()) {
@@ -242,28 +242,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 recentSearches = searchHistoryStore.record(submittedQuery),
                 message = null
             )
-            val addonDeferred = async {
-                runCatching { addons.search(_uiState.value.addons, submittedQuery) }
-                    .getOrDefault(emptyList())
-            }
-            val actorDeferred = async {
-                if (tmdb.configured()) {
-                    runCatching { tmdb.searchPersonCredits(submittedQuery, 40) }
-                        .getOrDefault(emptyList())
-                } else emptyList()
+
+            val results = when (category) {
+                SearchCategory.PERSON -> {
+                    if (tmdb.configured()) {
+                        runCatching { tmdb.searchPersonCredits(submittedQuery, 60) }
+                            .getOrDefault(emptyList())
+                            .filter(MediaPolicy::allows)
+                            .distinctBy { mediaSearchKey(it) }
+                            .take(80)
+                    } else emptyList()
+                }
+
+                SearchCategory.MOVIE,
+                SearchCategory.SERIES -> {
+                    val wantedType = if (category == SearchCategory.MOVIE) "movie" else "series"
+                    val raw = runCatching {
+                        addons.search(_uiState.value.addons, submittedQuery)
+                    }.getOrDefault(emptyList())
+                        .filter { it.meta.type == wantedType }
+
+                    MediaPolicy.filter(
+                        if (tmdb.configured()) {
+                            runCatching { tmdb.enrichBatch(raw, 50) }.getOrDefault(raw)
+                        } else raw
+                    )
+                        .distinctBy { mediaSearchKey(it) }
+                        .take(80)
+                }
             }
 
-            val raw = addonDeferred.await()
-            val titleResults = MediaPolicy.filter(
-                if (tmdb.configured()) runCatching { tmdb.enrichBatch(raw, 40) }.getOrDefault(raw) else raw
+            _uiState.value = _uiState.value.copy(
+                searchLoading = false,
+                searchResults = results
             )
-            val actorResults = actorDeferred.await()
-            val results = (titleResults + actorResults)
-                .filter(MediaPolicy::allows)
-                .distinctBy { mediaSearchKey(it) }
-                .take(80)
-
-            _uiState.value = _uiState.value.copy(searchLoading = false, searchResults = results)
         }
     }
 
@@ -419,14 +431,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .sortedWith(
                 compareBy<StreamOption> {
                     when (it.detectedQuality) {
-                        720 -> 0
-                        1080 -> 1
-                        480 -> 2
-                        2160 -> 3
-                        null -> 5
-                        else -> 4
+                        1080 -> 0
+                        2160 -> 1
+                        720 -> 2
+                        480 -> 3
+                        360 -> 4
+                        null -> 6
+                        else -> 5
                     }
-                }.thenBy { it.preferenceScore() }
+                }.thenBy { it.preferenceScore(preferredQuality = 1080) }
             )
             .firstOrNull()
 
