@@ -48,6 +48,25 @@ jobs:
             exit 1
           fi
 
+      - name: Inject TMDB credential
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          token = os.environ["TMDB_READ_ACCESS_TOKEN"]
+          target = Path("app/src/main/java/za/co/nm/streamtv/TmdbBuildSecret.kt")
+          target.write_text(
+              "package za.co.nm.streamtv\n\n"
+              "internal object TmdbBuildSecret {\n"
+              "    const val TOKEN = " + json.dumps(token) + "\n"
+              "}\n",
+              encoding="utf-8",
+          )
+          PY
+
       - name: Build debug APK
         run: gradle --no-daemon --stacktrace assembleDebug
 
