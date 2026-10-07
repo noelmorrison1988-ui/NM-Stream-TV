@@ -9,6 +9,7 @@ class PlaybackStore(context: Context) {
     private val gson = Gson()
     private val continueKey = "continue_watching"
     private val historyKey = "watch_history"
+    private val lastSessionKey = "last_playback_session"
 
     fun load(): List<PlaybackProgress> =
         readList(continueKey)
@@ -45,6 +46,40 @@ class PlaybackStore(context: Context) {
     fun resumePosition(media: AppMedia, videoId: String): Long =
         load().firstOrNull { it.media.meta.id == media.meta.id && it.videoId == videoId }?.positionMs ?: 0L
 
+    fun saveLastSession(session: LastPlaybackSession) {
+        prefs.edit().putString(lastSessionKey, gson.toJson(session)).apply()
+    }
+
+    fun lastSession(media: AppMedia, videoId: String): LastPlaybackSession? {
+        val json = prefs.getString(lastSessionKey, null) ?: return null
+        val session = runCatching {
+            gson.fromJson(json, LastPlaybackSession::class.java)
+        }.getOrNull() ?: return null
+
+        val sameMedia = session.media.meta.id == media.meta.id ||
+            (session.media.meta.type == media.meta.type &&
+                session.media.meta.name.equals(media.meta.name, ignoreCase = true))
+
+        return session.takeIf {
+            sameMedia &&
+                it.videoId == videoId &&
+                it.positionMs > 0L &&
+                (it.durationMs <= 0L || it.percent < 95) &&
+                it.source.playableUrl != null
+        }
+    }
+
+    fun clearLastSession(media: AppMedia, videoId: String) {
+        val current = prefs.getString(lastSessionKey, null)
+            ?.let { json -> runCatching { gson.fromJson(json, LastPlaybackSession::class.java) }.getOrNull() }
+            ?: return
+        val sameMedia = current.media.meta.id == media.meta.id ||
+            (current.media.meta.type == media.meta.type &&
+                current.media.meta.name.equals(media.meta.name, ignoreCase = true))
+        if (sameMedia && current.videoId == videoId) {
+            prefs.edit().remove(lastSessionKey).apply()
+        }
+    }
     private fun recordHistory(progress: PlaybackProgress) {
         val all = readList(historyKey).toMutableList()
         all.removeAll { sameKey(it, progress) }
