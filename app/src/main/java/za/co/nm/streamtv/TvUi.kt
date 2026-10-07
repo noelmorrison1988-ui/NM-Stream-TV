@@ -1470,7 +1470,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.5 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.6 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
@@ -2234,6 +2234,29 @@ private fun PlayerScreen(
 
     LaunchedEffect(player) {
         while (true) {
+            delay(2_000)
+            val now = System.currentTimeMillis()
+            val stalledForMs = if (bufferingSinceMs > 0L) now - bufferingSinceMs else 0L
+            val shouldRecover = player.playerError != null || stalledForMs >= 12_000L
+
+            if (shouldRecover && autoRecoveryCount < 4) {
+                val resumeAt = player.currentPosition.coerceAtLeast(0L)
+                autoRecoveryCount += 1
+                recoveryMessage = "Buffer stalled · reconnecting (" + autoRecoveryCount + "/4)…"
+                bufferingSinceMs = 0L
+
+                runCatching {
+                    player.prepare()
+                    if (resumeAt > 0L) player.seekTo(resumeAt)
+                    player.playWhenReady = true
+                }
+
+                delay(5_000)
+            }
+        }
+    }
+    LaunchedEffect(player) {
+        while (true) {
             delay(5_000)
             val duration = player.duration.takeIf { it > 0 } ?: 0L
             val position = player.currentPosition.coerceAtLeast(0L)
@@ -2276,6 +2299,18 @@ private fun PlayerScreen(
 
     LaunchedEffect(videoId, advisoryItems) {
         showAdvisory = advisoryItems.isNotEmpty()
+        recoveryMessage?.let { message ->
+            Box(
+                Modifier.align(Alignment.TopCenter)
+                    .padding(top = 22.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xEE111319))
+                    .border(2.dp, NmGold, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 18.dp, vertical = 10.dp)
+            ) {
+                Text(message, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+        }
         if (showAdvisory) {
             delay(7_000)
             showAdvisory = false
