@@ -414,8 +414,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun bestTrailer(item: AppMedia): StreamOption? =
         item.meta.trailers
             .mapNotNull { trailer ->
-                val youtubeId = trailer.ytId ?: trailer.source
-                if (trailer.url.isNullOrBlank() && youtubeId.isNullOrBlank()) return@mapNotNull null
+                val youtubeId = extractYoutubeId(trailer.ytId)
+                    ?: extractYoutubeId(trailer.source)
+                    ?: extractYoutubeId(trailer.url)
+                val directUrl = trailer.url
+                    ?.takeUnless { extractYoutubeId(it) != null }
+
+                if (directUrl.isNullOrBlank() && youtubeId.isNullOrBlank()) return@mapNotNull null
 
                 val qualityText = trailer.quality?.let { " · ${it}p" }.orEmpty()
                 StreamOption(
@@ -423,7 +428,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     stream = AddonStream(
                         name = trailer.type ?: "Trailer",
                         title = (trailer.title ?: trailer.name ?: item.meta.name + " Trailer") + qualityText,
-                        url = trailer.url,
+                        url = directUrl,
                         ytId = youtubeId
                     )
                 )
@@ -443,6 +448,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
             .firstOrNull()
 
+    private fun extractYoutubeId(value: String?): String? {
+        val raw = value?.trim().orEmpty()
+        if (raw.isBlank()) return null
+
+        Regex("""(?:youtube\\.com/(?:watch\\?v=|embed/|shorts/)|youtu\\.be/)([A-Za-z0-9_-]{6,})""")
+            .find(raw)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.let { return it }
+
+        return raw
+            .removePrefix("youtube:")
+            .removePrefix("yt:")
+            .takeIf { candidate ->
+                candidate.matches(Regex("""[A-Za-z0-9_-]{6,}"""))
+            }
+    }
     fun saveTmdbToken(token: String) {
         tmdb.saveToken(token)
         _uiState.value = _uiState.value.copy(
