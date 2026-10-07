@@ -93,7 +93,7 @@ private fun StartupSplash() {
                 fontWeight = FontWeight.Black
             )
             Text(
-                "STREAM TV LITE",
+                "STREAM TV MOBILE LITE",
                 color = Color.White,
                 fontSize = 44.sp,
                 fontWeight = FontWeight.Black
@@ -107,7 +107,7 @@ private fun StartupSplash() {
             )
             Spacer(Modifier.height(18.dp))
             Text(
-                "LIGHTWEIGHT · MORRISON ENTERTAINMENT",
+                "MOBILE LITE · MORRISON ENTERTAINMENT",
                 color = Color(0xFFD6A84B),
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
