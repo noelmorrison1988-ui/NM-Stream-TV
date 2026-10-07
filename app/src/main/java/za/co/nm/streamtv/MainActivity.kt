@@ -2,6 +2,9 @@ package za.co.nm.streamtv
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.activity.compose.setContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
@@ -33,6 +36,7 @@ import kotlinx.coroutines.delay
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applyImmersiveNavigation()
         setContent {
             val vm: MainViewModel = viewModel()
             val state = vm.uiState.collectAsStateWithLifecycle().value
@@ -62,6 +66,25 @@ class MainActivity : ComponentActivity() {
                     NMStreamApp(state = state, viewModel = vm)
                 }
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        applyImmersiveNavigation()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) applyImmersiveNavigation()
+    }
+
+    private fun applyImmersiveNavigation() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            hide(WindowInsetsCompat.Type.navigationBars())
+            systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
     }
 }
