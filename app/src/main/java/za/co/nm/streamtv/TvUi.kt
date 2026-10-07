@@ -1315,7 +1315,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.1 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.2 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
@@ -2181,6 +2181,7 @@ private fun PlayerScreen(
                 ) {
                     PlayerControl(
                         label = "↶ 10",
+                        selected = remoteControlIndex == 0,
                         onClick = {
                             player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
                             controlsRevision = System.currentTimeMillis()
@@ -2189,6 +2190,7 @@ private fun PlayerScreen(
                     PlayerControl(
                         label = if (isPlaying) "❚❚" else "▶",
                         primary = true,
+                        selected = remoteControlIndex == 1,
                         modifier = Modifier.focusRequester(playPauseFocus),
                         onClick = {
                             if (player.isPlaying) player.pause() else player.play()
@@ -2197,6 +2199,7 @@ private fun PlayerScreen(
                     )
                     PlayerControl(
                         label = "10 ↷",
+                        selected = remoteControlIndex == 2,
                         onClick = {
                             val limit = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
                             player.seekTo((player.currentPosition + 10_000L).coerceAtMost(limit))
@@ -2206,6 +2209,7 @@ private fun PlayerScreen(
                     PlayerControl(
                         label = if (subtitlesEnabled) "CC ON" else "CC OFF",
                         active = showSubtitleMenu || subtitlesEnabled,
+                        selected = remoteControlIndex == 3,
                         onClick = {
                             showSubtitleMenu = !showSubtitleMenu
                             showAudioMenu = false
@@ -2215,6 +2219,7 @@ private fun PlayerScreen(
                     PlayerControl(
                         label = "AUDIO",
                         active = showAudioMenu,
+                        selected = remoteControlIndex == 4,
                         onClick = {
                             showAudioMenu = !showAudioMenu
                             showSubtitleMenu = false
@@ -2223,6 +2228,7 @@ private fun PlayerScreen(
                     )
                     PlayerControl(
                         label = if (fillVideo) "FIT" else "FILL",
+                        selected = remoteControlIndex == 5,
                         onClick = {
                             fillVideo = !fillVideo
                             controlsRevision = System.currentTimeMillis()
@@ -2261,7 +2267,7 @@ private fun PlayerScreen(
                 if (audioTracks.isEmpty()) {
                     item { Text("This source exposes only one/default audio track.", color = NmMuted) }
                 } else {
-                    items(audioTracks) { choice ->
+                    itemsIndexed(audioTracks) { index, choice ->
                         Button(onClick = {
                             val override = TrackSelectionOverride(
                                 choice.group.mediaTrackGroup,
@@ -2274,7 +2280,7 @@ private fun PlayerScreen(
                                 .build()
                             showAudioMenu = false
                         }, modifier = Modifier.fillMaxWidth()) {
-                            Text(choice.label)
+                            Text(if (audioMenuIndex == index) "▶  ${choice.label}" else choice.label)
                         }
                     }
                 }
@@ -2310,10 +2316,10 @@ private fun PlayerScreen(
                         subtitlesEnabled = false
                         showSubtitleMenu = false
                     }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Off")
+                        Text(if (subtitleMenuIndex == 0) "▶  Off" else "Off")
                     }
                 }
-                items(textTracks) { choice ->
+                itemsIndexed(textTracks) { index, choice ->
                     Button(onClick = {
                         val override = TrackSelectionOverride(
                             choice.group.mediaTrackGroup,
@@ -2327,7 +2333,7 @@ private fun PlayerScreen(
                         subtitlesEnabled = true
                         showSubtitleMenu = false
                     }, modifier = Modifier.fillMaxWidth()) {
-                        Text(choice.label)
+                        Text(if (subtitleMenuIndex == index + 1) "▶  ${choice.label}" else choice.label)
                     }
                 }
             }
@@ -2340,6 +2346,7 @@ private fun PlayerControl(
     label: String,
     primary: Boolean = false,
     active: Boolean = false,
+    selected: Boolean = false,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
@@ -2350,7 +2357,7 @@ private fun PlayerControl(
             .clip(RoundedCornerShape(40.dp))
             .background(
                 when {
-                    focused -> NmGold
+                    focused || selected -> NmGold
                     active -> NmGold.copy(alpha = .22f)
                     else -> Color(0xCC16181C)
                 }
@@ -2358,7 +2365,7 @@ private fun PlayerControl(
             .border(
                 1.dp,
                 when {
-                    focused -> NmPlatinum
+                    focused || selected -> NmPlatinum
                     active -> NmGold
                     else -> Color.White.copy(alpha = .14f)
                 },
@@ -2375,7 +2382,7 @@ private fun PlayerControl(
     ) {
         Text(
             label,
-            color = if (focused) Color.Black else if (active) NmGold else NmPlatinum,
+            color = if (focused || selected) Color.Black else if (active) NmGold else NmPlatinum,
             fontWeight = FontWeight.Black,
             fontSize = if (primary) 18.sp else 12.sp
         )
