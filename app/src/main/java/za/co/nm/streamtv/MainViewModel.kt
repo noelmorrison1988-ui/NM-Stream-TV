@@ -25,6 +25,11 @@ data class MainUiState(
     val continueWatching: List<PlaybackProgress> = emptyList(),
     val watchHistory: List<PlaybackProgress> = emptyList(),
     val recommendations: List<AppMedia> = emptyList(),
+    val myList: List<AppMedia> = emptyList(),
+    val newMovies: List<AppMedia> = emptyList(),
+    val trendingMovies: List<AppMedia> = emptyList(),
+    val newSeries: List<AppMedia> = emptyList(),
+    val trendingSeries: List<AppMedia> = emptyList(),
     val searchResults: List<AppMedia> = emptyList(),
     val searchLoading: Boolean = false,
     val selectedMedia: AppMedia? = null,
@@ -71,6 +76,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val realDebrid = RealDebridRepository(application)
     private val tmdb = TmdbRepository(application)
     private val playback = PlaybackStore(application)
+    private val myListStore = MyListStore(application)
     private val nmAccount = NmAccountRepository(application)
 
     private val _uiState = MutableStateFlow(MainUiState())
@@ -101,6 +107,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     .getOrDefault(emptyList<AppMedia>() to emptyList())
             }
             val rdUserDeferred = async { runCatching { realDebrid.getUser() }.getOrNull() }
+            val discoveryDeferred = async {
+                if (tmdb.configured()) {
+                    runCatching { tmdb.discoveryRows(18) }.getOrDefault(TmdbDiscoveryRows())
+                } else {
+                    TmdbDiscoveryRows()
+                }
+            }
 
             val (rawMovies, rawSeries) = homeDeferred.await()
             val movies = MediaPolicy.filter(
@@ -129,6 +142,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 runCatching { tmdb.recommendationsFor(watchHistory.map { it.media }, 24) }
                     .getOrDefault(emptyList())
             } else emptyList()
+            val discovery = discoveryDeferred.await()
             val nmPrefs = nmAccount.playbackPreferences()
 
             _uiState.value = _uiState.value.copy(
@@ -143,6 +157,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 continueWatching = playback.load().filter { MediaPolicy.allows(it.media) }.take(30),
                 watchHistory = watchHistory,
                 recommendations = recommendations,
+                myList = myListStore.load(),
+                newMovies = discovery.newMovies,
+                trendingMovies = discovery.trendingMovies,
+                newSeries = discovery.newSeries,
+                trendingSeries = discovery.trendingSeries,
                 rdDeviceCode = null,
                 rdConnecting = false,
                 tmdbConfigured = tmdb.configured(),
@@ -233,6 +252,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun toggleMyList(item: AppMedia) {
+        val added = myListStore.toggle(item)
+        _uiState.value = _uiState.value.copy(
+            myList = myListStore.load(),
+            message = if (added) "Added ${item.meta.name} to My List" else "Removed ${item.meta.name} from My List"
+        )
+    }
+
+    fun isInMyList(item: AppMedia): Boolean = myListStore.contains(item)
     fun loadDetails(item: AppMedia) {
         viewModelScope.launch {
             if (!MediaPolicy.allows(item)) {
