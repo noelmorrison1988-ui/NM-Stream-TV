@@ -20,6 +20,9 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.*
@@ -84,6 +87,7 @@ private sealed interface Screen {
     data object MyList : Screen
     data object Addons : Screen
     data object Settings : Screen
+    data class ExpandedRow(val title: String, val key: String, val page: Int) : Screen
     data class Details(val item: AppMedia) : Screen
     data class Sources(val item: AppMedia, val videoId: String, val title: String) : Screen
     data class AutoPlay(val item: AppMedia, val videoId: String, val title: String, val requestKey: String) : Screen
@@ -162,6 +166,10 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             viewModel.loadDetails(it.media)
                             viewModel.loadSources(it.media, it.videoId)
                             screen = Screen.Sources(it.media, it.videoId, it.title)
+                        },
+                        onExpand = { title, key ->
+                            viewModel.loadExpandedRow(key, 1)
+                            screen = Screen.ExpandedRow(title, key, 1)
                         }
                     )
                 }
@@ -187,6 +195,41 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                 Screen.Settings -> Shell("Settings", { screen = it }) {
                     SettingsScreen(state, viewModel)
                 }
+                is Screen.ExpandedRow -> ExpandedRowScreen(
+                    title = current.title,
+                    page = current.page,
+                    loading = state.expandedRowLoading,
+                    items = state.expandedRowItems,
+                    continueItems = state.expandedContinueItems,
+                    hasPrevious = current.page > 1,
+                    hasNext = state.expandedRowHasNext,
+                    onHome = { screen = Screen.Home },
+                    onPrevious = {
+                        val previous = (current.page - 1).coerceAtLeast(1)
+                        viewModel.loadExpandedRow(current.key, previous)
+                        screen = current.copy(page = previous)
+                    },
+                    onNext = {
+                        val next = current.page + 1
+                        viewModel.loadExpandedRow(current.key, next)
+                        screen = current.copy(page = next)
+                    },
+                    onOpen = {
+                        viewModel.loadDetails(it)
+                        screen = Screen.Details(it)
+                    },
+                    onContinue = {
+                        viewModel.loadDetails(it.media)
+                        val requestKey = viewModel.sourceRequestKey(it.media, it.videoId)
+                        viewModel.loadSources(it.media, it.videoId)
+                        screen = Screen.AutoPlay(it.media, it.videoId, it.title, requestKey)
+                    },
+                    onContinueManual = {
+                        viewModel.loadDetails(it.media)
+                        viewModel.loadSources(it.media, it.videoId)
+                        screen = Screen.Sources(it.media, it.videoId, it.title)
+                    }
+                )
                 is Screen.Details -> {
                     val detailItem = state.selectedMedia ?: current.item
                     val trailer = viewModel.bestTrailer(detailItem)
