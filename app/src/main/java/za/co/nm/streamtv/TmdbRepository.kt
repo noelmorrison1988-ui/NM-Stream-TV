@@ -239,7 +239,7 @@ class TmdbRepository(context: Context) {
                 tmdbId = id,
                 isAnime = animeDetected
             ),
-            originAddonName = "TMDB recommendation"
+            originAddonName = "TMDB"
         )
     }
 
