@@ -2299,18 +2299,7 @@ private fun PlayerScreen(
 
     LaunchedEffect(videoId, advisoryItems) {
         showAdvisory = advisoryItems.isNotEmpty()
-        recoveryMessage?.let { message ->
-            Box(
-                Modifier.align(Alignment.TopCenter)
-                    .padding(top = 22.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xEE111319))
-                    .border(2.dp, NmGold, RoundedCornerShape(10.dp))
-                    .padding(horizontal = 18.dp, vertical = 10.dp)
-            ) {
-                Text(message, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            }
-        }
+
         if (showAdvisory) {
             delay(7_000)
             showAdvisory = false
@@ -2375,6 +2364,18 @@ private fun PlayerScreen(
             modifier = Modifier.fillMaxSize()
         )
 
+        recoveryMessage?.let { message ->
+            Box(
+                Modifier.align(Alignment.TopCenter)
+                    .padding(top = 22.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xEE111319))
+                    .border(2.dp, NmGold, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 18.dp, vertical = 10.dp)
+            ) {
+                Text(message, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+        }
         if (showAdvisory) {
             Column(
                 Modifier.align(Alignment.TopStart)
