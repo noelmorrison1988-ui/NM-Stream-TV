@@ -91,7 +91,15 @@ private sealed interface Screen {
     data class ExpandedRow(val title: String, val key: String, val page: Int) : Screen
     data class Details(val item: AppMedia) : Screen
     data class Sources(val item: AppMedia, val videoId: String, val title: String) : Screen
-    data class AutoPlay(val item: AppMedia, val videoId: String, val title: String, val requestKey: String) : Screen
+    data class AutoPlay(
+        val item: AppMedia,
+        val videoId: String,
+        val title: String,
+        val requestKey: String,
+        val excludedUrl: String? = null,
+        val resumeMsOverride: Long? = null,
+        val resumeSubtitles: List<SubtitleOption>? = null
+    ) : Screen
     data class Player(
         val item: AppMedia,
         val videoId: String,
@@ -299,7 +307,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     )
                 }
                 is Screen.AutoPlay -> {
-                    AutoPlayScreen(current.title)
+                    AutoPlayScreen(current.title, switching = current.excludedUrl != null)
                     LaunchedEffect(
                         current.requestKey,
                         state.sourceRequestKey,
@@ -311,9 +319,13 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             !state.streamsLoading
                         ) {
                             val best = state.streamOptions.firstOrNull { option ->
-                                option.playableUrl != null ||
+                                val playable = option.playableUrl != null ||
                                     option.youtubeUrl != null ||
                                     !option.stream.externalUrl.isNullOrBlank()
+                                val differentUrl = current.excludedUrl == null ||
+                                    option.playableUrl == null ||
+                                    option.playableUrl != current.excludedUrl
+                                playable && differentUrl
                             }
 
                             when {
@@ -323,7 +335,9 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                                         current.videoId,
                                         current.title,
                                         best,
-                                        returnToSources = false
+                                        returnToSources = false,
+                                        resumeMsOverride = current.resumeMsOverride,
+                                        resumeSubtitles = current.resumeSubtitles
                                     )
                                 }
                                 best?.youtubeUrl != null -> {
@@ -1635,13 +1649,18 @@ private fun DetailsScreen(
 }
 
 @Composable
-private fun AutoPlayScreen(title: String) {
+private fun AutoPlayScreen(title: String, switching: Boolean = false) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text("Finding the best source…", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+            Text(
+                if (switching) "Stream froze · switching source…" else "Finding the best source…",
+                color = Color.White,
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Bold
+            )
             Text(title, color = NmMuted, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
