@@ -879,12 +879,24 @@ private fun ExpandedRowScreen(
 }
 
 @Composable
-private fun ExpandedPosterCard(item: AppMedia, onOpen: (AppMedia) -> Unit) {
+private fun ExpandedPosterCard(
+    item: AppMedia,
+    onOpen: (AppMedia) -> Unit,
+    inMyList: Boolean,
+    onToggleMyList: (AppMedia) -> Unit
+) {
     var focused by remember { mutableStateOf(false) }
+    var showQuickMenu by remember(item.meta.id) { mutableStateOf(false) }
     Column(
         Modifier.fillMaxWidth()
             .onFocusChanged { focused = it.isFocused }
-            .clickable { onOpen(item) }
+            .tvActivation(
+                onClick = { onOpen(item) },
+                onLongClick = {
+                    if (item.meta.type == "movie" || item.meta.type == "series") showQuickMenu = true
+                    else onOpen(item)
+                }
+            )
             .focusable(),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
@@ -903,6 +915,18 @@ private fun ExpandedPosterCard(item: AppMedia, onOpen: (AppMedia) -> Unit) {
         }
         Text(item.meta.name, color = Color.White, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         item.meta.releaseInfo?.let { Text(it, color = NmMuted, fontSize = 11.sp) }
+    }
+
+    if (showQuickMenu) {
+        QuickMyListMenu(
+            item = item,
+            inMyList = inMyList,
+            onToggle = {
+                onToggleMyList(item)
+                showQuickMenu = false
+            },
+            onDismiss = { showQuickMenu = false }
+        )
     }
 }
 
@@ -1008,7 +1032,14 @@ private fun PersonalMediaRow(
                 contentPadding = PaddingValues(horizontal = 40.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                items(media) { PosterCard(it, onOpen) }
+                items(media) { item ->
+                PosterCard(
+                    item = item,
+                    onOpen = onOpen,
+                    inMyList = myList.any { mediaMatches(it, item) },
+                    onToggleMyList = onToggleMyList
+                )
+            }
             }
         }
     }
@@ -1019,6 +1050,8 @@ private fun MediaRow(
     title: String,
     media: List<AppMedia>,
     onOpen: (AppMedia) -> Unit,
+    myList: List<AppMedia> = emptyList(),
+    onToggleMyList: ((AppMedia) -> Unit)? = null,
     onExpand: (() -> Unit)? = null
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1041,15 +1074,61 @@ private fun MediaRow(
     }
 }
 @Composable
-private fun PosterCard(item: AppMedia, onOpen: (AppMedia) -> Unit) {
+private fun PosterCard(
+    item: AppMedia,
+    onOpen: (AppMedia) -> Unit,
+    inMyList: Boolean = false,
+    onToggleMyList: ((AppMedia) -> Unit)? = null
+) {
     var focused by remember { mutableStateOf(false) }
+    var showQuickMenu by remember(item.meta.id) { mutableStateOf(false) }
+    val canQuickList = onToggleMyList != null && (item.meta.type == "movie" || item.meta.type == "series")
     val scale by animateFloatAsState(if (focused) 1.10f else 1f, label = "poster")
-    Column(Modifier.width(165.dp).graphicsLayer { scaleX = scale; scaleY = scale }.onFocusChanged { focused = it.isFocused }.clickable { onOpen(item) }.focusable()) {
-        Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(NmPanel).border(if (focused) 4.dp else 0.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(8.dp))) {
-            AsyncImage(model = item.meta.poster ?: item.meta.background, contentDescription = item.meta.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+
+    Column(
+        Modifier.width(165.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .onFocusChanged { focused = it.isFocused }
+            .tvActivation(
+                onClick = { onOpen(item) },
+                onLongClick = {
+                    if (canQuickList) showQuickMenu = true else onOpen(item)
+                }
+            )
+            .focusable()
+    ) {
+        Box(
+            Modifier.fillMaxWidth()
+                .aspectRatio(2f / 3f)
+                .clip(RoundedCornerShape(8.dp))
+                .background(NmPanel)
+                .border(
+                    if (focused) 4.dp else 0.dp,
+                    if (focused) Color.White else Color.Transparent,
+                    RoundedCornerShape(8.dp)
+                )
+        ) {
+            AsyncImage(
+                model = item.meta.poster ?: item.meta.background,
+                contentDescription = item.meta.name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
         }
         Spacer(Modifier.height(6.dp))
         Text(item.meta.name, color = Color.White, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+
+    if (showQuickMenu && onToggleMyList != null) {
+        QuickMyListMenu(
+            item = item,
+            inMyList = inMyList,
+            onToggle = {
+                onToggleMyList(item)
+                showQuickMenu = false
+            },
+            onDismiss = { showQuickMenu = false }
+        )
     }
 }
 
