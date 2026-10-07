@@ -29,6 +29,13 @@ data class MainUiState(
     val trendingMovies: List<AppMedia> = emptyList(),
     val newSeries: List<AppMedia> = emptyList(),
     val trendingSeries: List<AppMedia> = emptyList(),
+    val nowAiringSeries: List<AppMedia> = emptyList(),
+    val expandedRowKey: String? = null,
+    val expandedRowPage: Int = 1,
+    val expandedRowItems: List<AppMedia> = emptyList(),
+    val expandedContinueItems: List<PlaybackProgress> = emptyList(),
+    val expandedRowLoading: Boolean = false,
+    val expandedRowHasNext: Boolean = false,
     val recentSearches: List<String> = emptyList(),
     val searchResults: List<AppMedia> = emptyList(),
     val searchLoading: Boolean = false,
@@ -157,6 +164,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 trendingMovies = discovery.trendingMovies,
                 newSeries = discovery.newSeries,
                 trendingSeries = discovery.trendingSeries,
+                nowAiringSeries = discovery.nowAiringSeries,
                 recentSearches = searchHistoryStore.load(),
                 rdDeviceCode = null,
                 rdConnecting = false,
@@ -188,6 +196,68 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun loadExpandedRow(key: String, page: Int) {
+        viewModelScope.launch {
+            val safePage = page.coerceAtLeast(1)
+            val pageSize = 20
+            _uiState.value = _uiState.value.copy(
+                expandedRowKey = key,
+                expandedRowPage = safePage,
+                expandedRowItems = emptyList(),
+                expandedContinueItems = emptyList(),
+                expandedRowLoading = true,
+                expandedRowHasNext = false
+            )
+
+            if (key == "continue_watching") {
+                val source = _uiState.value.continueWatching
+                val start = (safePage - 1) * pageSize
+                val pageItems = source.drop(start).take(pageSize)
+                _uiState.value = _uiState.value.copy(
+                    expandedContinueItems = pageItems,
+                    expandedRowLoading = false,
+                    expandedRowHasNext = start + pageItems.size < source.size
+                )
+                return@launch
+            }
+
+            val tmdbKeys = setOf(
+                "trending_movies",
+                "new_movies",
+                "trending_series",
+                "new_series",
+                "now_airing_series"
+            )
+
+            if (key in tmdbKeys) {
+                val pageItems = runCatching {
+                    tmdb.browseCollection(key, safePage, pageSize)
+                }.getOrDefault(emptyList())
+                _uiState.value = _uiState.value.copy(
+                    expandedRowItems = pageItems,
+                    expandedRowLoading = false,
+                    expandedRowHasNext = pageItems.size >= pageSize
+                )
+                return@launch
+            }
+
+            val source = when (key) {
+                "watch_history" -> _uiState.value.watchHistory.map { it.media }.distinctBy { it.meta.id }
+                "movies" -> _uiState.value.movies
+                "series" -> _uiState.value.series
+                "real_debrid" -> _uiState.value.debridItems
+                "my_list" -> _uiState.value.myList
+                else -> emptyList()
+            }
+            val start = (safePage - 1) * pageSize
+            val pageItems = source.drop(start).take(pageSize)
+            _uiState.value = _uiState.value.copy(
+                expandedRowItems = pageItems,
+                expandedRowLoading = false,
+                expandedRowHasNext = start + pageItems.size < source.size
+            )
+        }
+    }
     fun installAddon(url: String) {
         viewModelScope.launch {
             if (url.isBlank()) {
