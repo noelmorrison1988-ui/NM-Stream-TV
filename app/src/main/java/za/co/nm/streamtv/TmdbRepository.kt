@@ -14,6 +14,12 @@ data class TmdbDiscoveryRows(
     val trendingSeries: List<AppMedia> = emptyList()
 )
 
+data class SarahEditionRows(
+    val belowDeck: List<AppMedia> = emptyList(),
+    val realHousewives: List<AppMedia> = emptyList(),
+    val bravo: List<AppMedia> = emptyList()
+)
+
 class TmdbRepository(context: Context) {
     companion object {
         private const val TOKEN_KEY = "tmdb_read_access_token"
@@ -156,6 +162,92 @@ class TmdbRepository(context: Context) {
             .filter(MediaPolicy::allows)
             .distinctBy { "${it.meta.type}:${it.meta.tmdbId ?: it.meta.id}" }
             .take(limit)
+    }
+
+    suspend fun sarahEditionRows(limit: Int = 24): SarahEditionRows = supervisorScope {
+        val token = activeToken()
+        if (token.isBlank()) return@supervisorScope SarahEditionRows()
+        val headers = mapOf("Authorization" to "Bearer $token")
+
+        val belowDeckTitles = listOf(
+            "Below Deck",
+            "Below Deck Mediterranean",
+            "Below Deck Sailing Yacht",
+            "Below Deck Down Under",
+            "Below Deck Adventure"
+        )
+        val housewivesTitles = listOf(
+            "The Real Housewives of Beverly Hills",
+            "The Real Housewives of Durban",
+            "The Real Housewives of New Jersey",
+            "The Real Housewives of Orange County",
+            "The Real Housewives of Salt Lake City",
+            "The Real Housewives Ultimate Girls Trip"
+        )
+
+        val belowDeckDeferred = async { curatedTvTitles(belowDeckTitles, headers) }
+        val housewivesDeferred = async { curatedTvTitles(housewivesTitles, headers) }
+        val bravoDeferred = async {
+            val discovered = fetchCollection(
+                "discover/tv?with_networks=74&sort_by=popularity.desc&include_adult=false",
+                "series",
+                headers,
+                limit
+            )
+            if (discovered.isNotEmpty()) discovered else curatedTvTitles(
+                listOf(
+                    "Vanderpump Rules",
+                    "Southern Charm",
+                    "Summer House",
+                    "Top Chef",
+                    "Married to Medicine",
+                    "Watch What Happens Live with Andy Cohen"
+                ),
+                headers
+            )
+        }
+
+        SarahEditionRows(
+            belowDeck = belowDeckDeferred.await().take(limit),
+            realHousewives = housewivesDeferred.await().take(limit),
+            bravo = bravoDeferred.await().take(limit)
+        )
+    }
+
+    private suspend fun curatedTvTitles(
+        titles: List<String>,
+        headers: Map<String, String>
+    ): List<AppMedia> = supervisorScope {
+        titles.map { title ->
+            async {
+                runCatching { searchTvTitle(title, headers) }.getOrNull()
+            }
+        }.awaitAll()
+            .filterNotNull()
+            .filter(MediaPolicy::allows)
+            .distinctBy { it.meta.tmdbId ?: it.meta.id }
+    }
+
+    private suspend fun searchTvTitle(
+        title: String,
+        headers: Map<String, String>
+    ): AppMedia? {
+        val url = "$API/search/tv?query=${SimpleHttp.encode(title)}&include_adult=false&language=en-US&page=1"
+        val result = SimpleHttp.get(url, headers)
+        if (result.code !in 200..299) return null
+        val candidates = JsonParser.parseString(result.body).asJsonObject
+            .getAsJsonArray("results")
+            ?.mapNotNull { element ->
+                element.takeIf { it.isJsonObject }?.asJsonObject
+            }
+            .orEmpty()
+        val wanted = title.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
+        val candidate = candidates.firstOrNull { candidate ->
+            val name = candidate.get("name")?.takeUnless { it.isJsonNull }?.asString.orEmpty()
+                .lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
+            name == wanted
+        } ?: candidates.firstOrNull()
+        return candidate?.let { tmdbCandidateToAppMedia(it, "series") }
     }
 
     suspend fun discoveryRows(limit: Int = 18): TmdbDiscoveryRows = supervisorScope {
