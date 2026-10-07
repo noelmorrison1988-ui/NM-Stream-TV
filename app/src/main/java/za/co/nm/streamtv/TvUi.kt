@@ -96,7 +96,9 @@ private sealed interface Screen {
         val videoId: String,
         val title: String,
         val source: StreamOption,
-        val returnToSources: Boolean = true
+        val returnToSources: Boolean = true,
+        val resumeMsOverride: Long? = null,
+        val resumeSubtitles: List<SubtitleOption>? = null
     ) : Screen
     data class Trailer(val item: AppMedia, val title: String, val source: StreamOption) : Screen
     data class YouTubeTrailer(val item: AppMedia, val title: String, val youtubeId: String) : Screen
@@ -117,6 +119,25 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
     val context = LocalContext.current
     var screen: Screen by remember { mutableStateOf(Screen.Home) }
     var seriesSelections by remember { mutableStateOf<Map<String, SeriesSelection>>(emptyMap()) }
+
+    fun playOrRestoreLast(item: AppMedia, videoId: String, title: String) {
+        val last = viewModel.lastPlaybackSession(item, videoId)
+        if (last != null) {
+            screen = Screen.Player(
+                item = item,
+                videoId = videoId,
+                title = title,
+                source = last.source,
+                returnToSources = false,
+                resumeMsOverride = last.positionMs,
+                resumeSubtitles = last.subtitles
+            )
+        } else {
+            val key = viewModel.sourceRequestKey(item, videoId)
+            viewModel.loadSources(item, videoId)
+            screen = Screen.AutoPlay(item, videoId, title, key)
+        }
+    }
 
     BackHandler(screen !is Screen.Home) {
         screen = when (val current = screen) {
@@ -158,9 +179,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         },
                         onContinue = {
                             viewModel.loadDetails(it.media)
-                            val key = viewModel.sourceRequestKey(it.media, it.videoId)
-                            viewModel.loadSources(it.media, it.videoId)
-                            screen = Screen.AutoPlay(it.media, it.videoId, it.title, key)
+                            playOrRestoreLast(it.media, it.videoId, it.title)
                         },
                         onContinueManual = {
                             viewModel.loadDetails(it.media)
@@ -220,9 +239,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     },
                     onContinue = {
                         viewModel.loadDetails(it.media)
-                        val requestKey = viewModel.sourceRequestKey(it.media, it.videoId)
-                        viewModel.loadSources(it.media, it.videoId)
-                        screen = Screen.AutoPlay(it.media, it.videoId, it.title, requestKey)
+                        playOrRestoreLast(it.media, it.videoId, it.title)
                     },
                     onContinueManual = {
                         viewModel.loadDetails(it.media)
@@ -259,9 +276,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             ))
                         },
                         play = { item, id, title ->
-                            val key = viewModel.sourceRequestKey(item, id)
-                            viewModel.loadSources(item, id)
-                            screen = Screen.AutoPlay(item, id, title, key)
+                            playOrRestoreLast(item, id, title)
                         },
                         chooseManual = { item, id, title ->
                             viewModel.loadSources(item, id)
@@ -365,21 +380,55 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     onProgress = { _, _ -> },
                     onStopped = { _, _ -> }
                 )
-                is Screen.Player -> PlayerScreen(
-                    item = current.item,
-                    videoId = current.videoId,
-                    title = current.title,
-                    url = current.source.playableUrl.orEmpty(),
-                    headers = current.source.requestHeaders,
-                    subtitles = state.subtitleOptions,
-                    resumeMs = viewModel.resumePosition(current.item, current.videoId),
-                    resumePercent = viewModel.resumeCloudPercent(current.item, current.videoId),
-                    preferredAudioLanguage = state.preferredAudioLanguage,
-                    preferredSubtitleLanguage = state.preferredSubtitleLanguage,
-                    onStarted = { p, d -> viewModel.onPlaybackStarted(current.item, current.videoId, p, d) },
-                    onProgress = { p, d -> viewModel.onPlaybackProgress(current.item, current.videoId, current.title, p, d) },
-                    onStopped = { p, d -> viewModel.onPlaybackStopped(current.item, current.videoId, current.title, p, d) }
-                )
+                is Screen.Player -> {
+                    val activeSubtitles = current.resumeSubtitles ?: state.subtitleOptions
+                    PlayerScreen(
+                        item = current.item,
+                        videoId = current.videoId,
+                        title = current.title,
+                        url = current.source.playableUrl.orEmpty(),
+                        headers = current.source.requestHeaders,
+                        subtitles = activeSubtitles,
+                        resumeMs = current.resumeMsOverride
+                            ?: viewModel.resumePosition(current.item, current.videoId),
+                        resumePercent = viewModel.resumeCloudPercent(current.item, current.videoId),
+                        preferredAudioLanguage = state.preferredAudioLanguage,
+                        preferredSubtitleLanguage = state.preferredSubtitleLanguage,
+                        onStarted = { p, d ->
+                            viewModel.onPlaybackStarted(
+                                current.item,
+                                current.videoId,
+                                current.title,
+                                current.source,
+                                activeSubtitles,
+                                p,
+                                d
+                            )
+                        },
+                        onProgress = { p, d ->
+                            viewModel.onPlaybackProgress(
+                                current.item,
+                                current.videoId,
+                                current.title,
+                                current.source,
+                                activeSubtitles,
+                                p,
+                                d
+                            )
+                        },
+                        onStopped = { p, d ->
+                            viewModel.onPlaybackStopped(
+                                current.item,
+                                current.videoId,
+                                current.title,
+                                current.source,
+                                activeSubtitles,
+                                p,
+                                d
+                            )
+                        }
+                    )
+                }
             }
                 state.message?.let {
                     Box(Modifier.align(Alignment.BottomCenter).padding(24.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xEE22252B)).padding(horizontal = 18.dp, vertical = 10.dp)) {
