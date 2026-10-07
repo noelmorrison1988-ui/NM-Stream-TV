@@ -570,6 +570,7 @@ private fun Button(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    selected: Boolean = false,
     content: @Composable RowScope.() -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -580,13 +581,13 @@ private fun Button(
             .background(
                 when {
                     !enabled -> Color(0xFF2B2E33)
-                    focused -> NmGold
+                    focused || selected -> NmRed
                     else -> Color(0xFF22252A)
                 }
             )
             .border(
-                if (focused && enabled) 2.dp else 1.dp,
-                if (focused && enabled) NmPlatinum else Color.White.copy(alpha = .12f),
+                if ((focused || selected) && enabled) 3.dp else 1.dp,
+                if ((focused || selected) && enabled) Color.White else Color.White.copy(alpha = .16f),
                 RoundedCornerShape(8.dp)
             )
             .onFocusChanged { focused = it.isFocused }
@@ -606,14 +607,22 @@ private fun NavChip(label: String, selected: Boolean, onClick: () -> Unit) {
         Modifier.clip(RoundedCornerShape(20.dp))
             .background(
                 when {
-                    selected -> NmGold.copy(alpha = .18f)
-                    focused -> Color.White.copy(alpha = .08f)
+                    focused -> NmRed
+                    selected -> NmGold.copy(alpha = .34f)
                     else -> Color.Transparent
                 }
             )
             .border(
-                if (selected || focused) 1.dp else 0.dp,
-                if (selected) NmGold.copy(alpha = .75f) else Color.White.copy(alpha = .18f),
+                when {
+                    focused -> 3.dp
+                    selected -> 2.dp
+                    else -> 0.dp
+                },
+                when {
+                    focused -> Color.White
+                    selected -> NmGold
+                    else -> Color.Transparent
+                },
                 RoundedCornerShape(20.dp)
             )
             .onFocusChanged { focused = it.isFocused }
@@ -623,8 +632,8 @@ private fun NavChip(label: String, selected: Boolean, onClick: () -> Unit) {
     ) {
         Text(
             label,
-            color = if (selected) NmGold else NmPlatinum,
-            fontWeight = if (selected) FontWeight.Black else FontWeight.Medium,
+            color = if (focused) Color.White else if (selected) NmGold else NmPlatinum,
+            fontWeight = if (focused || selected) FontWeight.Black else FontWeight.Medium,
             fontSize = 13.sp
         )
     }
@@ -774,7 +783,7 @@ private fun ExpandedPosterCard(item: AppMedia, onOpen: (AppMedia) -> Unit) {
             Modifier.fillMaxWidth().aspectRatio(2f / 3f)
                 .clip(RoundedCornerShape(8.dp))
                 .background(NmPanel)
-                .border(if (focused) 3.dp else 0.dp, if (focused) NmGold else Color.Transparent, RoundedCornerShape(8.dp))
+                .border(if (focused) 4.dp else 0.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(8.dp))
         ) {
             AsyncImage(
                 model = item.meta.poster ?: item.meta.background,
@@ -809,7 +818,7 @@ private fun ExpandedContinueCard(
             Modifier.fillMaxWidth().aspectRatio(16f / 9f)
                 .clip(RoundedCornerShape(8.dp))
                 .background(NmPanel)
-                .border(if (focused) 3.dp else 0.dp, if (focused) NmGold else Color.Transparent, RoundedCornerShape(8.dp))
+                .border(if (focused) 4.dp else 0.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(8.dp))
         ) {
             AsyncImage(
                 model = progress.media.meta.background ?: progress.media.meta.poster,
@@ -925,9 +934,9 @@ private fun MediaRow(
 @Composable
 private fun PosterCard(item: AppMedia, onOpen: (AppMedia) -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (focused) 1.07f else 1f, label = "poster")
+    val scale by animateFloatAsState(if (focused) 1.10f else 1f, label = "poster")
     Column(Modifier.width(165.dp).graphicsLayer { scaleX = scale; scaleY = scale }.onFocusChanged { focused = it.isFocused }.clickable { onOpen(item) }.focusable()) {
-        Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(NmPanel).border(if (focused) 2.dp else 0.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(8.dp))) {
+        Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(NmPanel).border(if (focused) 4.dp else 0.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(8.dp))) {
             AsyncImage(model = item.meta.poster ?: item.meta.background, contentDescription = item.meta.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
         Spacer(Modifier.height(6.dp))
@@ -976,7 +985,7 @@ private fun ContinueRow(
                         )
                         .focusable()
                 ) {
-                    Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(NmPanel).border(if (focused) 2.dp else 0.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(8.dp))) {
+                    Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(NmPanel).border(if (focused) 4.dp else 0.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(8.dp))) {
                         AsyncImage(model = p.media.meta.background ?: p.media.meta.poster, contentDescription = p.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                         Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(5.dp).background(Color.White.copy(alpha = .2f))) {
                             Box(Modifier.fillMaxHeight().fillMaxWidth(p.percent.coerceAtLeast(1) / 100f).background(NmRed))
@@ -1070,8 +1079,8 @@ private fun EpgChannelRow(
             .fillMaxWidth()
             .padding(horizontal = 42.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(if (focused) NmPanelFocus else NmPanel)
-            .border(if (focused) 2.dp else 0.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(10.dp))
+            .background(if (focused) NmRed else NmPanel)
+            .border(if (focused) 3.dp else 1.dp, if (focused) Color.White else Color.White.copy(alpha = .10f), RoundedCornerShape(10.dp))
             .onFocusChanged { focused = it.isFocused }
             .clickable { onOpen(channel) }
             .focusable()
@@ -1638,7 +1647,7 @@ private fun HoldActionButton(
             .clip(RoundedCornerShape(8.dp))
             .background(if (focused) NmRed else NmPanelFocus)
             .border(
-                if (focused) 2.dp else 0.dp,
+                if (focused) 3.dp else 0.dp,
                 if (focused) Color.White else Color.Transparent,
                 RoundedCornerShape(8.dp)
             )
@@ -1759,7 +1768,12 @@ private fun SourceResultRow(source: StreamOption, isDefault: Boolean, select: (S
     Row(
         Modifier.fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(if (focused) NmPanelFocus else NmPanel)
+            .background(if (focused) NmRed else NmPanel)
+            .border(
+                if (focused) 3.dp else 1.dp,
+                if (focused) Color.White else Color.White.copy(alpha = .10f),
+                RoundedCornerShape(8.dp)
+            )
             .onFocusChanged { focused = it.isFocused }
             .clickable { select(source) }
             .focusable()
@@ -2553,15 +2567,15 @@ private fun PlayerControl(
             .clip(RoundedCornerShape(40.dp))
             .background(
                 when {
-                    focused || selected -> NmGold
-                    active -> NmGold.copy(alpha = .22f)
+                    focused || selected -> NmRed
+                    active -> NmGold.copy(alpha = .28f)
                     else -> Color(0xCC16181C)
                 }
             )
             .border(
-                1.dp,
+                if (focused || selected) 3.dp else 1.dp,
                 when {
-                    focused || selected -> NmPlatinum
+                    focused || selected -> Color.White
                     active -> NmGold
                     else -> Color.White.copy(alpha = .14f)
                 },
@@ -2578,7 +2592,7 @@ private fun PlayerControl(
     ) {
         Text(
             label,
-            color = if (focused || selected) Color.Black else if (active) NmGold else NmPlatinum,
+            color = if (focused || selected) Color.White else if (active) NmGold else NmPlatinum,
             fontWeight = FontWeight.Black,
             fontSize = if (primary) 18.sp else 12.sp
         )
@@ -2613,7 +2627,7 @@ private fun InputBox(
     change: (String) -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color(0xFF111319)).border(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color(0xFF343841), RoundedCornerShape(8.dp)).onFocusChanged { focused = it.isFocused }.padding(horizontal = 14.dp, vertical = 12.dp)) {
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color(0xFF111319)).border(if (focused) 3.dp else 1.dp, if (focused) NmGold else Color(0xFF343841), RoundedCornerShape(8.dp)).onFocusChanged { focused = it.isFocused }.padding(horizontal = 14.dp, vertical = 12.dp)) {
         if (value.isBlank()) Text(placeholder, color = NmMuted.copy(alpha = .7f))
         BasicTextField(
             value = value,
