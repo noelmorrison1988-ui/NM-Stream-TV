@@ -253,6 +253,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleMyList(item: AppMedia) {
+        if (item.meta.type != "movie" && item.meta.type != "series") return
         val added = myListStore.toggle(item)
         _uiState.value = _uiState.value.copy(
             myList = myListStore.load(),
