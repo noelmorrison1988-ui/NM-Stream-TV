@@ -80,6 +80,48 @@ class TmdbRepository(context: Context) {
         enriched + items.drop(limit)
     }
 
+    suspend fun searchPersonCredits(query: String, limit: Int = 40): List<AppMedia> {
+        val token = secureStore.get(TOKEN_KEY)?.trim().orEmpty()
+        if (token.isBlank() || query.isBlank()) return emptyList()
+        val headers = mapOf("Authorization" to "Bearer $token")
+
+        val search = SimpleHttp.get(
+            "$API/search/person?query=${SimpleHttp.encode(query.trim())}&include_adult=false&language=en-US&page=1",
+            headers
+        )
+        if (search.code !in 200..299) return emptyList()
+        val person = JsonParser.parseString(search.body).asJsonObject
+            .getAsJsonArray("results")
+            ?.firstOrNull()
+            ?.takeIf { it.isJsonObject }
+            ?.asJsonObject
+            ?: return emptyList()
+        val personId = person.get("id")?.takeUnless { it.isJsonNull }?.asInt ?: return emptyList()
+
+        val credits = SimpleHttp.get("$API/person/$personId/combined_credits?language=en-US", headers)
+        if (credits.code !in 200..299) return emptyList()
+        return JsonParser.parseString(credits.body).asJsonObject
+            .getAsJsonArray("cast")
+            ?.mapNotNull { element ->
+                val candidate = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+                val mediaType = candidate.get("media_type")?.takeUnless { it.isJsonNull }?.asString
+                val type = when (mediaType) {
+                    "movie" -> "movie"
+                    "tv" -> "series"
+                    else -> return@mapNotNull null
+                }
+                tmdbCandidateToAppMedia(candidate, type)
+            }
+            ?.filter(MediaPolicy::allows)
+            ?.distinctBy { "${it.meta.type}:${it.meta.tmdbId ?: it.meta.id}" }
+            ?.sortedWith(
+                compareByDescending<AppMedia> {
+                    it.meta.releaseInfo?.toIntOrNull() ?: 0
+                }.thenByDescending { it.meta.imdbRating?.toDoubleOrNull() ?: 0.0 }
+            )
+            ?.take(limit)
+            .orEmpty()
+    }
     suspend fun recommendationsFor(history: List<AppMedia>, limit: Int = 24): List<AppMedia> = supervisorScope {
         val token = secureStore.get(TOKEN_KEY)?.trim().orEmpty()
         if (token.isBlank()) return@supervisorScope emptyList()
