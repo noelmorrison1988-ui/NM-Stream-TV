@@ -23,19 +23,49 @@ class TmdbRepository(context: Context) {
 
     private val secureStore = SecretStore(context)
 
+    private data class TmdbAuth(
+        val auth: TmdbAuth = emptyMap(),
+        val apiKey: String? = null
+    )
+
+    private fun auth(): TmdbAuth? {
+        val credential = secureStore.get(TOKEN_KEY)?.trim().orEmpty()
+        if (credential.isBlank()) return null
+        val looksLikeReadAccessToken = credential.startsWith("eyJ") && credential.count { it == '.' } >= 2
+        return if (looksLikeReadAccessToken) {
+            TmdbAuth(headers = mapOf("Authorization" to "Bearer $credential"))
+        } else {
+            TmdbAuth(apiKey = credential)
+        }
+    }
+
+    private suspend fun tmdbGet(url: String, auth: TmdbAuth): HttpResult {
+        val authenticatedUrl = auth.apiKey?.let { key ->
+            val separator = if (url.contains("?")) "&" else "?"
+            "$url${separator}api_key=${SimpleHttp.encode(key)}"
+        } ?: url
+        return SimpleHttp.get(authenticatedUrl, auth.headers)
+    }
+
     fun configured(): Boolean = !secureStore.get(TOKEN_KEY).isNullOrBlank()
     fun saveToken(token: String) {
         if (token.isBlank()) secureStore.remove(TOKEN_KEY) else secureStore.put(TOKEN_KEY, token.trim())
     }
-    fun maskedToken(): String = secureStore.get(TOKEN_KEY)?.let { if (it.length > 12) "••••${it.takeLast(6)}" else "Saved" } ?: "Not configured"
+    fun maskedToken(): String = secureStore.get(TOKEN_KEY)?.trim()?.let { credential ->
+        val type = if (credential.startsWith("eyJ") && credential.count { it == '.' } >= 2) {
+            "Read Access Token"
+        } else {
+            "API Key"
+        }
+        "$type saved · ••••${credential.takeLast(6)}"
+    } ?: "Not configured"
 
     suspend fun enrich(item: AppMedia): AppMedia {
-        val token = secureStore.get(TOKEN_KEY)?.trim().orEmpty()
-        if (token.isBlank() || item.meta.type == "rd") return item
-        val headers = mapOf("Authorization" to "Bearer $token")
+        val auth = auth() ?: return item
+        if (item.meta.type == "rd") return item
         val candidate = when {
-            imdbId(item.meta.id) != null -> findByImdb(imdbId(item.meta.id)!!, item.meta.type, headers)
-            else -> searchByTitle(item.meta.name, item.meta.type, headers)
+            imdbId(item.meta.id) != null -> findByImdb(imdbId(item.meta.id)!!, item.meta.type, auth)
+            else -> searchByTitle(item.meta.name, item.meta.type, auth)
         } ?: return item
 
         val posterPath = candidate.get("poster_path")?.takeUnless { it.isJsonNull }?.asString
@@ -54,10 +84,10 @@ class TmdbRepository(context: Context) {
         val trailers = if (item.meta.trailers.isNotEmpty()) {
             item.meta.trailers
         } else {
-            tmdbId?.let { fetchTrailers(it, item.meta.type, headers) }.orEmpty()
+            tmdbId?.let { fetchTrailers(it, item.meta.type, auth) }.orEmpty()
         }
         val contentRating = item.meta.contentRating
-            ?: tmdbId?.let { fetchContentRating(it, item.meta.type, headers) }
+            ?: tmdbId?.let { fetchContentRating(it, item.meta.type, auth) }
 
         val merged = item.meta.copy(
             poster = posterPath?.let { "$IMG/w500$it" } ?: item.meta.poster,
@@ -81,9 +111,8 @@ class TmdbRepository(context: Context) {
     }
 
     suspend fun searchPersonCredits(query: String, limit: Int = 40): List<AppMedia> {
-        val token = secureStore.get(TOKEN_KEY)?.trim().orEmpty()
-        if (token.isBlank() || query.isBlank()) return emptyList()
-        val headers = mapOf("Authorization" to "Bearer $token")
+        val auth = auth() ?: return emptyList()
+        if (query.isBlank()) return emptyList()
 
         val search = SimpleHttp.get(
             "$API/search/person?query=${SimpleHttp.encode(query.trim())}&include_adult=false&language=en-US&page=1",
@@ -98,7 +127,7 @@ class TmdbRepository(context: Context) {
             ?: return emptyList()
         val personId = person.get("id")?.takeUnless { it.isJsonNull }?.asInt ?: return emptyList()
 
-        val credits = SimpleHttp.get("$API/person/$personId/combined_credits?language=en-US", headers)
+        val credits = tmdbGet("$API/person/$personId/combined_credits?language=en-US", auth)
         if (credits.code !in 200..299) return emptyList()
         return JsonParser.parseString(credits.body).asJsonObject
             .getAsJsonArray("cast")
@@ -123,9 +152,7 @@ class TmdbRepository(context: Context) {
             .orEmpty()
     }
     suspend fun recommendationsFor(history: List<AppMedia>, limit: Int = 24): List<AppMedia> = supervisorScope {
-        val token = secureStore.get(TOKEN_KEY)?.trim().orEmpty()
-        if (token.isBlank()) return@supervisorScope emptyList()
-        val headers = mapOf("Authorization" to "Bearer $token")
+        val auth = auth() ?: return@supervisorScope emptyList()
 
         val seeds = history
             .filter { it.meta.type == "movie" || it.meta.type == "series" }
@@ -135,7 +162,7 @@ class TmdbRepository(context: Context) {
 
         val recommended = seeds.map { seed ->
             async {
-                runCatching { recommendationsForSeed(seed, headers) }.getOrDefault(emptyList())
+                runCatching { recommendationsForSeed(seed, auth) }.getOrDefault(emptyList())
             }
         }.awaitAll().flatten()
 
@@ -148,14 +175,12 @@ class TmdbRepository(context: Context) {
     }
 
     suspend fun discoveryRows(limit: Int = 18): TmdbDiscoveryRows = supervisorScope {
-        val token = secureStore.get(TOKEN_KEY)?.trim().orEmpty()
-        if (token.isBlank()) return@supervisorScope TmdbDiscoveryRows()
-        val headers = mapOf("Authorization" to "Bearer $token")
+        val auth = auth() ?: return@supervisorScope TmdbDiscoveryRows()
 
-        val newMovies = async { fetchCollection("movie/now_playing", "movie", headers, limit) }
-        val trendingMovies = async { fetchCollection("trending/movie/week", "movie", headers, limit) }
-        val newSeries = async { fetchCollection("tv/on_the_air", "series", headers, limit) }
-        val trendingSeries = async { fetchCollection("trending/tv/week", "series", headers, limit) }
+        val newMovies = async { fetchCollection("movie/now_playing", "movie", auth, limit) }
+        val trendingMovies = async { fetchCollection("trending/movie/week", "movie", auth, limit) }
+        val newSeries = async { fetchCollection("tv/on_the_air", "series", auth, limit) }
+        val trendingSeries = async { fetchCollection("trending/tv/week", "series", auth, limit) }
 
         TmdbDiscoveryRows(
             newMovies = newMovies.await(),
@@ -168,11 +193,11 @@ class TmdbRepository(context: Context) {
     private suspend fun fetchCollection(
         path: String,
         type: String,
-        headers: Map<String, String>,
+        auth: TmdbAuth,
         limit: Int
     ): List<AppMedia> {
         val separator = if (path.contains("?")) "&" else "?"
-        val result = SimpleHttp.get("$API/$path${separator}language=en-US&page=1", headers)
+        val result = tmdbGet("$API/$path${separator}language=en-US&page=1", auth)
         if (result.code !in 200..299) return emptyList()
         val root = JsonParser.parseString(result.body).asJsonObject
         return root.getAsJsonArray("results")
@@ -187,7 +212,7 @@ class TmdbRepository(context: Context) {
     }
     private suspend fun recommendationsForSeed(
         item: AppMedia,
-        headers: Map<String, String>
+        auth: TmdbAuth
     ): List<AppMedia> {
         val tmdbId = item.meta.tmdbId ?: return emptyList()
         val endpoint = if (item.meta.type == "series") "tv" else "movie"
@@ -246,10 +271,10 @@ class TmdbRepository(context: Context) {
     private suspend fun fetchContentRating(
         tmdbId: Int,
         type: String,
-        headers: Map<String, String>
+        auth: TmdbAuth
     ): String? {
         return if (type == "series") {
-            val result = SimpleHttp.get("$API/tv/$tmdbId/content_ratings", headers)
+            val result = tmdbGet("$API/tv/$tmdbId/content_ratings", auth)
             if (result.code !in 200..299) return null
             val values = JsonParser.parseString(result.body).asJsonObject
                 .getAsJsonArray("results")
@@ -262,7 +287,7 @@ class TmdbRepository(context: Context) {
                 .orEmpty()
             preferredCertification(values)
         } else {
-            val result = SimpleHttp.get("$API/movie/$tmdbId/release_dates", headers)
+            val result = tmdbGet("$API/movie/$tmdbId/release_dates", auth)
             if (result.code !in 200..299) return null
             val values = JsonParser.parseString(result.body).asJsonObject
                 .getAsJsonArray("results")
@@ -294,10 +319,10 @@ class TmdbRepository(context: Context) {
     private suspend fun fetchTrailers(
         tmdbId: Int,
         type: String,
-        headers: Map<String, String>
+        auth: TmdbAuth
     ): List<TrailerRef> {
         val endpoint = if (type == "series") "tv" else "movie"
-        val result = SimpleHttp.get("$API/$endpoint/$tmdbId/videos?language=en-US", headers)
+        val result = tmdbGet("$API/$endpoint/$tmdbId/videos?language=en-US", auth)
         if (result.code !in 200..299) return emptyList()
 
         val root = JsonParser.parseString(result.body).asJsonObject
@@ -338,9 +363,9 @@ class TmdbRepository(context: Context) {
             .orEmpty()
     }
 
-    private suspend fun findByImdb(id: String, type: String, headers: Map<String, String>): JsonObject? {
+    private suspend fun findByImdb(id: String, type: String, auth: TmdbAuth): JsonObject? {
         val url = "$API/find/${SimpleHttp.encode(id)}?external_source=imdb_id&language=en-US"
-        val result = SimpleHttp.get(url, headers)
+        val result = tmdbGet(url, auth)
         if (result.code !in 200..299) return null
         val root = JsonParser.parseString(result.body).asJsonObject
         val key = if (type == "series") "tv_results" else "movie_results"
@@ -348,10 +373,10 @@ class TmdbRepository(context: Context) {
             ?: root.getAsJsonArray(if (key == "tv_results") "movie_results" else "tv_results")?.firstOrNull()?.asJsonObject
     }
 
-    private suspend fun searchByTitle(title: String, type: String, headers: Map<String, String>): JsonObject? {
+    private suspend fun searchByTitle(title: String, type: String, auth: TmdbAuth): JsonObject? {
         val endpoint = if (type == "series") "search/tv" else "search/movie"
         val url = "$API/$endpoint?query=${SimpleHttp.encode(title)}&include_adult=false&language=en-US&page=1"
-        val result = SimpleHttp.get(url, headers)
+        val result = tmdbGet(url, auth)
         if (result.code !in 200..299) return null
         val root = JsonParser.parseString(result.body).asJsonObject
         return root.getAsJsonArray("results")?.firstOrNull()?.asJsonObject
