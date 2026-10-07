@@ -158,7 +158,7 @@ data class StreamOption(
 
     val youtubeUrl: String?
         get() = stream.ytId?.takeIf { it.isNotBlank() }
-            ?.let { "https://www.youtube.com/watch?v=$it&vq=hd720" }
+            ?.let { "https://www.youtube.com/watch?v=$it" }
 
     val requestHeaders: Map<String, String>
         get() = stream.behaviorHints?.proxyHeaders?.request.orEmpty()
