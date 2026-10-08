@@ -104,7 +104,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var rdAuthJob: Job? = null
     private var nmPairJob: Job? = null
     private var lastRdAuthFingerprint: Int? = null
-    private var lastAddonRetryAtMs: Long = 0L
 
     init {
         refreshEverything()
@@ -869,14 +868,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 nmSyncStatus = "Synced",
                 nmDeviceBlocked = false
             )
-            // Retry unresolved manifests without requiring a new cloud settings version.
-            if (addons.storedManifestUrls().size > _uiState.value.addons.size) {
-                val now = System.currentTimeMillis()
-                if (now - lastAddonRetryAtMs >= 60_000L) {
-                    lastAddonRetryAtMs = now
-                    refreshEverything()
-                }
-            }
         }
         return changed
     }
