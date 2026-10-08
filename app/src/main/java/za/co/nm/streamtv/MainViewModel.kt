@@ -714,20 +714,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val result = runCatching { nmAccount.pollPairing(pair) }
                 val status = result.getOrNull()
                 if (status?.linked == true) {
-                    runCatching {
+                    val initialSync = runCatching {
                         nmAccount.saveLinked(status)
-                        nmAccount.bootstrap(
-                            addons.storedManifestUrls(),
-                            nmAccount.playbackPreferences()
-                        )
-                        nmAccount.pushRealDebridAuth(realDebrid.exportAuth())
-                        lastRdAuthFingerprint = realDebrid.exportAuth()?.hashCode() ?: 0
+                        // Pairing is the only automatic cloud-sync window.
+                        // Never overwrite an existing phone account with empty
+                        // local TV add-ons or a missing local RD token.
+                        val remote = nmAccount.fetchState()
+                        val freshAccount = remote.settings.settingsVersion <= 0L &&
+                            remote.settings.addonManifests.isEmpty() &&
+                            !remote.settings.realDebridAuthInitialized
+                        if (freshAccount) {
+                            nmAccount.bootstrap(
+                                addons.storedManifestUrls(),
+                                nmAccount.playbackPreferences()
+                            )
+                        }
                         applyNmAccountSync(force = true)
                         nmAccount.clearAllPending()
-                    }.onFailure { error ->
-                        _uiState.value = _uiState.value.copy(
-                            message = error.message ?: "NM Account linked, but initial sync failed"
-                        )
                     }
 
                     _uiState.value = _uiState.value.copy(
@@ -735,9 +738,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         nmAccountName = nmAccount.accountName(),
                         nmPairCode = null,
                         nmPairing = false,
-                        nmSyncStatus = "Synced",
+                        nmSyncStatus = if (initialSync.isSuccess) "Synced" else "Initial sync failed",
                         nmDeviceBlocked = false,
-                        message = "NM Account linked to this TV"
+                        message = if (initialSync.isSuccess) "NM Account linked to this TV"
+                        else initialSync.exceptionOrNull()?.message
+                            ?: "TV linked. Press Sync now to retry the initial sync."
                     )
                     refreshEverything()
                     return@launch
