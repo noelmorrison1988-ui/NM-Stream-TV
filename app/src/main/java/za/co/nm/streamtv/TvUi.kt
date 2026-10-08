@@ -1857,6 +1857,12 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
 
             Text("TV Box Lite source policy", color = Color.White, fontWeight = FontWeight.Bold)
             Text("No fixed provider preference. 720p first, then 1080p fallback. Streams above 1080p are excluded.", color = NmMuted, fontSize = 12.sp)
+            Text(
+                "Streaming power protection: enabled automatically during playback. " +
+                    "Prevents app-managed CPU/Wi-Fi sleep when possible; it cannot reserve " +
+                    "internet bandwidth or override your router's quality of service.",
+                color = NmMuted, fontSize = 12.sp
+            )
 
             Text("Preferred audio language", color = Color.White, fontWeight = FontWeight.Bold)
             Box(Modifier.fillMaxWidth()) { InputBox(audioLang, "en") { audioLang = it } }
@@ -1889,7 +1895,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Button(onClick = { showConnectionLog = true }) { Text("Connection Log") }
             Text("${state.connectionLog.size} events this session", color = NmMuted, fontSize = 12.sp)
         } }
-        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.16 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.17 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
@@ -2367,6 +2373,9 @@ private fun PlayerScreen(
 
     val player = remember(url, videoId, headers, subtitles, prewarmedPlayer) {
         if (prewarmedPlayer != null) {
+            // Preserve network/CPU wake protection on the standby player
+            // after it becomes the active playback source.
+            prewarmedPlayer.setWakeMode(C.WAKE_MODE_NETWORK)
             prewarmedPlayer.playWhenReady = true
             prewarmedPlayer
         } else {
@@ -2394,6 +2403,10 @@ private fun PlayerScreen(
             )
             .build()
             .apply {
+                // Media3 manages the CPU wake lock and high-performance Wi-Fi
+                // lock while playback needs them, releasing them on pause
+                // or player.release(). No background keep-alive requests.
+                setWakeMode(C.WAKE_MODE_NETWORK)
                 val subs = subtitles.mapIndexed { index, option ->
                     MediaItem.SubtitleConfiguration.Builder(Uri.parse(option.subtitle.url))
                         .setId(option.subtitle.id.ifBlank { "sub-" + index })
@@ -2482,6 +2495,9 @@ private fun PlayerScreen(
                     DefaultMediaSourceFactory(context).setDataSourceFactory(dataSource)
                 )
                 .build().apply {
+                    // The prepared backup needs the same wake policy once
+                    // it is promoted to active playback after failover.
+                    setWakeMode(C.WAKE_MODE_NETWORK)
                     val subs = subtitles.mapIndexed { index, option ->
                         MediaItem.SubtitleConfiguration.Builder(Uri.parse(option.subtitle.url))
                             .setId(option.subtitle.id.ifBlank { "backup-sub-$index" })
