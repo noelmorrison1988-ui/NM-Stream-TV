@@ -253,6 +253,29 @@ data class StreamOption(
         ?: stream.behaviorHints?.filename
         ?: "Stream"
 
+    // An opaque, stable identifier for distinguishing individual links even
+    // when the provider gives several streams the same display name.
+    // Never put signed URLs, API keys or debrid tokens into on-screen labels.
+    fun safeLinkId(): String {
+        val identity = playableUrl
+            ?: stream.externalUrl
+            ?: stream.infoHash
+            ?: youtubeUrl
+            ?: (addonName + "|" + displayTitle())
+        return java.security.MessageDigest.getInstance("SHA-256")
+            .digest(identity.toByteArray(Charsets.UTF_8))
+            .take(5)
+            .joinToString("") { "%02X".format(it.toInt() and 0xff) }
+    }
+
+    fun switchIdentityLabel(): String {
+        val safeTitle = displayTitle()
+            .replace(Regex("""https?://\S+""", RegexOption.IGNORE_CASE), "[URL]")
+            .replace(Regex("""\s+"""), " ")
+            .take(48)
+        return "$addonName · $safeTitle · ${qualityLabel()} · #${safeLinkId()}"
+    }
+
     fun qualityLabel(): String = detectedQuality?.let { "${it}p" } ?: "Quality unknown"
 
     fun transportLabel(): String = when {
