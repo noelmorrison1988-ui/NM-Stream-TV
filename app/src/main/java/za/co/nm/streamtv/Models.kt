@@ -59,7 +59,11 @@ data class MetaItem(
     val director: String? = null,
     val runtimeMinutes: Int? = null,
     val fullReleaseDate: String? = null,
-    val ratingCount: Int? = null
+    val ratingCount: Int? = null,
+    // IMDb title identifiers are understood by major Stremio stream add-ons.
+    val imdbId: String? = null,
+    // All known TV seasons; episode lists are fetched only on selection.
+    val seasonNumbers: List<Int> = emptyList()
 )
 
 data class TrailerRef(
@@ -252,6 +256,21 @@ data class StreamOption(
 
     val isP2p: Boolean
         get() = !stream.infoHash.isNullOrBlank() && playableUrl == null
+
+    // Some add-ons return a donation/subscribe screen instead of a stream.
+    // Never place these advertisements in the playable source selector.
+    val isPromotional: Boolean
+        get() {
+            val title = listOfNotNull(stream.name, stream.title).joinToString(" ").lowercase()
+            val external = stream.externalUrl.orEmpty().lowercase()
+            val markers = listOf(
+                "support the project", "donate", "donation",
+                "buy me a coffee", "buymeacoffee", "ko-fi.com",
+                "patreon.com", "upgrade account", "click to configure",
+                "subscribe to unlock"
+            )
+            return markers.any { title.contains(it) || external.contains(it) }
+        }
 
     fun displayTitle(): String = stream.title
         ?: stream.name
