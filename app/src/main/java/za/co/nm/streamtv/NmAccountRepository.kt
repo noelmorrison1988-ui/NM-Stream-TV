@@ -74,6 +74,10 @@ class NmAccountRepository(context: Context) {
         private const val PREF_HTTP_KEY = "nm_pref_http_debrid"
         private const val PREF_AUDIO_KEY = "nm_pref_audio"
         private const val PREF_SUBTITLE_KEY = "nm_pref_subtitle"
+        // Pending changes survive app restarts until the user presses Sync now.
+        private const val DIRTY_ADDONS = "nm_manual_dirty_addons"
+        private const val DIRTY_PREFS = "nm_manual_dirty_prefs"
+        private const val DIRTY_RD = "nm_manual_dirty_rd"
     }
 
     private val store = SecretStore(context)
@@ -95,6 +99,24 @@ class NmAccountRepository(context: Context) {
             preferredAudioLanguage = store.get(PREF_AUDIO_KEY)?.takeIf { it.isNotBlank() } ?: "en",
             subtitleLanguage = store.get(PREF_SUBTITLE_KEY)?.takeIf { it.isNotBlank() } ?: "en"
         )
+
+    fun markAddonsPending() = store.put(DIRTY_ADDONS, "true")
+    fun markPreferencesPending() = store.put(DIRTY_PREFS, "true")
+    fun markRealDebridPending() = store.put(DIRTY_RD, "true")
+
+    fun addonsPending(): Boolean = store.get(DIRTY_ADDONS) == "true"
+    fun preferencesPending(): Boolean = store.get(DIRTY_PREFS) == "true"
+    fun realDebridPending(): Boolean = store.get(DIRTY_RD) == "true"
+
+    fun clearAddonsPending() = store.remove(DIRTY_ADDONS)
+    fun clearPreferencesPending() = store.remove(DIRTY_PREFS)
+    fun clearRealDebridPending() = store.remove(DIRTY_RD)
+
+    fun clearAllPending() {
+        clearAddonsPending()
+        clearPreferencesPending()
+        clearRealDebridPending()
+    }
 
     fun savePlaybackPreferences(preferences: NmPlaybackPreferences) {
         store.put(PREF_QUALITY_KEY, preferences.preferredQuality.toString())
