@@ -407,7 +407,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 addons.loadMeta(resolvedItem, _uiState.value.addons)
             }.getOrDefault(resolvedItem)
             val loaded = if (tmdb.configured()) {
-                runCatching { tmdb.enrich(sourceMeta) }.getOrDefault(sourceMeta)
+                runCatching { tmdb.enrich(sourceMeta, richDetails = true) }.getOrDefault(sourceMeta)
             } else sourceMeta
             if (!MediaPolicy.allows(loaded)) {
                 _uiState.value = _uiState.value.copy(
