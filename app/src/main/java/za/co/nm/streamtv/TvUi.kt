@@ -2049,7 +2049,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Button(onClick = { showConnectionLog = true }) { Text("Connection Log") }
             Text("${state.connectionLog.size} events this session", color = NmMuted, fontSize = 12.sp)
         } }
-        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.19 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.20 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
