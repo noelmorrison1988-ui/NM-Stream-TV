@@ -2329,7 +2329,11 @@ private fun PlayerScreen(
 
     var started by remember(player) { mutableStateOf(false) }
     var resumeApplied by remember(player) {
-        mutableStateOf(prewarmedPlayer != null || (initialResumeMs <= 0 && initialResumePercent == null))
+        mutableStateOf(initialResumeMs <= 0 && initialResumePercent == null)
+    }
+    // Keep the last real episode position even if a failed player resets to zero.
+    var lastReliablePositionMs by remember(player) {
+        mutableLongStateOf(initialResumeMs.coerceAtLeast(0L))
     }
     var trackRevision by remember(player) { mutableIntStateOf(0) }
     var showAudioMenu by remember { mutableStateOf(false) }
@@ -2408,7 +2412,7 @@ private fun PlayerScreen(
     var lowBufferSamples by remember(player) { mutableIntStateOf(0) }
 
     fun switchWithStandby(positionMs: Long, reason: String) {
-        val pos = positionMs.coerceAtLeast(0L)
+        val pos = maxOf(positionMs.coerceAtLeast(0L), lastReliablePositionMs)
         val standby = standbyPlayer
         val valid = standby != null && nextSource != null && standbyPrepareRequested &&
             standby.playbackState == Player.STATE_READY &&
@@ -2742,6 +2746,7 @@ private fun PlayerScreen(
             }.coerceIn(0L, (duration - 1L).coerceAtLeast(0L))
 
             player.seekTo(target)
+            lastReliablePositionMs = maxOf(lastReliablePositionMs, target)
             player.playWhenReady = true
             resumeApplied = true
         }
@@ -2820,7 +2825,7 @@ private fun PlayerScreen(
                 // Do not store the error video's time as the episode progress.
                 // The existing failover excludes this URL for the full chain.
                 switchWithStandby(
-                    initialResumeMs.coerceAtLeast(0L),
+                    lastReliablePositionMs,
                     if (twoMinutePlaceholder) "Two-minute provider placeholder"
                     else "Short hosted-provider placeholder"
                 )
@@ -2893,11 +2898,16 @@ private fun PlayerScreen(
             delay(5_000)
             val duration = player.duration.takeIf { it > 0 } ?: 0L
             val position = player.currentPosition.coerceAtLeast(0L)
-            if (!started && duration > 0) {
-                onStarted(position, duration)
-                started = true
+            if (resumeApplied && !sourceSwitchRequested &&
+                duration > 180_000L && player.playbackState == Player.STATE_READY
+            ) {
+                lastReliablePositionMs = maxOf(lastReliablePositionMs, position)
+                if (!started) {
+                    onStarted(position, duration)
+                    started = true
+                }
+                onProgress(position, duration)
             }
-            if (duration > 0) onProgress(position, duration)
         }
     }
 
@@ -2907,6 +2917,11 @@ private fun PlayerScreen(
             playerPositionMs = player.currentPosition.coerceAtLeast(0L)
             playerDurationMs = player.duration.takeIf { it > 0 } ?: 0L
             isPlaying = player.isPlaying
+            if (resumeApplied && player.playbackState == Player.STATE_READY &&
+                player.duration > 180_000L && !sourceSwitchRequested
+            ) {
+                lastReliablePositionMs = maxOf(lastReliablePositionMs, player.currentPosition)
+            }
             onPlaybackHealth(
                 player.totalBufferedDuration,
                 player.playbackState == Player.STATE_BUFFERING
@@ -2947,7 +2962,11 @@ private fun PlayerScreen(
         onDispose {
             val duration = player.duration.takeIf { it > 0 } ?: 0L
             val position = player.currentPosition.coerceAtLeast(0L)
-            if (duration > 0) onStopped(position, duration)
+            // A failing source must not overwrite the episode's saved
+            // position with zero, or the timestamp of a placeholder video.
+            if (duration > 180_000L && resumeApplied && !sourceSwitchRequested) {
+                onStopped(maxOf(position, lastReliablePositionMs), duration)
+            }
             player.release()
         }
     }
