@@ -204,7 +204,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 iptvStatus = "Not available in Lite",
                 nmAccountLinked = nmAccount.isLinked(),
                 nmAccountName = nmAccount.accountName(),
-                nmSyncStatus = if (nmAccount.isLinked()) _uiState.value.nmSyncStatus else "Not linked",
+                nmSyncStatus = if (nmAccount.isLinked()) {
+                    _uiState.value.nmSyncStatus.takeUnless { it == "Not linked" } ?: "Manual sync"
+                } else "Not linked",
                 preferredQuality = nmPrefs.preferredQuality,
                 preferHttpDebrid = nmPrefs.preferHttpDebrid,
                 preferredAudioLanguage = nmPrefs.preferredAudioLanguage,
@@ -810,34 +812,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    private fun startNmSyncLoop() {
-        nmSyncJob?.cancel()
-        nmSyncJob = viewModelScope.launch {
-            while (true) {
-                if (nmAccount.isLinked()) {
-                    runCatching {
-                        applyNmAccountSync(force = false)
-                        pushChangedServiceAuthIfNeeded()
-                    }.onFailure { error ->
-                        _uiState.value = when (error) {
-                            is NmDeviceBlockedException -> _uiState.value.copy(
-                                nmSyncStatus = "Blocked",
-                                nmDeviceBlocked = true,
-                                message = "Device Blocked by NM"
-                            )
-                            is NmDeviceUnpairedException -> _uiState.value.copy(
-                                nmAccountLinked = false,
-                                nmAccountName = null,
-                                nmSyncStatus = "Not linked",
-                                nmDeviceBlocked = false,
-                                message = "This device was unpaired from NM Account"
-                            )
-                            else -> _uiState.value.copy(nmSyncStatus = "Waiting to sync")
-                        }
-                    }
-                }
-                delay(60_000)
-            }
+    private suspend fun pushPendingManualChanges() {
+        if (nmAccount.addonsPending()) {
+            nmAccount.pushAddonManifests(addons.storedManifestUrls())
+            nmAccount.clearAddonsPending()
+        }
+        if (nmAccount.preferencesPending()) {
+            nmAccount.pushPlaybackPreferences(nmAccount.playbackPreferences())
+            nmAccount.clearPreferencesPending()
+        }
+        if (nmAccount.realDebridPending()) {
+            nmAccount.pushRealDebridAuth(realDebrid.exportAuth())
+            nmAccount.clearRealDebridPending()
         }
     }
 
@@ -888,19 +874,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         return changed
-    }
-
-    private suspend fun pushChangedServiceAuthIfNeeded() {
-        if (!nmAccount.isLinked()) return
-
-        val rdAuth = realDebrid.exportAuth()
-        val rdFingerprint = rdAuth?.hashCode() ?: 0
-        if (lastRdAuthFingerprint == null) {
-            lastRdAuthFingerprint = rdFingerprint
-        } else if (rdFingerprint != lastRdAuthFingerprint) {
-            nmAccount.pushRealDebridAuth(rdAuth)
-            lastRdAuthFingerprint = rdFingerprint
-        }
     }
 
     fun resumePosition(item: AppMedia, videoId: String): Long = playback.resumePosition(item, videoId)
