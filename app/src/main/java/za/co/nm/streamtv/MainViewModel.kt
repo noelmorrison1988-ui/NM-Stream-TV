@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -76,7 +77,8 @@ data class MainUiState(
     val preferHttpDebrid: Boolean = true,
     val preferredAudioLanguage: String = "en",
     val preferredSubtitleLanguage: String = "en",
-    val message: String? = null
+    val message: String? = null,
+    val connectionLog: List<ConnectionLogEntry> = emptyList()
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -90,16 +92,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
+    private val connectionMonitor = ConnectionMonitor(application) { event ->
+        val current = _uiState.value
+        _uiState.value = current.copy(connectionLog = (current.connectionLog + event).takeLast(200))
+    }
+
+    fun setPlaybackMonitoringActive(active: Boolean) = connectionMonitor.setPlaybackActive(active)
+    fun reportPlaybackBuffer(bufferedMs: Long, buffering: Boolean) =
+        connectionMonitor.updatePlayerBuffer(bufferedMs, buffering)
 
     private var rdAuthJob: Job? = null
     private var nmPairJob: Job? = null
-    private var nmSyncJob: Job? = null
     private var lastRdAuthFingerprint: Int? = null
-    private var lastAddonRetryAtMs: Long = 0L
 
     init {
         refreshEverything()
-        startNmSyncLoop()
+        viewModelScope.launch(Dispatchers.Default) { connectionMonitor.run() }
     }
 
     fun refreshEverything() {
@@ -195,7 +203,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 iptvStatus = "Not available in Lite",
                 nmAccountLinked = nmAccount.isLinked(),
                 nmAccountName = nmAccount.accountName(),
-                nmSyncStatus = if (nmAccount.isLinked()) _uiState.value.nmSyncStatus else "Not linked",
+                nmSyncStatus = if (nmAccount.isLinked()) {
+                    _uiState.value.nmSyncStatus.takeUnless { it == "Not linked" } ?: "Manual sync"
+                } else "Not linked",
                 preferredQuality = nmPrefs.preferredQuality,
                 preferHttpDebrid = nmPrefs.preferHttpDebrid,
                 preferredAudioLanguage = nmPrefs.preferredAudioLanguage,
@@ -283,9 +293,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         addonInstallStatus = "Installed ${installed.manifest.name}",
                         addons = (_uiState.value.addons + installed).distinctBy { it.manifestUrl }
                     )
-                    if (nmAccount.isLinked()) {
-                        runCatching { nmAccount.pushAddonManifests(addons.storedManifestUrls()) }
-                    }
+                    if (nmAccount.isLinked()) nmAccount.markAddonsPending()
                     refreshEverything()
                 }
                 .onFailure { error ->
@@ -301,9 +309,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         addons.remove(manifestUrl)
         _uiState.value = _uiState.value.copy(addonInstallStatus = "Add-on removed")
         viewModelScope.launch {
-            if (nmAccount.isLinked()) {
-                runCatching { nmAccount.pushAddonManifests(addons.storedManifestUrls()) }
-            }
+            if (nmAccount.isLinked()) nmAccount.markAddonsPending()
             refreshEverything()
         }
     }
@@ -601,9 +607,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (credentials != null) {
                     val success = runCatching { realDebrid.exchangeDeviceCode(device.deviceCode, credentials); true }.getOrDefault(false)
                     if (success) {
-                        if (nmAccount.isLinked()) {
-                            runCatching { nmAccount.pushRealDebridAuth(realDebrid.exportAuth()) }
-                        }
+                        if (nmAccount.isLinked()) nmAccount.markRealDebridPending()
                         lastRdAuthFingerprint = realDebrid.exportAuth()?.hashCode() ?: 0
                         _uiState.value = _uiState.value.copy(rdConnecting = false, rdDeviceCode = null, message = "Real-Debrid connected")
                         refreshEverything()
@@ -620,15 +624,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         rdAuthJob?.cancel()
         realDebrid.disconnect()
         lastRdAuthFingerprint = 0
-        viewModelScope.launch {
-            if (nmAccount.isLinked()) runCatching { nmAccount.pushRealDebridAuth(null) }
-        }
+        if (nmAccount.isLinked()) nmAccount.markRealDebridPending()
         _uiState.value = _uiState.value.copy(
             rdUser = null,
             rdDeviceCode = null,
             rdConnecting = false,
             debridItems = emptyList(),
-            message = "Real-Debrid disconnected on all linked devices"
+            message = "Real-Debrid disconnected locally. Press Sync now to update linked devices."
         )
     }
 
@@ -652,16 +654,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             preferredSubtitleLanguage = prefs.subtitleLanguage,
             message = "Playback language and source preferences saved"
         )
-        viewModelScope.launch {
-            if (nmAccount.isLinked()) {
-                runCatching { nmAccount.pushPlaybackPreferences(prefs) }
-                    .onFailure { error ->
-                        _uiState.value = _uiState.value.copy(
-                            message = error.message ?: "Saved locally, but cloud sync failed"
-                        )
-                    }
-            }
-        }
+        if (nmAccount.isLinked()) nmAccount.markPreferencesPending()
     }
 
     fun saveMobileLiteLanguagePreferences(
@@ -679,16 +672,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             preferredSubtitleLanguage = prefs.subtitleLanguage,
             message = "Language preferences saved"
         )
-        viewModelScope.launch {
-            if (nmAccount.isLinked()) {
-                runCatching { nmAccount.pushPlaybackPreferences(prefs) }
-                    .onFailure { error ->
-                        _uiState.value = _uiState.value.copy(
-                            message = error.message ?: "Saved locally, but cloud sync failed"
-                        )
-                    }
-            }
-        }
+        if (nmAccount.isLinked()) nmAccount.markPreferencesPending()
     }
     fun beginNmAccountPairing() {
         nmPairJob?.cancel()
@@ -729,19 +713,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val result = runCatching { nmAccount.pollPairing(pair) }
                 val status = result.getOrNull()
                 if (status?.linked == true) {
-                    runCatching {
+                    val initialSync = runCatching {
                         nmAccount.saveLinked(status)
-                        nmAccount.bootstrap(
-                            addons.storedManifestUrls(),
-                            nmAccount.playbackPreferences()
-                        )
-                        nmAccount.pushRealDebridAuth(realDebrid.exportAuth())
-                        lastRdAuthFingerprint = realDebrid.exportAuth()?.hashCode() ?: 0
+                        // Pairing is the only automatic cloud-sync window.
+                        // Never overwrite an existing phone account with empty
+                        // local TV add-ons or a missing local RD token.
+                        val remote = nmAccount.fetchState()
+                        val freshAccount = remote.settings.settingsVersion <= 0L &&
+                            remote.settings.addonManifests.isEmpty() &&
+                            !remote.settings.realDebridAuthInitialized
+                        if (freshAccount) {
+                            nmAccount.bootstrap(
+                                addons.storedManifestUrls(),
+                                nmAccount.playbackPreferences()
+                            )
+                        }
                         applyNmAccountSync(force = true)
-                    }.onFailure { error ->
-                        _uiState.value = _uiState.value.copy(
-                            message = error.message ?: "NM Account linked, but initial sync failed"
-                        )
+                        nmAccount.clearAllPending()
                     }
 
                     _uiState.value = _uiState.value.copy(
@@ -749,9 +737,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         nmAccountName = nmAccount.accountName(),
                         nmPairCode = null,
                         nmPairing = false,
-                        nmSyncStatus = "Synced",
+                        nmSyncStatus = if (initialSync.isSuccess) "Synced" else "Initial sync failed",
                         nmDeviceBlocked = false,
-                        message = "NM Account linked to this TV"
+                        message = if (initialSync.isSuccess) "NM Account linked to this TV"
+                        else initialSync.exceptionOrNull()?.message
+                            ?: "TV linked. Press Sync now to retry the initial sync."
                     )
                     refreshEverything()
                     return@launch
@@ -777,13 +767,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             _uiState.value = _uiState.value.copy(nmSyncStatus = "Syncing…")
-            // A manual sync must retry saved manifests, even when version is unchanged.
-            runCatching { applyNmAccountSync(force = true) }
+            // Push only locally edited categories, then pull all cloud settings.
+            runCatching {
+                pushPendingManualChanges()
+                applyNmAccountSync(force = true)
+            }
                 .onSuccess {
                     _uiState.value = _uiState.value.copy(
                         nmSyncStatus = "Synced",
                         nmDeviceBlocked = false,
-                        message = "NM Account settings are up to date"
+                        message = "Manual sync complete: local changes pushed and cloud settings refreshed"
                     )
                 }
                 .onFailure { error ->
@@ -823,34 +816,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    private fun startNmSyncLoop() {
-        nmSyncJob?.cancel()
-        nmSyncJob = viewModelScope.launch {
-            while (true) {
-                if (nmAccount.isLinked()) {
-                    runCatching {
-                        applyNmAccountSync(force = false)
-                        pushChangedServiceAuthIfNeeded()
-                    }.onFailure { error ->
-                        _uiState.value = when (error) {
-                            is NmDeviceBlockedException -> _uiState.value.copy(
-                                nmSyncStatus = "Blocked",
-                                nmDeviceBlocked = true,
-                                message = "Device Blocked by NM"
-                            )
-                            is NmDeviceUnpairedException -> _uiState.value.copy(
-                                nmAccountLinked = false,
-                                nmAccountName = null,
-                                nmSyncStatus = "Not linked",
-                                nmDeviceBlocked = false,
-                                message = "This device was unpaired from NM Account"
-                            )
-                            else -> _uiState.value.copy(nmSyncStatus = "Waiting to sync")
-                        }
-                    }
-                }
-                delay(60_000)
-            }
+    private suspend fun pushPendingManualChanges() {
+        if (nmAccount.addonsPending()) {
+            nmAccount.pushAddonManifests(addons.storedManifestUrls())
+            nmAccount.clearAddonsPending()
+        }
+        if (nmAccount.preferencesPending()) {
+            nmAccount.pushPlaybackPreferences(nmAccount.playbackPreferences())
+            nmAccount.clearPreferencesPending()
+        }
+        if (nmAccount.realDebridPending()) {
+            nmAccount.pushRealDebridAuth(realDebrid.exportAuth())
+            nmAccount.clearRealDebridPending()
         }
     }
 
@@ -891,29 +868,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 nmSyncStatus = "Synced",
                 nmDeviceBlocked = false
             )
-            // Retry unresolved manifests without requiring a new cloud settings version.
-            if (addons.storedManifestUrls().size > _uiState.value.addons.size) {
-                val now = System.currentTimeMillis()
-                if (now - lastAddonRetryAtMs >= 60_000L) {
-                    lastAddonRetryAtMs = now
-                    refreshEverything()
-                }
-            }
         }
         return changed
-    }
-
-    private suspend fun pushChangedServiceAuthIfNeeded() {
-        if (!nmAccount.isLinked()) return
-
-        val rdAuth = realDebrid.exportAuth()
-        val rdFingerprint = rdAuth?.hashCode() ?: 0
-        if (lastRdAuthFingerprint == null) {
-            lastRdAuthFingerprint = rdFingerprint
-        } else if (rdFingerprint != lastRdAuthFingerprint) {
-            nmAccount.pushRealDebridAuth(rdAuth)
-            lastRdAuthFingerprint = rdFingerprint
-        }
     }
 
     fun resumePosition(item: AppMedia, videoId: String): Long = playback.resumePosition(item, videoId)

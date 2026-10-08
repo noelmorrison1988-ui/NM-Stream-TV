@@ -441,6 +441,10 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     onStopped = { _, _ -> }
                 )
                 is Screen.Player -> {
+                    DisposableEffect(current.videoId, current.source.playableUrl) {
+                        viewModel.setPlaybackMonitoringActive(true)
+                        onDispose { viewModel.setPlaybackMonitoringActive(false) }
+                    }
                     val activeSubtitles = current.resumeSubtitles ?: state.subtitleOptions
                     val currentKey = viewModel.sourceRequestKey(current.item, current.videoId)
                     val matchingSources = if (state.sourceRequestKey == currentKey &&
@@ -496,6 +500,9 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                                 p,
                                 d
                             )
+                        },
+                        onPlaybackHealth = { bufferMs, isBuffering ->
+                            viewModel.reportPlaybackBuffer(bufferMs, isBuffering)
                         },
                         onStopped = { p, d ->
                             viewModel.onPlaybackStopped(
@@ -1722,7 +1729,7 @@ private fun AddonsScreen(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    "These add-ons remain saved and will retry automatically. Settings → NM Account → Sync now retries immediately.",
+                    "These add-ons remain saved. Settings → NM Account → Sync now retries them, or restart the app to refresh.",
                     color = NmMuted
                 )
             }
@@ -1760,6 +1767,48 @@ private fun AddonsScreen(
 
 @Composable
 private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
+    var showConnectionLog by remember { mutableStateOf(false) }
+    if (showConnectionLog) {
+        Dialog(onDismissRequest = { showConnectionLog = false }) {
+            Column(
+                Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(NmPanel)
+                    .border(1.dp, NmGold, RoundedCornerShape(16.dp))
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("Connection Log", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "This session only · device connection and observed app download-rate dips. " +
+                        "Not an internet speed test; buffering may naturally pause downloads.",
+                    color = NmMuted,
+                    fontSize = 12.sp
+                )
+                LazyColumn(
+                    Modifier.fillMaxWidth().heightIn(max = 400.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    if (state.connectionLog.isEmpty()) {
+                        item { Text("No events yet.", color = NmMuted) }
+                    } else {
+                        items(state.connectionLog.asReversed()) { entry ->
+                            Text(
+                                "${entry.time}  ·  ${entry.detail}",
+                                color = if (
+                                    entry.detail.contains("lost", true) ||
+                                    entry.detail.contains("dip", true) ||
+                                    entry.detail.contains("No incoming", true)
+                                ) NmGold else NmPlatinum,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                }
+                Button(onClick = { showConnectionLog = false }) { Text("Close log") }
+            }
+        }
+    }
     var audioLang by remember(state.preferredAudioLanguage) { mutableStateOf(state.preferredAudioLanguage) }
     var subtitleLang by remember(state.preferredSubtitleLanguage) { mutableStateOf(state.preferredSubtitleLanguage) }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 24.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 55.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -1775,7 +1824,8 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
                 color = if (state.nmAccountLinked) NmGreen else NmMuted
             )
             Text(
-                "Pair this device once, then manage synced add-ons, playback language and Real-Debrid settings from your phone.",
+                "Cloud sync is manual after pairing. Changes on this TV stay local until you press Sync now. " +
+                    "Phone-account changes are pulled when you press Sync now.",
                 color = NmMuted
             )
             if (state.nmAccountLinked) {
@@ -1784,6 +1834,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
                     Button(onClick = vm::unlinkNmAccount) { Text("Unlink") }
                 }
                 Text("Sync status: ${state.nmSyncStatus}", color = NmGreen)
+                Text("Sync now pushes pending local add-ons, language preferences and Real-Debrid changes; then fetches account settings.", color = NmMuted, fontSize = 12.sp)
             } else {
                 Button(
                     onClick = vm::beginNmAccountPairing,
@@ -1797,7 +1848,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
         } }
         item { CardBox {
             Text("Playback & language", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            Text("These preferences sync to every linked NM Stream TV device.", color = NmMuted)
+            Text("Changes are saved locally. Use Settings → Sync now to send them to linked devices.", color = NmMuted)
 
             Text("TV Box Lite source policy", color = Color.White, fontWeight = FontWeight.Bold)
             Text("No fixed provider preference. 720p first, then 1080p fallback. Streams above 1080p are excluded.", color = NmMuted, fontSize = 12.sp)
@@ -1811,7 +1862,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
 
             Button(onClick = {
                 vm.saveMobileLiteLanguagePreferences(audioLang, subtitleLang)
-            }) { Text("Save & sync language preferences") }
+            }) { Text("Save language preferences") }
         } }
         item { CardBox {
             Text("TMDB metadata, actor search & discovery", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
@@ -1827,7 +1878,13 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.14 · Morrison Entertainment", color = NmMuted) }
+        item { CardBox {
+            Text("Connection diagnostics", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text("Timestamped connection losses, recovery and app download-rate dips. Clears when this app session ends.", color = NmMuted)
+            Button(onClick = { showConnectionLog = true }) { Text("Connection Log") }
+            Text("${state.connectionLog.size} events this session", color = NmMuted, fontSize = 12.sp)
+        } }
+        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.15 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
@@ -2203,6 +2260,7 @@ private fun PlayerScreen(
     onStarted: (Long, Long) -> Unit,
     onProgress: (Long, Long) -> Unit,
     onStopped: (Long, Long) -> Unit,
+    onPlaybackHealth: (Long, Boolean) -> Unit = { _, _ -> },
     onSourceSwitch: (Long, String, ExoPlayer?, StreamOption?) -> Unit =
         { _, _, _, _ -> }
 ) {
@@ -2849,6 +2907,10 @@ private fun PlayerScreen(
             playerPositionMs = player.currentPosition.coerceAtLeast(0L)
             playerDurationMs = player.duration.takeIf { it > 0 } ?: 0L
             isPlaying = player.isPlaying
+            onPlaybackHealth(
+                player.totalBufferedDuration,
+                player.playbackState == Player.STATE_BUFFERING
+            )
         }
     }
 
