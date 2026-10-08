@@ -2580,22 +2580,33 @@ private fun PlayerScreen(
             val stalledForMs = if (bufferStart > 0L) now - bufferStart else 0L
             val playerError = player.playerError
 
-            // Some hosted providers send an actual playable "not cached"
-            // video instead of an HTTP error. ExoPlayer can't read text
-            // rendered in the video, but a very short movie/episode
-            // (< 3 minutes) from the known provider is usually its
-            // placeholder. Keep the original resume time, not the short
-            // placeholder's playback position.
+            // Some add-ons return a playable 2:00 error/blocked-content video
+            // instead of an HTTP error. Recognise that duration regardless of
+            // the add-on name (Comet, MediaFusion, etc.). Allow a two-second
+            // tolerance for differing container metadata and player rounding.
+            // Only apply this to movies and series; never to trailers.
             val briefDuration = player.duration
-            val fromComet = sourceProvider?.contains("comet", ignoreCase = true) == true ||
-                sourceProvider?.contains("elfhosted", ignoreCase = true) == true
             val contentIsFeature = item.meta.type == "movie" || item.meta.type == "series"
-            if (fromComet && contentIsFeature &&
-                briefDuration in 1L..179_999L && player.playbackState == Player.STATE_READY
+            val isAddonPlayback = sourceProvider != null && !videoId.startsWith("trailer:")
+            val twoMinutePlaceholder = briefDuration in 118_000L..122_000L
+            val hostedSource = sourceProvider?.contains("comet", ignoreCase = true) == true ||
+                sourceProvider?.contains("elfhosted", ignoreCase = true) == true
+            // Preserve the existing short-hosted-video guard for other
+            // provider placeholder durations, not just exactly 2:00.
+            val shortHostedPlaceholder = hostedSource && briefDuration in 1L..179_999L
+            if (contentIsFeature && isAddonPlayback &&
+                player.playbackState == Player.STATE_READY &&
+                (twoMinutePlaceholder || shortHostedPlaceholder)
             ) {
                 sourceSwitchRequested = true
-                recoveryMessage = "Short provider placeholder detected · switching source…"
-                onSourceSwitch(initialResumeMs.coerceAtLeast(0L), "Provider returned a short placeholder")
+                recoveryMessage = "Provider placeholder detected · trying next source…"
+                // Do not store the error video's time as the episode progress.
+                // The existing failover excludes this URL for the full chain.
+                onSourceSwitch(
+                    initialResumeMs.coerceAtLeast(0L),
+                    if (twoMinutePlaceholder) "Two-minute provider placeholder"
+                    else "Short hosted-provider placeholder"
+                )
                 continue
             }
 
