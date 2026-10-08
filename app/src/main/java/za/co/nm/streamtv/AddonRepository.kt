@@ -44,11 +44,11 @@ class AddonRepository(context: Context) {
         }
         saveManifestCache(cached.filterKeys { it in urls })
 
-        val allowed = resolved.mapNotNull { it.second }
+        // Do not permanently delete configured add-ons when their host is temporarily
+        // unreachable. Keep the saved manifest URLs and retry on the next refresh.
+        // An add-on is merely absent from the resolved list until its manifest responds.
+        return resolved.mapNotNull { it.second }
             .filter(MediaPolicy::allowsAddon)
-        val allowedUrls = allowed.map { it.manifestUrl }.distinct()
-        if (allowedUrls.size != urls.size) saveStoredUrls(allowedUrls)
-        return allowed
     }
 
     suspend fun install(inputUrl: String): InstalledAddon {
