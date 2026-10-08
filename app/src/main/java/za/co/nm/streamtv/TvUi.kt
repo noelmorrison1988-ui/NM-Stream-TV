@@ -332,7 +332,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             state.sourceRequestKey == current.requestKey &&
                             !state.streamsLoading
                         ) {
-                            val best = state.streamOptions.firstOrNull { option ->
+                            val eligible = state.streamOptions.filter { option ->
                                 val playable = option.playableUrl != null ||
                                     option.youtubeUrl != null ||
                                     !option.stream.externalUrl.isNullOrBlank()
@@ -341,6 +341,16 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                                     option.playableUrl !in current.excludedUrls
                                 playable && ready && notFailed
                             }
+                            // After a stall or provider placeholder, try another actual
+                            // HTTP provider before choosing a second result from the
+                            // provider that just failed. Retain 720p/1080p ordering.
+                            val previousProvider = current.switchFromLabel?.substringBefore(" · ")
+                            val alternateHttp = if (previousProvider.isNullOrBlank()) {
+                                emptyList()
+                            } else {
+                                eligible.filter { it.addonName != previousProvider && it.playableUrl != null }
+                            }
+                            val best = alternateHttp.firstOrNull() ?: eligible.firstOrNull()
 
                             when {
                                 best?.playableUrl != null -> {
@@ -440,6 +450,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             viewModel.resumeCloudPercent(current.item, current.videoId)
                         },
                         sourceNotice = current.switchNotice,
+                        sourceProvider = current.source.addonName,
                         preferredAudioLanguage = state.preferredAudioLanguage,
                         preferredSubtitleLanguage = state.preferredSubtitleLanguage,
                         onStarted = { p, d ->
@@ -1744,7 +1755,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Text("These preferences sync to every linked NM Stream TV device.", color = NmMuted)
 
             Text("TV Box Lite source policy", color = Color.White, fontWeight = FontWeight.Bold)
-            Text("Pengu is the default provider. Streams above 1080p are excluded in TV Box Lite.", color = NmMuted, fontSize = 12.sp)
+            Text("No fixed provider preference. 720p first, then 1080p fallback. Streams above 1080p are excluded.", color = NmMuted, fontSize = 12.sp)
 
             Text("Preferred audio language", color = Color.White, fontWeight = FontWeight.Bold)
             Box(Modifier.fillMaxWidth()) { InputBox(audioLang, "en") { audioLang = it } }
@@ -1771,7 +1782,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.7 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.11 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
@@ -2139,6 +2150,7 @@ private fun PlayerScreen(
     resumeMs: Long,
     resumePercent: Double?,
     sourceNotice: String?,
+    sourceProvider: String? = null,
     preferredAudioLanguage: String,
     preferredSubtitleLanguage: String,
     onStarted: (Long, Long) -> Unit,
@@ -2490,7 +2502,7 @@ private fun PlayerScreen(
                         } else {
                             when (code) {
                                 android.view.KeyEvent.KEYCODE_DPAD_LEFT -> remoteControlIndex = (remoteControlIndex - 1).coerceAtLeast(0)
-                                android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> remoteControlIndex = (remoteControlIndex + 1).coerceAtMost(5)
+                                android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> remoteControlIndex = (remoteControlIndex + 1).coerceAtMost(6)
                                 android.view.KeyEvent.KEYCODE_DPAD_UP -> {
                                     scrubMode = true
                                     scrubPositionMs = player.currentPosition.coerceAtLeast(0L)
@@ -2518,6 +2530,13 @@ private fun PlayerScreen(
                                             showSubtitleMenu = false
                                         }
                                         5 -> fillVideo = !fillVideo
+                                        6 -> if (!sourceSwitchRequested) {
+                                            sourceSwitchRequested = true
+                                            onSourceSwitch(
+                                                player.currentPosition.coerceAtLeast(0L),
+                                                "Skipped source manually"
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -2560,6 +2579,25 @@ private fun PlayerScreen(
             val bufferStart = bufferingSinceMs
             val stalledForMs = if (bufferStart > 0L) now - bufferStart else 0L
             val playerError = player.playerError
+
+            // Some hosted providers send an actual playable "not cached"
+            // video instead of an HTTP error. ExoPlayer can't read text
+            // rendered in the video, but a very short movie/episode
+            // (< 3 minutes) from the known provider is usually its
+            // placeholder. Keep the original resume time, not the short
+            // placeholder's playback position.
+            val briefDuration = player.duration
+            val fromComet = sourceProvider?.contains("comet", ignoreCase = true) == true ||
+                sourceProvider?.contains("elfhosted", ignoreCase = true) == true
+            val contentIsFeature = item.meta.type == "movie" || item.meta.type == "series"
+            if (fromComet && contentIsFeature &&
+                briefDuration in 1L..179_999L && player.playbackState == Player.STATE_READY
+            ) {
+                sourceSwitchRequested = true
+                recoveryMessage = "Short provider placeholder detected · switching source…"
+                onSourceSwitch(initialResumeMs.coerceAtLeast(0L), "Provider returned a short placeholder")
+                continue
+            }
 
             if (playerError != null) {
                 sourceSwitchRequested = true
@@ -2878,6 +2916,19 @@ private fun PlayerScreen(
                         onClick = {
                             fillVideo = !fillVideo
                             controlsRevision = System.currentTimeMillis()
+                        }
+                    )
+                    PlayerControl(
+                        label = "NEXT SOURCE",
+                        selected = remoteControlIndex == 6,
+                        onClick = {
+                            if (!sourceSwitchRequested) {
+                                sourceSwitchRequested = true
+                                onSourceSwitch(
+                                    player.currentPosition.coerceAtLeast(0L),
+                                    "Skipped source manually"
+                                )
+                            }
                         }
                     )
                     Spacer(Modifier.weight(1f))
