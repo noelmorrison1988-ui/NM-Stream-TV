@@ -42,7 +42,9 @@ class HomeCategoryBrowser(
                 }
             }.awaitAll()
             TmdbBrowsePage(
-                items = responses.flatMap { it.first }
+                items = responses.zip(spec.queries)
+                    .sortedByDescending { (_, query) -> query.searchName != null }
+                    .flatMap { (response, _) -> response.first }
                     .distinctBy { "${it.meta.type}:${it.meta.tmdbId ?: it.meta.id}" }
                     .take(limit),
                 hasNext = responses.any { it.second }
