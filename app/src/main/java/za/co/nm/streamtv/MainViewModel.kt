@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 data class MainUiState(
     val loading: Boolean = true,
     val addons: List<InstalledAddon> = emptyList(),
+    val pendingAddonHosts: List<String> = emptyList(),
     val addonInstalling: Boolean = false,
     val addonInstallStatus: String? = null,
     val movies: List<AppMedia> = emptyList(),
@@ -84,6 +85,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var traktUpNext: List<PlaybackProgress> = emptyList()
     private var lastTraktAuthFingerprint: Int? = null
     private var lastRdAuthFingerprint: Int? = null
+    private var lastAddonRetryAtMs: Long = 0L
 
     init {
         refreshEverything()
@@ -98,6 +100,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 emptyList()
             }
 
+            val pendingAddonHosts = addons.storedManifestUrls()
+                .filterNot { url -> installed.any { it.manifestUrl == url } }
+                .mapNotNull { url -> runCatching { java.net.URI(url).host }.getOrNull() }
+                .distinct()
             val homeDeferred = async { runCatching { addons.loadHome(installed) }.getOrDefault(emptyList<AppMedia>() to emptyList()) }
             val rdUserDeferred = async { runCatching { realDebrid.getUser() }.getOrNull() }
             val traktUserDeferred = async { runCatching { trakt.getUser() }.getOrNull() }
@@ -188,6 +194,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.value = _uiState.value.copy(
                 loading = false,
                 addons = installed,
+                pendingAddonHosts = pendingAddonHosts,
                 movies = movies,
                 series = series,
                 noelList = noelList,
@@ -789,7 +796,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             _uiState.value = _uiState.value.copy(nmSyncStatus = "Syncing…")
-            runCatching { applyNmAccountSync(force = false) }
+            // Force a new manifest fetch even when the cloud settings version is unchanged.
+            runCatching { applyNmAccountSync(force = true) }
                 .onSuccess {
                     _uiState.value = _uiState.value.copy(
                         nmSyncStatus = "Synced",
@@ -927,6 +935,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 nmSyncStatus = "Synced",
                 nmDeviceBlocked = false
             )
+            // A previously unreachable provider can recover without changing account
+            // settings. Retry once a minute until all saved manifests are resolved.
+            if (addons.storedManifestUrls().size > _uiState.value.addons.size) {
+                val now = System.currentTimeMillis()
+                if (now - lastAddonRetryAtMs >= 60_000L) {
+                    lastAddonRetryAtMs = now
+                    refreshEverything()
+                }
+            }
         }
         return changed
     }
