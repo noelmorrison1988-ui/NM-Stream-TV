@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -65,6 +66,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -84,6 +86,7 @@ private sealed interface Screen {
     data object MyList : Screen
     data object Addons : Screen
     data object Settings : Screen
+    data class ExpandedCategory(val key: String, val title: String, val page: Int = 1, val seed: AppMedia? = null) : Screen
     data class Details(val item: AppMedia) : Screen
     data class Sources(val item: AppMedia, val videoId: String, val title: String) : Screen
     data class AutoPlay(val item: AppMedia, val videoId: String, val title: String, val requestKey: String) : Screen
@@ -92,7 +95,11 @@ private sealed interface Screen {
         val videoId: String,
         val title: String,
         val source: StreamOption,
-        val returnToSources: Boolean = true
+        val returnToSources: Boolean = true,
+        val resumeMsOverride: Long? = null,
+        val excludedUrls: Set<String> = emptySet(),
+        val sourceNotice: String? = null,
+        val prewarmedPlayer: ExoPlayer? = null
     ) : Screen
     data class Trailer(val item: AppMedia, val title: String, val source: StreamOption) : Screen
     data class YouTubeTrailer(val item: AppMedia, val title: String, val youtubeId: String) : Screen
@@ -125,6 +132,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
             is Screen.Trailer -> Screen.Details(current.item)
             is Screen.YouTubeTrailer -> Screen.Details(current.item)
             is Screen.Sources -> Screen.Details(current.item)
+            is Screen.ExpandedCategory -> if (current.seed != null) Screen.Details(current.seed) else Screen.Home
             else -> Screen.Home
         }
     }
@@ -148,6 +156,11 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                 when (val current = screen) {
                 Screen.Home -> Shell("Home", { screen = it }) {
                     HomeScreen(state,
+                        onLoadCategory = viewModel::loadThemedRow,
+                        onExpand = { key, title ->
+                            viewModel.loadExpandedCategory(key, 1)
+                            screen = Screen.ExpandedCategory(key, title)
+                        },
                         onOpen = {
                             viewModel.loadDetails(it)
                             screen = Screen.Details(it)
@@ -177,6 +190,32 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         screen = Screen.Details(it)
                     }
                 }
+                is Screen.ExpandedCategory -> {
+                    ExpandedMobileCategory(
+                        title = current.title,
+                        page = current.page,
+                        loading = state.expandedRowLoading,
+                        items = state.expandedRowItems,
+                        hasNext = state.expandedRowHasNext,
+                        open = { item ->
+                            viewModel.loadDetails(item)
+                            screen = Screen.Details(item)
+                        },
+                        back = {
+                            screen = current.seed?.let { Screen.Details(it) } ?: Screen.Home
+                        },
+                        next = {
+                            val next = current.page + 1
+                            viewModel.loadExpandedCategory(current.key, next, current.seed)
+                            screen = current.copy(page = next)
+                        },
+                        previous = {
+                            val prev = (current.page - 1).coerceAtLeast(1)
+                            viewModel.loadExpandedCategory(current.key, prev, current.seed)
+                            screen = current.copy(page = prev)
+                        }
+                    )
+                }
                 Screen.Addons -> Shell("Add-ons", { screen = it }) {
                     AddonsScreen(
                         state = state,
@@ -195,12 +234,22 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     DetailsScreen(
                         item = detailItem,
                         loading = state.detailsLoading,
+                        recommendations = state.selectedRecommendations,
+                        onRecommend = { suggested ->
+                            viewModel.loadDetails(suggested)
+                            screen = Screen.Details(suggested)
+                        },
+                        onExpandMore = {
+                            viewModel.loadExpandedCategory("similar", 1, detailItem)
+                            screen = Screen.ExpandedCategory("similar", "More Like This", 1, detailItem)
+                        },
                         trailer = trailer,
                         inMyList = state.myList.any { mediaMatches(it, detailItem) },
                         rememberedSeason = rememberedSelection?.season,
                         rememberedEpisodeId = rememberedSelection?.episodeId,
                         toggleMyList = { viewModel.toggleMyList(detailItem) },
                         rememberSeason = { season ->
+                            viewModel.loadSeasonEpisodes(detailItem, season)
                             val previous = seriesSelections[selectionKey]
                             seriesSelections = seriesSelections + (selectionKey to SeriesSelection(
                                 season = season,
@@ -252,9 +301,10 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             !state.streamsLoading
                         ) {
                             val best = state.streamOptions.firstOrNull { option ->
-                                option.playableUrl != null ||
+                                !option.isKnownUncached && !option.isPromotional &&
+                                    (option.playableUrl != null ||
                                     option.youtubeUrl != null ||
-                                    !option.stream.externalUrl.isNullOrBlank()
+                                    !option.stream.externalUrl.isNullOrBlank())
                             }
 
                             when {
@@ -322,21 +372,68 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     onProgress = { _, _ -> },
                     onStopped = { _, _ -> }
                 )
-                is Screen.Player -> PlayerScreen(
-                    item = current.item,
-                    videoId = current.videoId,
-                    title = current.title,
-                    url = current.source.playableUrl.orEmpty(),
-                    headers = current.source.requestHeaders,
-                    subtitles = state.subtitleOptions,
-                    resumeMs = viewModel.resumePosition(current.item, current.videoId),
-                    resumePercent = viewModel.resumeCloudPercent(current.item, current.videoId),
-                    preferredAudioLanguage = state.preferredAudioLanguage,
-                    preferredSubtitleLanguage = state.preferredSubtitleLanguage,
-                    onStarted = { p, d -> viewModel.onPlaybackStarted(current.item, current.videoId, p, d) },
-                    onProgress = { p, d -> viewModel.onPlaybackProgress(current.item, current.videoId, current.title, p, d) },
-                    onStopped = { p, d -> viewModel.onPlaybackStopped(current.item, current.videoId, current.title, p, d) }
-                )
+                is Screen.Player -> {
+                    DisposableEffect(current.videoId, current.source.playableUrl) {
+                        viewModel.setPlaybackMonitoringActive(true)
+                        onDispose { viewModel.setPlaybackMonitoringActive(false) }
+                    }
+                    val nextSource = state.streamOptions
+                        .filter { candidate ->
+                            candidate.playableUrl != null &&
+                                candidate.playableUrl != current.source.playableUrl &&
+                                candidate.playableUrl !in current.excludedUrls &&
+                                !candidate.isKnownUncached && !candidate.isPromotional
+                        }
+                        .sortedWith(compareBy<StreamOption> { it.litePriorityTier() }
+                            .thenBy { if (it.addonName == current.source.addonName) 1 else 0 })
+                        .firstOrNull()
+                    PlayerScreen(
+                        item = current.item,
+                        videoId = current.videoId,
+                        title = current.title,
+                        url = current.source.playableUrl.orEmpty(),
+                        headers = current.source.requestHeaders,
+                        subtitles = state.subtitleOptions,
+                        resumeMs = current.resumeMsOverride
+                            ?: viewModel.resumePosition(current.item, current.videoId),
+                        resumePercent = if (current.resumeMsOverride != null) null
+                            else viewModel.resumeCloudPercent(current.item, current.videoId),
+                        preferredAudioLanguage = state.preferredAudioLanguage,
+                        preferredSubtitleLanguage = state.preferredSubtitleLanguage,
+                        nextSource = nextSource,
+                        prewarmedPlayer = current.prewarmedPlayer,
+                        sourceNotice = current.sourceNotice,
+                        onPlaybackHealth = viewModel::reportPlaybackBuffer,
+                        onSwitch = { position, reason, prepared ->
+                            val currentUrl = current.source.playableUrl
+                            val excluded = if (currentUrl.isNullOrBlank()) current.excludedUrls
+                                else current.excludedUrls + currentUrl
+                            if (nextSource != null) {
+                                screen = current.copy(
+                                    source = nextSource,
+                                    resumeMsOverride = position,
+                                    excludedUrls = excluded,
+                                    sourceNotice = "SOURCE SWITCHED · $reason" +
+                                        "\nFROM: ${current.source.switchIdentityLabel()}" +
+                                        "\nTO: ${nextSource.switchIdentityLabel()}",
+                                    prewarmedPlayer = prepared
+                                )
+                            } else {
+                                viewModel.loadSources(current.item, current.videoId)
+                                screen = Screen.Sources(current.item, current.videoId, current.title)
+                            }
+                        },
+                        onStarted = { p, d ->
+                            viewModel.onPlaybackStarted(current.item, current.videoId, p, d)
+                        },
+                        onProgress = { p, d ->
+                            viewModel.onPlaybackProgress(current.item, current.videoId, current.title, p, d)
+                        },
+                        onStopped = { p, d ->
+                            viewModel.onPlaybackStopped(current.item, current.videoId, current.title, p, d)
+                        }
+                    )
+                }
             }
                 state.message?.let {
                     Box(Modifier.align(Alignment.BottomCenter).padding(24.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xEE22252B)).padding(horizontal = 18.dp, vertical = 10.dp)) {
@@ -677,6 +774,8 @@ private fun NavChip(label: String, selected: Boolean, onClick: () -> Unit) {
 @Composable
 private fun HomeScreen(
     state: MainUiState,
+    onLoadCategory: (String) -> Unit,
+    onExpand: (String, String) -> Unit,
     onOpen: (AppMedia) -> Unit,
     onContinue: (PlaybackProgress) -> Unit,
     onContinueManual: (PlaybackProgress) -> Unit
@@ -686,7 +785,12 @@ private fun HomeScreen(
         return
     }
     val hero = state.movies.firstOrNull()
+        ?: state.trendingMovies.firstOrNull()
+        ?: state.newMovies.firstOrNull()
         ?: state.series.firstOrNull()
+        ?: state.trendingSeries.firstOrNull()
+        ?: state.newSeries.firstOrNull()
+        ?: state.myList.firstOrNull()
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         item { if (hero != null) Hero(hero, onOpen) else EmptyHero(state.addons.isEmpty()) }
 
@@ -701,9 +805,91 @@ private fun HomeScreen(
             item { MediaRow("Watch History", historyMedia, onOpen) }
         }
 
+        HomeCollections.rows.forEach { spec ->
+            item(key = "theme:${spec.key}") {
+                LaunchedEffect(spec.key, state.tmdbConfigured, spec.key in state.themedRowsLoaded) {
+                    if (state.tmdbConfigured) onLoadCategory(spec.key)
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(spec.title, color = Color.White, fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Button(onClick = { onExpand(spec.key, spec.title) }) { Text("See all ›") }
+                    }
+                    val results = state.themedRows[spec.key].orEmpty()
+                    if (results.isNotEmpty()) {
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            contentPadding = PaddingValues(horizontal = 20.dp)
+                        ) {
+                            items(results) { movie -> PosterCard(movie, onOpen) }
+                        }
+                    } else {
+                        Text(
+                            if (!state.tmdbConfigured) "TMDB catalogue unavailable"
+                            else if (spec.key in state.themedRowsLoading) "Loading titles…"
+                            else "No results yet",
+                            color = NmMuted,
+                            modifier = Modifier.padding(horizontal = 20.dp)
+                        )
+                    }
+                }
+            }
+        }
+
         if (state.movies.isNotEmpty()) item { MediaRow("Movies", state.movies, onOpen) }
         if (state.series.isNotEmpty()) item { MediaRow("Series", state.series, onOpen) }
         if (state.debridItems.isNotEmpty()) item { MediaRow("My Real-Debrid Library", state.debridItems, onOpen) }
+    }
+}
+
+@Composable
+private fun ExpandedMobileCategory(
+    title: String,
+    page: Int,
+    loading: Boolean,
+    items: List<AppMedia>,
+    hasNext: Boolean,
+    open: (AppMedia) -> Unit,
+    back: () -> Unit,
+    next: () -> Unit,
+    previous: () -> Unit
+) {
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = back) { Text("← Back") }
+                Spacer(Modifier.width(12.dp))
+                Text(title, color = Color.White, fontSize = 25.sp,
+                    fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+            }
+        }
+        if (loading) item { Text("Loading…", color = NmMuted) }
+        if (!loading && items.isEmpty()) item {
+            Text("No matching titles found.", color = NmMuted)
+        }
+        items(items.chunked(2)) { group ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                group.forEach { movie ->
+                    Box(Modifier.weight(1f)) { PosterCard(movie, open) }
+                }
+                if (group.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = previous, enabled = page > 1) { Text("‹ Previous") }
+                Text("Page $page", color = NmMuted)
+                Button(onClick = next, enabled = hasNext) { Text("Next ›") }
+            }
+        }
     }
 }
 
@@ -1248,6 +1434,45 @@ private fun AddonsScreen(
 
 @Composable
 private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
+    var showConnectionLog by remember { mutableStateOf(false) }
+    if (showConnectionLog) {
+        val entries = state.connectionLog.asReversed()
+        val logState = rememberLazyListState()
+        val scope = rememberCoroutineScope()
+        Dialog(onDismissRequest = { showConnectionLog = false }) {
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                    .background(NmPanel).padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("Connection Log", color = Color.White,
+                    fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                Text("Swipe to scroll · newest first · session only. " +
+                    "App data transfer rates are not an internet speed test.",
+                    color = NmMuted, fontSize = 12.sp)
+                LazyColumn(
+                    Modifier.fillMaxWidth().heightIn(min = 180.dp, max = 470.dp),
+                    state = logState,
+                    verticalArrangement = Arrangement.spacedBy(9.dp)
+                ) {
+                    if (entries.isEmpty()) item { Text("No events yet", color = NmMuted) }
+                    items(entries) { entry ->
+                        Text("${entry.time} · ${entry.detail}",
+                            color = NmPlatinum, fontSize = 13.sp)
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = { scope.launch { logState.animateScrollToItem(0) } }) {
+                        Text("Newest")
+                    }
+                    Button(onClick = {
+                        scope.launch { logState.animateScrollToItem((entries.size - 1).coerceAtLeast(0)) }
+                    }) { Text("Oldest") }
+                    Button(onClick = { showConnectionLog = false }) { Text("Close") }
+                }
+            }
+        }
+    }
     var audioLang by remember(state.preferredAudioLanguage) { mutableStateOf(state.preferredAudioLanguage) }
     var subtitleLang by remember(state.preferredSubtitleLanguage) { mutableStateOf(state.preferredSubtitleLanguage) }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 24.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 55.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -1263,7 +1488,8 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
                 color = if (state.nmAccountLinked) NmGreen else NmMuted
             )
             Text(
-                "Pair this device once, then manage synced add-ons, playback language and Real-Debrid settings from your phone.",
+                "Automatic account sync runs while idle. It pauses during playback. " +
+                    "Sync now remains available for an immediate update.",
                 color = NmMuted
             )
             if (state.nmAccountLinked) {
@@ -1288,7 +1514,8 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Text("These preferences sync to every linked NM Stream TV device.", color = NmMuted)
 
             Text("Mobile Lite source policy", color = Color.White, fontWeight = FontWeight.Bold)
-            Text("Pengu is the default provider. Streams above 1080p are excluded in Mobile Lite.", color = NmMuted, fontSize = 12.sp)
+            Text("Priority: 720p debrid-cloud or PenguPlay → other 720p → 1080p. " +
+                "Uncached and promotional sources are excluded.", color = NmMuted, fontSize = 12.sp)
 
             Text("Preferred audio language", color = Color.White, fontWeight = FontWeight.Bold)
             Box(Modifier.fillMaxWidth()) { InputBox(audioLang, "en") { audioLang = it } }
@@ -1315,7 +1542,15 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV Mobile Lite v0.15.1-mobile-lite.8 · Morrison Entertainment", color = NmMuted) }
+        item { CardBox {
+            Text("Connection diagnostics", color = Color.White,
+                fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text("Timestamped connection loss, recovery and app transfer dips. " +
+                "Log clears when the app session ends.", color = NmMuted)
+            Button(onClick = { showConnectionLog = true }) { Text("Connection Log") }
+            Text("${state.connectionLog.size} recorded events", color = NmMuted, fontSize = 12.sp)
+        } }
+        item { Text("NM Stream TV Mobile Lite v0.15.1-mobile-lite.9 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
@@ -1336,6 +1571,9 @@ private fun DeviceCode(service: String, code: String, url: String? = null) {
 private fun DetailsScreen(
     item: AppMedia,
     loading: Boolean,
+    recommendations: List<AppMedia>,
+    onRecommend: (AppMedia) -> Unit,
+    onExpandMore: () -> Unit,
     trailer: StreamOption?,
     inMyList: Boolean,
     rememberedSeason: Int?,
@@ -1347,8 +1585,9 @@ private fun DetailsScreen(
     chooseManual: (AppMedia, String, String) -> Unit,
     playTrailer: (StreamOption) -> Unit
 ) {
-    val seasons = remember(item.meta.id, item.meta.videos) {
-        item.meta.videos.map { it.season ?: 1 }.distinct().sorted()
+    val seasons = remember(item.meta.id, item.meta.videos, item.meta.seasonNumbers) {
+        (item.meta.seasonNumbers + item.meta.videos.map { it.season ?: 1 })
+            .filter { it > 0 }.distinct().sorted()
     }
     val selectedSeason = rememberedSeason?.takeIf { it in seasons } ?: seasons.firstOrNull() ?: 1
     val seasonEpisodes = remember(item.meta.videos, selectedSeason) {
@@ -1357,6 +1596,12 @@ private fun DetailsScreen(
             .sortedBy { it.episode ?: Int.MAX_VALUE }
     }
     val detailsListState = rememberLazyListState()
+
+    LaunchedEffect(item.meta.id, selectedSeason) {
+        if (item.meta.type == "series" && selectedSeason in seasons &&
+            seasonEpisodes.isEmpty()
+        ) rememberSeason(selectedSeason)
+    }
 
     LaunchedEffect(item.meta.id, selectedSeason, rememberedEpisodeId) {
         val episodeIndex = seasonEpisodes.indexOfFirst { it.id == rememberedEpisodeId }
@@ -1374,10 +1619,32 @@ private fun DetailsScreen(
                 Column(Modifier.widthIn(max = 720.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(item.meta.name, color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Black)
                     if (loading) Text("Loading enhanced metadata…", color = NmRed)
-                    item.meta.description?.let { Text(it, color = Color.White.copy(alpha = .9f), fontSize = 17.sp, maxLines = 7, overflow = TextOverflow.Ellipsis) }
+                    val facts = listOfNotNull(
+                        item.meta.fullReleaseDate?.let { "Released $it" },
+                        item.meta.runtimeMinutes?.let { "$it min" },
+                        item.meta.imdbRating?.let { "★ $it / 10" },
+                        item.meta.contentRating
+                    )
+                    if (facts.isNotEmpty()) Text(facts.joinToString("  ·  "),
+                        color = NmGold, fontSize = 14.sp)
+                    if (item.meta.genres.isNotEmpty()) Text(item.meta.genres.joinToString(" · "),
+                        color = NmPlatinum)
+                    item.meta.description?.takeIf { it.isNotBlank() }?.let { plot ->
+                        Text("PLOT", color = NmGold, fontWeight = FontWeight.Black)
+                        Text(plot, color = Color.White.copy(alpha = .92f),
+                            fontSize = 17.sp, lineHeight = 24.sp)
+                    }
+                    item.meta.director?.let {
+                        Text((if (item.meta.type == "series") "Created by: " else "Director: ") + it,
+                            color = NmPlatinum)
+                    }
+                    if (item.meta.cast.isNotEmpty()) {
+                        Text("CAST", color = NmGold, fontWeight = FontWeight.Black)
+                        Text(item.meta.cast.joinToString(" · "), color = NmPlatinum)
+                    }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        if (item.meta.type != "series" || item.meta.videos.isEmpty()) {
+                        if (item.meta.type != "series" || seasons.isEmpty()) {
                             HoldActionButton(
                                 label = "▶  Play",
                                 onClick = { play(item, item.meta.id, item.meta.name) },
@@ -1404,7 +1671,7 @@ private fun DetailsScreen(
 
                 }
             }
-            if (item.meta.videos.isNotEmpty()) {
+            if (item.meta.type == "series" && seasons.isNotEmpty()) {
                 item { Text("Seasons", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold) }
                 item {
                     LazyRow(
@@ -1425,6 +1692,9 @@ private fun DetailsScreen(
                         fontSize = 23.sp,
                         fontWeight = FontWeight.Bold
                     )
+                }
+                if (seasonEpisodes.isEmpty()) item {
+                    Text("Loading episodes for Season $selectedSeason…", color = NmMuted)
                 }
                 items(seasonEpisodes) { ep ->
                     var focused by remember { mutableStateOf(false) }
@@ -1464,6 +1734,21 @@ private fun DetailsScreen(
                                 Text(it, color = NmMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                         }
+                    }
+                }
+            }
+            if (recommendations.isNotEmpty()) {
+                item {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("More Like This", color = Color.White,
+                            fontSize = 23.sp, fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f))
+                        Button(onClick = onExpandMore) { Text("See all ›") }
+                    }
+                }
+                item {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(recommendations) { movie -> PosterCard(movie, onRecommend) }
                     }
                 }
             }
@@ -1556,12 +1841,13 @@ private fun SourcesScreen(
     subtitleCount: Int,
     select: (StreamOption) -> Unit
 ) {
-    val recommended = sources.firstOrNull {
+    val visibleSources = sources.filterNot { it.isKnownUncached || it.isPromotional }
+    val recommended = visibleSources.firstOrNull {
         it.playableUrl != null || it.youtubeUrl != null || !it.stream.externalUrl.isNullOrBlank()
     }
-    val httpSources = sources.filter { it.playableUrl != null }
-    val p2pSources = sources.filter { it.isP2p }
-    val otherSources = sources.filter { it.playableUrl == null && !it.isP2p }
+    val httpSources = visibleSources.filter { it.playableUrl != null }
+    val p2pSources = visibleSources.filter { it.isP2p }
+    val otherSources = visibleSources.filter { it.playableUrl == null && !it.isP2p }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 46.dp),
@@ -1571,7 +1857,7 @@ private fun SourcesScreen(
         item {
             Text(title, color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Black)
             Text("$subtitleCount subtitle tracks found", color = NmMuted)
-            Text("Mobile Lite default: Pengu · maximum 1080p", color = NmGreen, fontSize = 13.sp)
+            Text("720p debrid/Pengu → other 720p → 1080p", color = NmGreen, fontSize = 13.sp)
         }
 
         if (!loading && recommended != null) {
@@ -1584,7 +1870,7 @@ private fun SourcesScreen(
 
         if (loading) {
             item { Text("Checking installed sources…", color = NmMuted) }
-        } else if (sources.isEmpty()) {
+        } else if (visibleSources.isEmpty()) {
             item { Text("No streams at 1080p or below were returned.", color = NmMuted) }
         } else {
             if (httpSources.isNotEmpty()) {
@@ -1670,14 +1956,24 @@ private fun PlayerScreen(
     preferredSubtitleLanguage: String,
     onStarted: (Long, Long) -> Unit,
     onProgress: (Long, Long) -> Unit,
-    onStopped: (Long, Long) -> Unit
+    onStopped: (Long, Long) -> Unit,
+    nextSource: StreamOption? = null,
+    prewarmedPlayer: ExoPlayer? = null,
+    sourceNotice: String? = null,
+    onPlaybackHealth: (Long, Boolean) -> Unit = { _, _ -> },
+    onSwitch: (Long, String, ExoPlayer?) -> Unit = { _, _, _ -> }
 ) {
     val context = LocalContext.current
 
     val initialResumeMs = remember(url, videoId) { resumeMs }
     val initialResumePercent = remember(url, videoId) { resumePercent }
 
-    val player = remember(url, videoId, headers, subtitles) {
+    val player = remember(url, videoId, headers, subtitles, prewarmedPlayer) {
+        if (prewarmedPlayer != null) {
+            prewarmedPlayer.setWakeMode(C.WAKE_MODE_NETWORK)
+            prewarmedPlayer.playWhenReady = true
+            prewarmedPlayer
+        } else {
         val dataSource = DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(headers)
             .setAllowCrossProtocolRedirects(true)
@@ -1700,6 +1996,7 @@ private fun PlayerScreen(
             )
             .build()
             .apply {
+                setWakeMode(C.WAKE_MODE_NETWORK)
                 val subs = subtitles.mapIndexed { index, option ->
                     MediaItem.SubtitleConfiguration.Builder(Uri.parse(option.subtitle.url))
                         .setId(option.subtitle.id.ifBlank { "sub-" + index })
@@ -1726,11 +2023,61 @@ private fun PlayerScreen(
                 prepare()
                 playWhenReady = true
             }
+        }
     }
 
     var started by remember(player) { mutableStateOf(false) }
     var resumeApplied by remember(player) {
         mutableStateOf(initialResumeMs <= 0 && initialResumePercent == null)
+    }
+    var lastReliablePosition by remember(player) {
+        mutableLongStateOf(initialResumeMs.coerceAtLeast(0L))
+    }
+    var switchRequested by remember(player) { mutableStateOf(false) }
+    var lowBufferSamples by remember(player) { mutableIntStateOf(0) }
+    var bufferingSince by remember(player) { mutableLongStateOf(0L) }
+    var freezeTimes by remember(player) { mutableStateOf<List<Long>>(emptyList()) }
+    val standby = remember(player, nextSource?.playableUrl) {
+        nextSource?.playableUrl?.let { alternateUrl ->
+            val factory = DefaultHttpDataSource.Factory()
+                .setDefaultRequestProperties(nextSource.requestHeaders)
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(12_000)
+                .setReadTimeoutMs(20_000)
+            ExoPlayer.Builder(context)
+                .setLoadControl(DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(3_000, 12_000, 1_000, 2_000).build())
+                .setMediaSourceFactory(
+                    DefaultMediaSourceFactory(context).setDataSourceFactory(factory))
+                .build().apply {
+                    setWakeMode(C.WAKE_MODE_NETWORK)
+                    setMediaItem(MediaItem.fromUri(alternateUrl))
+                    playWhenReady = false
+                }
+        }
+    }
+    var standbyPreparing by remember(standby) { mutableStateOf(false) }
+    var standbyTransferred by remember(standby) { mutableStateOf(false) }
+
+    fun changeSource(position: Long, reason: String) {
+        if (switchRequested) return
+        switchRequested = true
+        val timeMs = if (position <= 1_000 && lastReliablePosition > 10_000)
+            lastReliablePosition else position.coerceAtLeast(0L)
+        val ready = standby != null && standbyPreparing &&
+            standby.playbackState == Player.STATE_READY &&
+            standby.duration !in 118_000L..122_000L &&
+            standby.bufferedPosition >= timeMs + 1_500L
+        if (ready && standby != null) {
+            standbyTransferred = true
+            standby.seekTo(timeMs)
+            standby.playWhenReady = true
+        }
+        onSwitch(timeMs, reason, if (ready) standby else null)
+    }
+
+    DisposableEffect(standby) {
+        onDispose { if (!standbyTransferred) standby?.release() }
     }
     var trackRevision by remember(player) { mutableIntStateOf(0) }
     var showAudioMenu by remember { mutableStateOf(false) }
@@ -1818,6 +2165,7 @@ private fun PlayerScreen(
             }.coerceIn(0L, (duration - 1L).coerceAtLeast(0L))
 
             player.seekTo(target)
+            lastReliablePosition = target
             player.playWhenReady = true
             resumeApplied = true
         }
@@ -1828,11 +2176,14 @@ private fun PlayerScreen(
             delay(5_000)
             val duration = player.duration.takeIf { it > 0 } ?: 0L
             val position = player.currentPosition.coerceAtLeast(0L)
-            if (!started && duration > 0) {
-                onStarted(position, duration)
-                started = true
+            if (duration > 180_000L && resumeApplied && !switchRequested) {
+                lastReliablePosition = position
+                if (!started) {
+                    onStarted(position, duration)
+                    started = true
+                }
+                onProgress(position, duration)
             }
-            if (duration > 0) onProgress(position, duration)
         }
     }
 
@@ -1842,6 +2193,60 @@ private fun PlayerScreen(
             playerPositionMs = player.currentPosition.coerceAtLeast(0L)
             playerDurationMs = player.duration.takeIf { it > 0 } ?: 0L
             isPlaying = player.isPlaying
+            onPlaybackHealth(
+                player.totalBufferedDuration,
+                player.playbackState == Player.STATE_BUFFERING
+            )
+        }
+    }
+
+    // Keep one low-memory standby connection, then predict a stall from the
+    // shrinking buffer. This does not run any separate internet speed test.
+    LaunchedEffect(player, standby) {
+        while (true) {
+            delay(500L)
+            if (switchRequested) continue
+            val now = System.currentTimeMillis()
+            val duration = player.duration
+            if (duration in 118_000L..122_000L &&
+                item.meta.type in listOf("movie", "series") &&
+                player.playbackState == Player.STATE_READY
+            ) {
+                changeSource(lastReliablePosition, "Two-minute provider placeholder")
+                continue
+            }
+            val position = player.currentPosition.coerceAtLeast(0L)
+            val buffer = player.totalBufferedDuration.coerceAtLeast(0L)
+            val active = resumeApplied && duration > 180_000L &&
+                position > 5_000L && duration - position > 20_000L
+            if (active && standby != null && !standbyPreparing && buffer < 25_000L) {
+                standbyPreparing = true
+                standby.seekTo(position)
+                standby.prepare()
+            }
+            if (active && player.playbackState == Player.STATE_READY &&
+                player.isPlaying && buffer in 1L..4_000L
+            ) lowBufferSamples++ else lowBufferSamples = 0
+            if (active && lowBufferSamples >= 4 &&
+                standby?.playbackState == Player.STATE_READY &&
+                standby.bufferedPosition > position + 1_500L
+            ) {
+                changeSource(position, "Low-buffer prediction")
+                continue
+            }
+            if (active && player.playbackState == Player.STATE_BUFFERING) {
+                if (bufferingSince == 0L) {
+                    bufferingSince = now
+                    freezeTimes = (freezeTimes + now).filter { it >= now - 300_000L }
+                }
+                if (now - bufferingSince >= 8_000L || freezeTimes.size > 3) {
+                    changeSource(lastReliablePosition, "Repeated buffering")
+                    continue
+                }
+            } else bufferingSince = 0L
+            if (active && player.playerError != null) {
+                changeSource(lastReliablePosition, "Playback error")
+            }
         }
     }
 
@@ -1870,7 +2275,10 @@ private fun PlayerScreen(
         onDispose {
             val duration = player.duration.takeIf { it > 0 } ?: 0L
             val position = player.currentPosition.coerceAtLeast(0L)
-            if (duration > 0) onStopped(position, duration)
+            if (duration > 180_000L && resumeApplied && !switchRequested) {
+                onStopped(if (position <= 1_000L && lastReliablePosition > 10_000L)
+                    lastReliablePosition else position, duration)
+            }
             player.release()
         }
     }
@@ -1923,6 +2331,23 @@ private fun PlayerScreen(
             },
             modifier = Modifier.fillMaxSize()
         )
+
+        if (!sourceNotice.isNullOrBlank()) {
+            var noticeVisible by remember(sourceNotice) { mutableStateOf(true) }
+            LaunchedEffect(sourceNotice) {
+                delay(7_000L)
+                noticeVisible = false
+            }
+            if (noticeVisible) {
+                Text(sourceNotice,
+                    modifier = Modifier.align(Alignment.TopCenter)
+                        .padding(14.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.Black.copy(alpha = .84f))
+                        .padding(12.dp),
+                    color = NmGold, fontSize = 12.sp, lineHeight = 18.sp)
+            }
+        }
 
         if (showAdvisory) {
             Column(
@@ -2037,6 +2462,15 @@ private fun PlayerScreen(
                             controlsRevision = System.currentTimeMillis()
                         }
                     )
+                    if (nextSource != null) {
+                        PlayerControl(
+                            label = "NEXT SOURCE",
+                            onClick = {
+                                changeSource(player.currentPosition, "Manual skip")
+                                controlsRevision = System.currentTimeMillis()
+                            }
+                        )
+                    }
                     Spacer(Modifier.weight(1f))
                     Text(
                         "NM STREAM",

@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -11,6 +12,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 data class MainUiState(
     val loading: Boolean = true,
@@ -33,6 +37,14 @@ data class MainUiState(
     val searchResults: List<AppMedia> = emptyList(),
     val searchLoading: Boolean = false,
     val selectedMedia: AppMedia? = null,
+    val selectedRecommendations: List<AppMedia> = emptyList(),
+    val themedRows: Map<String,List<AppMedia>> = emptyMap(),
+    val themedRowsLoading: Set<String> = emptySet(),
+    val themedRowsLoaded: Set<String> = emptySet(),
+    val expandedRowItems: List<AppMedia> = emptyList(),
+    val expandedRowHasNext: Boolean = false,
+    val expandedRowLoading: Boolean = false,
+    val connectionLog: List<ConnectionLogEntry> = emptyList(),
     val detailsLoading: Boolean = false,
     val streamOptions: List<StreamOption> = emptyList(),
     val subtitleOptions: List<SubtitleOption> = emptyList(),
@@ -83,14 +95,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
+    private val connectionMonitor = ConnectionMonitor(application) { entry ->
+        val now = _uiState.value
+        _uiState.value = now.copy(connectionLog = (now.connectionLog + entry).takeLast(200))
+    }
+    @Volatile private var playbackActive = false
+    private val nmSyncMutex = Mutex()
+    private var autoNmSyncJob: Job? = null
+
+    fun setPlaybackMonitoringActive(active: Boolean) {
+        playbackActive = active
+        connectionMonitor.setPlaybackActive(active)
+    }
+    fun reportPlaybackBuffer(ms: Long, buffering: Boolean) =
+        connectionMonitor.updatePlayerBuffer(ms, buffering)
+
     private var rdAuthJob: Job? = null
     private var nmPairJob: Job? = null
-    private var nmSyncJob: Job? = null
     private var lastRdAuthFingerprint: Int? = null
 
     init {
         refreshEverything()
-        startNmSyncLoop()
+        viewModelScope.launch(Dispatchers.Default) { connectionMonitor.run() }
+        startAutoNmSyncLoop()
+    }
+
+    private fun startAutoNmSyncLoop() {
+        autoNmSyncJob?.cancel()
+        autoNmSyncJob = viewModelScope.launch {
+            delay(15_000L)
+            while (isActive) {
+                if (nmAccount.isLinked() && !playbackActive && !_uiState.value.nmPairing) {
+                    nmSyncMutex.withLock {
+                        if (nmAccount.isLinked() && !playbackActive && !_uiState.value.nmPairing) {
+                            runCatching {
+                                pushPendingManualChanges()
+                                applyNmAccountSync(force = false)
+                            }.onSuccess {
+                                _uiState.value = _uiState.value.copy(nmSyncStatus = "Auto synced")
+                            }.onFailure { error ->
+                                _uiState.value = when (error) {
+                                    is NmDeviceBlockedException -> _uiState.value.copy(
+                                        nmSyncStatus = "Blocked", nmDeviceBlocked = true
+                                    )
+                                    is NmDeviceUnpairedException -> _uiState.value.copy(
+                                        nmAccountLinked = false, nmAccountName = null,
+                                        nmSyncStatus = "Not linked"
+                                    )
+                                    else -> _uiState.value.copy(
+                                        nmSyncStatus = "Auto sync failed · use Sync now"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                delay(60_000L)
+            }
+        }
     }
 
     fun refreshEverything() {
@@ -279,6 +341,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun loadThemedRow(key: String) {
+        if (!tmdb.configured() || key !in HomeCollections.byKey) return
+        val current = _uiState.value
+        if (key in current.themedRowsLoaded || key in current.themedRowsLoading) return
+        _uiState.value = current.copy(themedRowsLoading = current.themedRowsLoading + key)
+        viewModelScope.launch {
+            val items = runCatching { tmdb.browseThemed(key, 1, 18).items }
+                .getOrDefault(emptyList())
+            val now = _uiState.value
+            _uiState.value = now.copy(
+                themedRows = now.themedRows + (key to items),
+                themedRowsLoaded = now.themedRowsLoaded + key,
+                themedRowsLoading = now.themedRowsLoading - key
+            )
+        }
+    }
+
+    fun loadExpandedCategory(key: String, page: Int, seed: AppMedia? = null) {
+        _uiState.value = _uiState.value.copy(expandedRowLoading = true, expandedRowItems = emptyList())
+        viewModelScope.launch {
+            val result = runCatching {
+                if (key == "similar" && seed != null) tmdb.similarPage(seed, page, 36)
+                else tmdb.browseThemed(key, page, 36)
+            }.getOrDefault(TmdbBrowsePage())
+            _uiState.value = _uiState.value.copy(
+                expandedRowLoading = false,
+                expandedRowItems = result.items,
+                expandedRowHasNext = result.hasNext
+            )
+        }
+    }
+
     fun toggleMyList(item: AppMedia) {
         if (item.meta.type != "movie" && item.meta.type != "series") return
         val added = myListStore.toggle(item)
@@ -295,39 +389,101 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.value = _uiState.value.copy(
                     selectedMedia = null,
                     detailsLoading = false,
+                    selectedRecommendations = emptyList(),
                     message = "Anime content is blocked by NM Stream TV"
                 )
                 return@launch
             }
-            _uiState.value = _uiState.value.copy(selectedMedia = item, detailsLoading = true, message = null)
-            val resolvedItem = if (item.meta.id.startsWith("tmdb:")) {
-                val matches = runCatching {
-                    addons.search(_uiState.value.addons, item.meta.name)
-                }.getOrDefault(emptyList())
-                    .filter { it.meta.type == item.meta.type }
-
-                val wanted = mediaTitleKey(item.meta.name)
-                matches.firstOrNull { mediaTitleKey(it.meta.name) == wanted }
-                    ?: matches.firstOrNull()
-                    ?: item
-            } else item
-
-            val sourceMeta = runCatching {
-                addons.loadMeta(resolvedItem, _uiState.value.addons)
-            }.getOrDefault(resolvedItem)
+            _uiState.value = _uiState.value.copy(
+                selectedMedia = item,
+                detailsLoading = true,
+                selectedRecommendations = emptyList(),
+                message = null
+            )
+            // TMDB discovery IDs are not valid requests for IMDb-only
+            // stream providers. Keep the real title and ask TMDB for IMDb and
+            // episode identifiers instead of picking the first fuzzy add-on
+            // search result (which can be an unrelated result).
+            val sourceMeta = if (item.meta.id.startsWith("tmdb:")) {
+                item
+            } else {
+                runCatching {
+                    addons.loadMeta(item, _uiState.value.addons)
+                }.getOrDefault(item)
+            }
             val loaded = if (tmdb.configured()) {
-                runCatching { tmdb.enrich(sourceMeta) }.getOrDefault(sourceMeta)
+                runCatching { tmdb.enrich(sourceMeta, richDetails = true) }.getOrDefault(sourceMeta)
             } else sourceMeta
             if (!MediaPolicy.allows(loaded)) {
                 _uiState.value = _uiState.value.copy(
                     selectedMedia = null,
                     detailsLoading = false,
+                    selectedRecommendations = emptyList(),
                     message = "Anime content is blocked by NM Stream TV"
                 )
             } else {
                 _uiState.value = _uiState.value.copy(selectedMedia = loaded, detailsLoading = false)
+                if (tmdb.configured() && loaded.meta.tmdbId != null) {
+                    val suggestions = runCatching { tmdb.similarTo(loaded, 16) }
+                        .getOrDefault(emptyList())
+                    if (_uiState.value.selectedMedia?.meta?.id == loaded.meta.id) {
+                        _uiState.value = _uiState.value.copy(selectedRecommendations = suggestions)
+                    }
+                }
             }
         }
+    }
+
+    /** Request episodes for a different season without replacing the title. */
+    fun loadSeasonEpisodes(item: AppMedia, season: Int) {
+        if (season <= 0 || item.meta.type != "series") return
+        if (item.meta.videos.any { it.season == season }) return
+        viewModelScope.launch {
+            val episodes = runCatching { tmdb.seasonEpisodes(item, season) }
+                .getOrDefault(emptyList())
+            if (episodes.isEmpty()) return@launch
+            val current = _uiState.value.selectedMedia ?: return@launch
+            if (current.meta.id != item.meta.id) return@launch
+            val combined = (current.meta.videos + episodes).distinctBy { it.id }
+                .sortedWith(compareBy<VideoItem> { it.season ?: 0 }.thenBy { it.episode ?: 0 })
+            _uiState.value = _uiState.value.copy(
+                selectedMedia = current.copy(meta = current.meta.copy(videos = combined))
+            )
+        }
+    }
+
+    private fun candidateStreamIds(item: AppMedia, videoId: String): List<String> {
+        val meta = item.meta
+        val tmdbId = meta.tmdbId
+        val imdbId = meta.imdbId
+            ?: Regex("tt\\d{5,10}").find(meta.id)?.value
+
+        if (meta.type == "series") {
+            val matchedEpisode = meta.videos.firstOrNull { it.id == videoId }
+            val season = matchedEpisode?.season
+            val episode = matchedEpisode?.episode
+            if (season != null && episode != null) {
+                return listOfNotNull(
+                    imdbId?.let { "$it:$season:$episode" },
+                    tmdbId?.let { "tmdb:$it:$season:$episode" },
+                    videoId
+                ).distinct()
+            }
+            // Preserve episode numbers embedded in the original video ID.
+            val parts = videoId.split(":")
+            val seasonNum = parts.getOrNull(parts.size - 2)?.toIntOrNull()
+            val episodeNum = parts.lastOrNull()?.toIntOrNull()
+            if (seasonNum != null && episodeNum != null) {
+                return listOfNotNull(
+                    imdbId?.let { "$it:$seasonNum:$episodeNum" },
+                    tmdbId?.let { "tmdb:$it:$seasonNum:$episodeNum" },
+                    videoId
+                ).distinct()
+            }
+        }
+        return listOfNotNull(
+            imdbId, tmdbId?.let { "tmdb:$it" }, videoId
+        ).distinct()
     }
 
     fun loadSources(item: AppMedia, videoId: String = item.meta.id) {
@@ -354,7 +510,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 } else {
                     runCatching {
-                        addons.loadStreams(_uiState.value.addons, item.meta.type, videoId)
+                        addons.loadStreamsForIds(
+                            _uiState.value.addons, item.meta.type,
+                            candidateStreamIds(item, videoId)
+                        )
                     }.getOrDefault(emptyList())
                 }
             }
@@ -368,29 +527,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             val prefs = nmAccount.playbackPreferences()
-            val sortedStreams = streamsDeferred.await()
+            val loadedStreams = streamsDeferred.await()
+
+            val rdHashesToVerify = loadedStreams
+                .filter { option ->
+                    option.isRealDebrid && !option.stream.infoHash.isNullOrBlank()
+                }
+                .mapNotNull { it.stream.infoHash?.lowercase() }
+                .distinct()
+
+            val instantlyAvailableRdHashes = if (rdHashesToVerify.isNotEmpty()) {
+                runCatching {
+                    realDebrid.instantlyAvailableHashes(rdHashesToVerify)
+                }.getOrNull()
+            } else {
+                null
+            }
+
+            val sortedStreams = loadedStreams
+                .filterNot { it.isKnownUncached || it.isPromotional }
+                .filter { option ->
+                    val hash = option.stream.infoHash?.lowercase()
+                    hash == null ||
+                        !option.isRealDebrid ||
+                        instantlyAvailableRdHashes == null ||
+                        hash in instantlyAvailableRdHashes
+                }
                 .filter { option ->
                     val quality = option.detectedQuality
                     quality == null || quality <= 1080
                 }
                 .sortedWith(
                     compareBy<StreamOption> { option ->
-                        if (option.addonName.contains("pengu", ignoreCase = true)) 0 else 1
+                        option.litePriorityTier()
+                    }.thenBy { option ->
+                        val hash = option.stream.infoHash?.lowercase()
+                        when {
+                            hash != null && instantlyAvailableRdHashes != null &&
+                                hash in instantlyAvailableRdHashes -> 0
+                            option.isExplicitlyCached -> 1
+                            option.isDebrid -> 2
+                            else -> 3
+                        }
                     }.thenBy { option ->
                         when {
                             option.playableUrl != null -> 0
                             option.isP2p -> 1
                             else -> 2
-                        }
-                    }.thenBy { option ->
-                        when (option.detectedQuality) {
-                            1080 -> 0
-                            720 -> 1
-                            576 -> 2
-                            480 -> 3
-                            360 -> 4
-                            null -> 5
-                            else -> 6
                         }
                     }.thenByDescending { it.stream.behaviorHints?.videoSize ?: 0L }
                 )
@@ -492,7 +675,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val success = runCatching { realDebrid.exchangeDeviceCode(device.deviceCode, credentials); true }.getOrDefault(false)
                     if (success) {
                         if (nmAccount.isLinked()) {
-                            runCatching { nmAccount.pushRealDebridAuth(realDebrid.exportAuth()) }
+                            nmAccount.markRealDebridPending()
                         }
                         lastRdAuthFingerprint = realDebrid.exportAuth()?.hashCode() ?: 0
                         _uiState.value = _uiState.value.copy(rdConnecting = false, rdDeviceCode = null, message = "Real-Debrid connected")
@@ -510,15 +693,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         rdAuthJob?.cancel()
         realDebrid.disconnect()
         lastRdAuthFingerprint = 0
-        viewModelScope.launch {
-            if (nmAccount.isLinked()) runCatching { nmAccount.pushRealDebridAuth(null) }
-        }
+        if (nmAccount.isLinked()) nmAccount.markRealDebridPending()
         _uiState.value = _uiState.value.copy(
             rdUser = null,
             rdDeviceCode = null,
             rdConnecting = false,
             debridItems = emptyList(),
-            message = "Real-Debrid disconnected on all linked devices"
+            message = "Real-Debrid disconnected locally; cloud sync pending"
         )
     }
 
@@ -542,16 +723,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             preferredSubtitleLanguage = prefs.subtitleLanguage,
             message = "Playback language and source preferences saved"
         )
-        viewModelScope.launch {
-            if (nmAccount.isLinked()) {
-                runCatching { nmAccount.pushPlaybackPreferences(prefs) }
-                    .onFailure { error ->
-                        _uiState.value = _uiState.value.copy(
-                            message = error.message ?: "Saved locally, but cloud sync failed"
-                        )
-                    }
-            }
-        }
+        if (nmAccount.isLinked()) nmAccount.markPreferencesPending()
     }
 
     fun saveMobileLiteLanguagePreferences(
@@ -569,16 +741,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             preferredSubtitleLanguage = prefs.subtitleLanguage,
             message = "Language preferences saved"
         )
-        viewModelScope.launch {
-            if (nmAccount.isLinked()) {
-                runCatching { nmAccount.pushPlaybackPreferences(prefs) }
-                    .onFailure { error ->
-                        _uiState.value = _uiState.value.copy(
-                            message = error.message ?: "Saved locally, but cloud sync failed"
-                        )
-                    }
-            }
-        }
+        if (nmAccount.isLinked()) nmAccount.markPreferencesPending()
     }
     fun beginNmAccountPairing() {
         nmPairJob?.cancel()
@@ -619,19 +782,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val result = runCatching { nmAccount.pollPairing(pair) }
                 val status = result.getOrNull()
                 if (status?.linked == true) {
-                    runCatching {
+                    val initialSync = runCatching {
                         nmAccount.saveLinked(status)
-                        nmAccount.bootstrap(
-                            addons.storedManifestUrls(),
-                            nmAccount.playbackPreferences()
-                        )
-                        nmAccount.pushRealDebridAuth(realDebrid.exportAuth())
-                        lastRdAuthFingerprint = realDebrid.exportAuth()?.hashCode() ?: 0
+                        // Pairing is the only automatic cloud-sync window.
+                        // Never overwrite an existing phone account with empty
+                        // local TV add-ons or a missing local RD token.
+                        val remote = nmAccount.fetchState()
+                        val freshAccount = remote.settings.settingsVersion <= 0L &&
+                            remote.settings.addonManifests.isEmpty() &&
+                            !remote.settings.realDebridAuthInitialized
+                        if (freshAccount) {
+                            nmAccount.bootstrap(
+                                addons.storedManifestUrls(),
+                                nmAccount.playbackPreferences()
+                            )
+                        }
                         applyNmAccountSync(force = true)
-                    }.onFailure { error ->
-                        _uiState.value = _uiState.value.copy(
-                            message = error.message ?: "NM Account linked, but initial sync failed"
-                        )
+                        nmAccount.clearAllPending()
                     }
 
                     _uiState.value = _uiState.value.copy(
@@ -639,9 +806,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         nmAccountName = nmAccount.accountName(),
                         nmPairCode = null,
                         nmPairing = false,
-                        nmSyncStatus = "Synced",
+                        nmSyncStatus = if (initialSync.isSuccess) "Synced" else "Initial sync failed",
                         nmDeviceBlocked = false,
-                        message = "NM Account linked to this TV"
+                        message = if (initialSync.isSuccess) "NM Account linked to this TV"
+                        else initialSync.exceptionOrNull()?.message
+                            ?: "TV linked. Press Sync now to retry the initial sync."
                     )
                     refreshEverything()
                     return@launch
@@ -667,12 +836,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             _uiState.value = _uiState.value.copy(nmSyncStatus = "Syncing…")
-            runCatching { applyNmAccountSync(force = false) }
+            // Manual failover is always available, even if automatic sync
+            // recently failed or normally waits until playback has stopped.
+            runCatching {
+                nmSyncMutex.withLock {
+                    pushPendingManualChanges()
+                    applyNmAccountSync(force = true)
+                }
+            }
                 .onSuccess {
                     _uiState.value = _uiState.value.copy(
                         nmSyncStatus = "Synced",
                         nmDeviceBlocked = false,
-                        message = "NM Account settings are up to date"
+                        message = "Manual sync complete: local changes pushed and cloud settings refreshed"
                     )
                 }
                 .onFailure { error ->
@@ -712,34 +888,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    private fun startNmSyncLoop() {
-        nmSyncJob?.cancel()
-        nmSyncJob = viewModelScope.launch {
-            while (true) {
-                if (nmAccount.isLinked()) {
-                    runCatching {
-                        applyNmAccountSync(force = false)
-                        pushChangedServiceAuthIfNeeded()
-                    }.onFailure { error ->
-                        _uiState.value = when (error) {
-                            is NmDeviceBlockedException -> _uiState.value.copy(
-                                nmSyncStatus = "Blocked",
-                                nmDeviceBlocked = true,
-                                message = "Device Blocked by NM"
-                            )
-                            is NmDeviceUnpairedException -> _uiState.value.copy(
-                                nmAccountLinked = false,
-                                nmAccountName = null,
-                                nmSyncStatus = "Not linked",
-                                nmDeviceBlocked = false,
-                                message = "This device was unpaired from NM Account"
-                            )
-                            else -> _uiState.value.copy(nmSyncStatus = "Waiting to sync")
-                        }
-                    }
-                }
-                delay(60_000)
-            }
+    private suspend fun pushPendingManualChanges() {
+        if (nmAccount.addonsPending()) {
+            nmAccount.pushAddonManifests(addons.storedManifestUrls())
+            nmAccount.clearAddonsPending()
+        }
+        if (nmAccount.preferencesPending()) {
+            nmAccount.pushPlaybackPreferences(nmAccount.playbackPreferences())
+            nmAccount.clearPreferencesPending()
+        }
+        if (nmAccount.realDebridPending()) {
+            nmAccount.pushRealDebridAuth(realDebrid.exportAuth())
+            nmAccount.clearRealDebridPending()
         }
     }
 
@@ -782,19 +942,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         return changed
-    }
-
-    private suspend fun pushChangedServiceAuthIfNeeded() {
-        if (!nmAccount.isLinked()) return
-
-        val rdAuth = realDebrid.exportAuth()
-        val rdFingerprint = rdAuth?.hashCode() ?: 0
-        if (lastRdAuthFingerprint == null) {
-            lastRdAuthFingerprint = rdFingerprint
-        } else if (rdFingerprint != lastRdAuthFingerprint) {
-            nmAccount.pushRealDebridAuth(rdAuth)
-            lastRdAuthFingerprint = rdFingerprint
-        }
     }
 
     fun resumePosition(item: AppMedia, videoId: String): Long = playback.resumePosition(item, videoId)

@@ -54,7 +54,16 @@ data class MetaItem(
     val genres: List<String> = emptyList(),
     val isAnime: Boolean = false,
     val videos: List<VideoItem> = emptyList(),
-    val trailers: List<TrailerRef> = emptyList()
+    val trailers: List<TrailerRef> = emptyList(),
+    val cast: List<String> = emptyList(),
+    val director: String? = null,
+    val runtimeMinutes: Int? = null,
+    val fullReleaseDate: String? = null,
+    val ratingCount: Int? = null,
+    // IMDb title identifiers are understood by major Stremio stream add-ons.
+    val imdbId: String? = null,
+    // All known TV seasons; episode lists are fetched only on selection.
+    val seasonNumbers: List<Int> = emptyList()
 )
 
 data class TrailerRef(
@@ -186,16 +195,110 @@ data class StreamOption(
     val isDebrid: Boolean
         get() = listOf(
             "debrid", "real-debrid", "real debrid", "alldebrid", "all-debrid",
-            "premiumize", "torbox", "debrid-link", "stremthru"
+            "premiumize", "torbox", "debrid-link", "stremthru", "rd+"
         ).any { searchableText.contains(it) }
+
+    val cacheSignalText: String
+        get() = listOfNotNull(
+            addonName,
+            stream.name,
+            stream.title,
+            stream.behaviorHints?.filename,
+            stream.url,
+            stream.externalUrl
+        ).joinToString(" ").lowercase()
+
+    val isKnownUncached: Boolean
+        get() {
+            val text = cacheSignalText
+            val negativeMarkers = listOf(
+                "media_not_cached_yet",
+                "media not cached yet",
+                "not cached",
+                "not_cached",
+                "not-cached",
+                "uncached",
+                "cache miss",
+                "cache-miss",
+                "not ready",
+                "not-ready",
+                "needs caching",
+                "needs download",
+                "download to debrid",
+                "queued for download"
+            )
+            return negativeMarkers.any(text::contains) ||
+                (isDebrid && stream.behaviorHints?.notWebReady == true)
+        }
+
+    val isExplicitlyCached: Boolean
+        get() {
+            if (isKnownUncached) return false
+            val text = cacheSignalText
+            return listOf(
+                "cached",
+                "cache hit",
+                "instant",
+                "rd+",
+                "real-debrid+",
+                "⚡"
+            ).any(text::contains)
+        }
+
+    val isRealDebrid: Boolean
+        get() {
+            val text = cacheSignalText
+            return text.contains("real-debrid") ||
+                text.contains("real debrid") ||
+                text.contains("realdebrid") ||
+                Regex("""(^|[^a-z0-9])rd\+?([^a-z0-9]|$)""").containsMatchIn(text)
+        }
 
     val isP2p: Boolean
         get() = !stream.infoHash.isNullOrBlank() && playableUrl == null
+
+    // Some add-ons return a donation/subscribe screen instead of a stream.
+    // Never place these advertisements in the playable source selector.
+    val isPromotional: Boolean
+        get() {
+            val title = listOfNotNull(stream.name, stream.title).joinToString(" ").lowercase()
+            val external = stream.externalUrl.orEmpty().lowercase()
+            val markers = listOf(
+                "support the project", "donate", "donation",
+                "buy me a coffee", "buymeacoffee", "ko-fi.com",
+                "patreon.com", "upgrade account", "click to configure",
+                "subscribe to unlock"
+            )
+            return markers.any { title.contains(it) || external.contains(it) }
+        }
 
     fun displayTitle(): String = stream.title
         ?: stream.name
         ?: stream.behaviorHints?.filename
         ?: "Stream"
+
+    // An opaque, stable identifier for distinguishing individual links even
+    // when the provider gives several streams the same display name.
+    // Never put signed URLs, API keys or debrid tokens into on-screen labels.
+    fun safeLinkId(): String {
+        val identity = playableUrl
+            ?: stream.externalUrl
+            ?: stream.infoHash
+            ?: youtubeUrl
+            ?: (addonName + "|" + displayTitle())
+        return java.security.MessageDigest.getInstance("SHA-256")
+            .digest(identity.toByteArray(Charsets.UTF_8))
+            .take(5)
+            .joinToString("") { "%02X".format(it.toInt() and 0xff) }
+    }
+
+    fun switchIdentityLabel(): String {
+        val safeTitle = displayTitle()
+            .replace(Regex("""https?://\S+""", RegexOption.IGNORE_CASE), "[URL]")
+            .replace(Regex("""\s+"""), " ")
+            .take(48)
+        return "$addonName · $safeTitle · ${qualityLabel()} · #${safeLinkId()}"
+    }
 
     fun qualityLabel(): String = detectedQuality?.let { "${it}p" } ?: "Quality unknown"
 
@@ -206,6 +309,24 @@ data class StreamOption(
         !stream.externalUrl.isNullOrBlank() -> "External"
         isP2p -> "P2P"
         else -> "Unavailable"
+    }
+
+    /**
+     * TV Box Lite's explicit tier order. A named 720p Real-Debrid/cloud HTTP
+     * stream or PenguPlay source wins before any other 720p source. Only
+     * after ALL 720p options do we consider 1080p, then lower/unknown.
+     * Real-Debrid hash availability is still verified by MainViewModel.
+     */
+    fun litePriorityTier(): Int {
+        val pengu = addonName.contains("pengu", ignoreCase = true)
+        val readyCloud = isDebrid && playableUrl != null
+        return when (detectedQuality) {
+            720 -> if (readyCloud || pengu) 0 else 1
+            1080 -> 2
+            576, 480, 360 -> 3
+            null -> 4
+            else -> 5
+        }
     }
 
     fun preferenceScore(
@@ -283,6 +404,20 @@ data class SubtitleOption(
     val subtitle: AddonSubtitle
 )
 
+data class LastPlaybackSession(
+    val media: AppMedia,
+    val videoId: String,
+    val title: String,
+    val source: StreamOption,
+    val subtitles: List<SubtitleOption> = emptyList(),
+    val positionMs: Long,
+    val durationMs: Long,
+    val updatedAtMs: Long
+) {
+    val percent: Int
+        get() = if (durationMs <= 0L) 0
+        else ((positionMs * 100L) / durationMs).toInt().coerceIn(0, 100)
+}
 data class PlaybackProgress(
     val media: AppMedia,
     val videoId: String,
