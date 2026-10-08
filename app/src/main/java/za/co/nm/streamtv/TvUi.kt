@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -65,6 +66,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -1380,6 +1382,45 @@ private fun AddonsScreen(
 
 @Composable
 private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
+    var showConnectionLog by remember { mutableStateOf(false) }
+    if (showConnectionLog) {
+        val entries = state.connectionLog.asReversed()
+        val logState = rememberLazyListState()
+        val scope = rememberCoroutineScope()
+        Dialog(onDismissRequest = { showConnectionLog = false }) {
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                    .background(NmPanel).padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("Connection Log", color = Color.White,
+                    fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                Text("Swipe to scroll · newest first · session only. " +
+                    "App data transfer rates are not an internet speed test.",
+                    color = NmMuted, fontSize = 12.sp)
+                LazyColumn(
+                    Modifier.fillMaxWidth().heightIn(min = 180.dp, max = 470.dp),
+                    state = logState,
+                    verticalArrangement = Arrangement.spacedBy(9.dp)
+                ) {
+                    if (entries.isEmpty()) item { Text("No events yet", color = NmMuted) }
+                    items(entries) { entry ->
+                        Text("${entry.time} · ${entry.detail}",
+                            color = NmPlatinum, fontSize = 13.sp)
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = { scope.launch { logState.animateScrollToItem(0) } }) {
+                        Text("Newest")
+                    }
+                    Button(onClick = {
+                        scope.launch { logState.animateScrollToItem((entries.size - 1).coerceAtLeast(0)) }
+                    }) { Text("Oldest") }
+                    Button(onClick = { showConnectionLog = false }) { Text("Close") }
+                }
+            }
+        }
+    }
     var audioLang by remember(state.preferredAudioLanguage) { mutableStateOf(state.preferredAudioLanguage) }
     var subtitleLang by remember(state.preferredSubtitleLanguage) { mutableStateOf(state.preferredSubtitleLanguage) }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 24.dp), contentPadding = PaddingValues(top = 26.dp, bottom = 55.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -1395,7 +1436,8 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
                 color = if (state.nmAccountLinked) NmGreen else NmMuted
             )
             Text(
-                "Pair this device once, then manage synced add-ons, playback language and Real-Debrid settings from your phone.",
+                "Automatic account sync runs while idle. It pauses during playback. " +
+                    "Sync now remains available for an immediate update.",
                 color = NmMuted
             )
             if (state.nmAccountLinked) {
@@ -1420,7 +1462,8 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Text("These preferences sync to every linked NM Stream TV device.", color = NmMuted)
 
             Text("Mobile Lite source policy", color = Color.White, fontWeight = FontWeight.Bold)
-            Text("Pengu is the default provider. Streams above 1080p are excluded in Mobile Lite.", color = NmMuted, fontSize = 12.sp)
+            Text("Priority: 720p debrid-cloud or PenguPlay → other 720p → 1080p. " +
+                "Uncached and promotional sources are excluded.", color = NmMuted, fontSize = 12.sp)
 
             Text("Preferred audio language", color = Color.White, fontWeight = FontWeight.Bold)
             Box(Modifier.fillMaxWidth()) { InputBox(audioLang, "en") { audioLang = it } }
@@ -1447,7 +1490,15 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV Mobile Lite v0.15.1-mobile-lite.8 · Morrison Entertainment", color = NmMuted) }
+        item { CardBox {
+            Text("Connection diagnostics", color = Color.White,
+                fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text("Timestamped connection loss, recovery and app transfer dips. " +
+                "Log clears when the app session ends.", color = NmMuted)
+            Button(onClick = { showConnectionLog = true }) { Text("Connection Log") }
+            Text("${state.connectionLog.size} recorded events", color = NmMuted, fontSize = 12.sp)
+        } }
+        item { Text("NM Stream TV Mobile Lite v0.15.1-mobile-lite.9 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
