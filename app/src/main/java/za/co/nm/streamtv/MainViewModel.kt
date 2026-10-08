@@ -599,15 +599,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 .sortedWith(
                     compareBy<StreamOption> { option ->
-                        when (option.detectedQuality) {
-                            720 -> 0
-                            1080 -> 1
-                            576 -> 2
-                            480 -> 3
-                            360 -> 4
-                            null -> 5
-                            else -> 6
-                        }
+                        option.litePriorityTier()
                     }.thenBy { option ->
                         val hash = option.stream.infoHash?.lowercase()
                         when {
