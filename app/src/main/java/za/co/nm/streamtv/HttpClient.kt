@@ -87,6 +87,8 @@ object SimpleHttp {
             .removeSurrounding("\"")
             .removeSurrounding("'")
             .substringBefore('#')
+            // Configuration links sometimes contain raw path separators ("|").
+            .replace("|", "%7C")
 
         if (raw.startsWith("stremio://", true)) {
             raw = "https://" + raw.substringAfter("://")
