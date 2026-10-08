@@ -189,6 +189,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                 when (val current = screen) {
                 Screen.Home -> Shell("Home", { screen = it }) {
                     HomeScreen(state,
+                        onRefresh = viewModel::refreshEverything,
                         onOpen = {
                             viewModel.loadDetails(it)
                             screen = Screen.Details(it)
@@ -780,6 +781,7 @@ private fun NavChip(label: String, selected: Boolean, onClick: () -> Unit) {
 @Composable
 private fun HomeScreen(
     state: MainUiState,
+    onRefresh: () -> Unit,
     onOpen: (AppMedia) -> Unit,
     onContinue: (PlaybackProgress) -> Unit,
     onContinueManual: (PlaybackProgress) -> Unit,
@@ -790,7 +792,17 @@ private fun HomeScreen(
         CenterText("Loading NM Stream TV TV Box Lite…")
         return
     }
-    val hero = state.movies.firstOrNull() ?: state.series.firstOrNull()
+    // Stream-focused add-ons frequently provide no catalogue resources.
+    // TMDB discovery rows must be eligible to supply the featured hero too.
+    val hero = state.movies.firstOrNull()
+        ?: state.trendingMovies.firstOrNull()
+        ?: state.newMovies.firstOrNull()
+        ?: state.series.firstOrNull()
+        ?: state.trendingSeries.firstOrNull()
+        ?: state.newSeries.firstOrNull()
+        ?: state.nowAiringSeries.firstOrNull()
+        ?: state.watchHistory.firstOrNull()?.media
+        ?: state.myList.firstOrNull()
     val historyMedia = state.watchHistory.map { it.media }.distinctBy { it.meta.id }
 
     LazyColumn(
@@ -798,7 +810,24 @@ private fun HomeScreen(
         contentPadding = PaddingValues(bottom = 48.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
-        item { if (hero != null) Hero(hero, onOpen) else EmptyHero(state.addons.isEmpty()) }
+        item {
+            if (hero != null) Hero(hero, onOpen)
+            else EmptyHero(
+                hasAddons = state.addons.isNotEmpty(),
+                tmdbConfigured = state.tmdbConfigured,
+                pendingHosts = state.pendingAddonHosts.size,
+                onRefresh = onRefresh
+            )
+        }
+
+        if (hero != null) item {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 40.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                Button(onClick = onRefresh) { Text("↻ Refresh Home") }
+            }
+        }
 
         item {
             ContinueRow(
@@ -1088,11 +1117,38 @@ private fun Hero(item: AppMedia, onOpen: (AppMedia) -> Unit) {
 }
 
 @Composable
-private fun EmptyHero(noAddons: Boolean) {
-    Box(Modifier.fillMaxWidth().height(300.dp).background(Brush.horizontalGradient(listOf(Color(0xFF191B22), NmBg)))) {
-        Column(Modifier.align(Alignment.CenterStart).padding(52.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+private fun EmptyHero(
+    hasAddons: Boolean,
+    tmdbConfigured: Boolean,
+    pendingHosts: Int,
+    onRefresh: () -> Unit
+) {
+    Box(Modifier.fillMaxWidth().height(330.dp)
+        .background(Brush.horizontalGradient(listOf(Color(0xFF191B22), NmBg)))) {
+        Column(
+            Modifier.align(Alignment.CenterStart).padding(48.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             Text("NM STREAM TV", color = Color.White, fontSize = 40.sp, fontWeight = FontWeight.Black)
-            Text(if (noAddons) "Install a compatible Stremio add-on to populate your home screen." else "No home catalogue was returned.", color = NmMuted, fontSize = 18.sp)
+            Text("Home catalogue unavailable", color = NmPlatinum, fontSize = 20.sp)
+            Text(
+                when {
+                    !tmdbConfigured && !hasAddons ->
+                        "No TMDB discovery or add-on catalogues are configured."
+                    !tmdbConfigured ->
+                        "Your installed add-ons returned no home listings. TMDB discovery is not configured."
+                    else ->
+                        "No discovery titles could be loaded from TMDB or add-on catalogues. Check your connection and retry."
+                },
+                color = NmMuted, fontSize = 15.sp
+            )
+            if (pendingHosts > 0) {
+                Text("$pendingHosts saved add-on(s) did not respond. Check Add-ons or use Settings → Sync now.",
+                    color = NmGold, fontSize = 13.sp)
+            }
+            Text("Stream-only add-ons can still work in Search without offering home listings.",
+                color = NmMuted, fontSize = 12.sp)
+            Button(onClick = onRefresh) { Text("↻ Retry catalogues") }
         }
     }
 }
@@ -1895,7 +1951,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Button(onClick = { showConnectionLog = true }) { Text("Connection Log") }
             Text("${state.connectionLog.size} events this session", color = NmMuted, fontSize = 12.sp)
         } }
-        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.17 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.18 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
