@@ -1044,10 +1044,22 @@ private fun AddonsScreen(
         item {
             Text("Installed add-ons", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
             Text(
-                if (state.addons.isEmpty()) "No add-ons installed."
-                else "Only add-ons you manually install appear here.",
+                if (state.addons.isEmpty()) "No add-ons currently responding."
+                else "Installed providers that responded to the latest manifest check.",
                 color = NmMuted
             )
+            if (state.pendingAddonHosts.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Saved but temporarily unavailable: " + state.pendingAddonHosts.joinToString(", "),
+                    color = NmRed,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "These providers remain saved and will retry automatically. Use Settings → NM Account → Sync now to retry immediately.",
+                    color = NmMuted
+                )
+            }
         }
 
         items(state.addons) { addon ->
@@ -1065,7 +1077,13 @@ private fun AddonsScreen(
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Text(addon.manifestUrl, color = NmMuted.copy(alpha = .72f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            runCatching { java.net.URI(addon.manifestUrl).host }.getOrNull() ?: "Configured add-on",
+                            color = NmMuted.copy(alpha = .72f),
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                     Button(onClick = { remove(addon.manifestUrl) }) { Text("Remove") }
                 }
