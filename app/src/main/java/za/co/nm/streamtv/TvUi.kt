@@ -929,6 +929,50 @@ private fun HomeScreen(
                 onExpand = { onExpand("Now Airing TV Shows", "now_airing_series") }
             )
         }
+        // Every requested category has an expandable grid. Its preview data
+        // is fetched only when this row enters the viewport, not on startup.
+        HomeCollections.rows.forEach { spec ->
+            item(key = "theme:${spec.key}") {
+                LaunchedEffect(spec.key, state.tmdbConfigured) {
+                    if (state.tmdbConfigured) onLoadThemedRow(spec.key)
+                }
+                val rowItems = state.themedRows[spec.key].orEmpty()
+                if (rowItems.isNotEmpty()) {
+                    MediaRow(
+                        title = spec.title,
+                        media = rowItems,
+                        onOpen = onOpen,
+                        myList = state.myList,
+                        onToggleMyList = onToggleMyList,
+                        onExpand = { onExpand(spec.title, spec.key) }
+                    )
+                } else {
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 40.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(spec.title, color = Color.White,
+                                fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.weight(1f))
+                            Button(onClick = { onExpand(spec.title, spec.key) }) {
+                                Text("EXPAND  ↗")
+                            }
+                        }
+                        Text(
+                            when {
+                                !state.tmdbConfigured -> "TMDB catalogue is not configured"
+                                spec.key in state.themedRowsLoading -> "Loading titles…"
+                                spec.key in state.themedRowsLoaded -> "No results available · Expand to retry"
+                                else -> "Discovering titles…"
+                            },
+                            color = NmMuted, fontSize = 13.sp
+                        )
+                    }
+                }
+            }
+        }
+
         if (historyMedia.isNotEmpty()) item {
             MediaRow(
                 title = "Watch History",
@@ -968,6 +1012,14 @@ private fun HomeScreen(
                 onToggleMyList = onToggleMyList,
                 onExpand = { onExpand("My Real-Debrid Library", "real_debrid") }
             )
+        }
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 40.dp),
+                horizontalArrangement = Arrangement.End) {
+                Button(onClick = { scope.launch { homeListState.animateScrollToItem(0) } }) {
+                    Text("↑ BACK TO TOP")
+                }
+            }
         }
     }
 }
@@ -2252,6 +2304,14 @@ private fun DetailsScreen(
                             }
                         }
                     }
+                }
+            }
+            item {
+                Row(Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End) {
+                    Button(onClick = {
+                        detailsScope.launch { detailsListState.animateScrollToItem(0) }
+                    }) { Text("↑ BACK TO TOP") }
                 }
             }
         }
