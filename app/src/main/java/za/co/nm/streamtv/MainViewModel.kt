@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 data class MainUiState(
     val loading: Boolean = true,
     val addons: List<InstalledAddon> = emptyList(),
+    val pendingAddonHosts: List<String> = emptyList(),
     val addonInstalling: Boolean = false,
     val addonInstallStatus: String? = null,
     val movies: List<AppMedia> = emptyList(),
@@ -94,6 +95,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var nmPairJob: Job? = null
     private var nmSyncJob: Job? = null
     private var lastRdAuthFingerprint: Int? = null
+    private var lastAddonRetryAtMs: Long = 0L
 
     init {
         refreshEverything()
@@ -107,6 +109,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.value = _uiState.value.copy(message = it.message)
                 emptyList()
             }
+
+            val pendingAddonHosts = addons.storedManifestUrls()
+                .filterNot { url -> installed.any { it.manifestUrl == url } }
+                .mapNotNull { url -> runCatching { java.net.URI(url).host }.getOrNull() }
+                .distinct()
 
             // Lite build: only load add-on catalogues and Real-Debrid at startup.
             // IPTV/Xtream, EPG and Trakt are deliberately excluded from the runtime path.
@@ -151,6 +158,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.value = _uiState.value.copy(
                 loading = false,
                 addons = installed,
+                pendingAddonHosts = pendingAddonHosts,
                 movies = movies,
                 series = series,
                 noelList = emptyList(),
@@ -769,7 +777,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             _uiState.value = _uiState.value.copy(nmSyncStatus = "Syncing…")
-            runCatching { applyNmAccountSync(force = false) }
+            // A manual sync must retry saved manifests, even when version is unchanged.
+            runCatching { applyNmAccountSync(force = true) }
                 .onSuccess {
                     _uiState.value = _uiState.value.copy(
                         nmSyncStatus = "Synced",
@@ -882,6 +891,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 nmSyncStatus = "Synced",
                 nmDeviceBlocked = false
             )
+            // Retry unresolved manifests without requiring a new cloud settings version.
+            if (addons.storedManifestUrls().size > _uiState.value.addons.size) {
+                val now = System.currentTimeMillis()
+                if (now - lastAddonRetryAtMs >= 60_000L) {
+                    lastAddonRetryAtMs = now
+                    refreshEverything()
+                }
+            }
         }
         return changed
     }
