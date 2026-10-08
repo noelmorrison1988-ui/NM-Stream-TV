@@ -9,6 +9,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
@@ -30,7 +32,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
@@ -70,6 +75,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -125,6 +131,29 @@ private data class SeriesSelection(
     val episodeId: String? = null
 )
 
+// Android TV often loses the next focus target between nested horizontal
+// poster rows. Move focus vertically first; if none is available, scroll the
+// actual page without requiring touch or a mouse.
+private fun Modifier.tvVerticalNavigation(state: LazyListState): Modifier = composed {
+    val focusManager = LocalFocusManager.current
+    val scope = rememberCoroutineScope()
+    val stepPx = with(LocalDensity.current) { 260.dp.toPx() }
+    this.onPreviewKeyEvent { event ->
+        if (event.type == KeyEventType.KeyDown &&
+            (event.key == Key.DirectionUp || event.key == Key.DirectionDown)
+        ) {
+            val down = event.key == Key.DirectionDown
+            val moved = focusManager.moveFocus(
+                if (down) FocusDirection.Down else FocusDirection.Up
+            )
+            if (!moved) {
+                scope.launch { state.animateScrollBy(if (down) stepPx else -stepPx) }
+            }
+            true
+        } else false
+    }
+}
+
 private fun seriesSelectionKey(item: AppMedia): String =
     "${item.meta.type}|" + item.meta.name.lowercase()
         .replace(Regex("[^a-z0-9]+"), " ")
@@ -166,6 +195,9 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
             is Screen.Trailer -> Screen.Details(current.item)
             is Screen.YouTubeTrailer -> Screen.Details(current.item)
             is Screen.Sources -> Screen.Details(current.item)
+            is Screen.ExpandedRow -> if (current.key == "similar") {
+                state.selectedMedia?.let { Screen.Details(it) } ?: Screen.Home
+            } else Screen.Home
             else -> Screen.Home
         }
     }
@@ -190,6 +222,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                 Screen.Home -> Shell("Home", { screen = it }) {
                     HomeScreen(state,
                         onRefresh = viewModel::refreshEverything,
+                        onLoadThemedRow = viewModel::loadThemedRow,
                         onOpen = {
                             viewModel.loadDetails(it)
                             screen = Screen.Details(it)
@@ -284,6 +317,10 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         onOpenRecommendation = { suggested ->
                             viewModel.loadDetails(suggested)
                             screen = Screen.Details(suggested)
+                        },
+                        onExpandRecommendations = {
+                            viewModel.loadExpandedRow("similar", 1)
+                            screen = Screen.ExpandedRow("More Like This", "similar", 1)
                         },
                         trailer = trailer,
                         inMyList = state.myList.any { mediaMatches(it, detailItem) },
@@ -782,6 +819,7 @@ private fun NavChip(label: String, selected: Boolean, onClick: () -> Unit) {
 private fun HomeScreen(
     state: MainUiState,
     onRefresh: () -> Unit,
+    onLoadThemedRow: (String) -> Unit,
     onOpen: (AppMedia) -> Unit,
     onContinue: (PlaybackProgress) -> Unit,
     onContinueManual: (PlaybackProgress) -> Unit,
@@ -804,9 +842,12 @@ private fun HomeScreen(
         ?: state.watchHistory.firstOrNull()?.media
         ?: state.myList.firstOrNull()
     val historyMedia = state.watchHistory.map { it.media }.distinctBy { it.meta.id }
+    val homeListState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     LazyColumn(
-        Modifier.fillMaxSize(),
+        Modifier.fillMaxSize().tvVerticalNavigation(homeListState),
+        state = homeListState,
         contentPadding = PaddingValues(bottom = 48.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
@@ -1974,6 +2015,7 @@ private fun DetailsScreen(
     loading: Boolean,
     recommendations: List<AppMedia>,
     onOpenRecommendation: (AppMedia) -> Unit,
+    onExpandRecommendations: () -> Unit,
     trailer: StreamOption?,
     inMyList: Boolean,
     rememberedSeason: Int?,
@@ -1995,6 +2037,7 @@ private fun DetailsScreen(
             .sortedBy { it.episode ?: Int.MAX_VALUE }
     }
     val detailsListState = rememberLazyListState()
+    val detailsScope = rememberCoroutineScope()
 
     LaunchedEffect(item.meta.id, selectedSeason, rememberedEpisodeId) {
         val episodeIndex = seasonEpisodes.indexOfFirst { it.id == rememberedEpisodeId }
@@ -2007,7 +2050,9 @@ private fun DetailsScreen(
     Box(Modifier.fillMaxSize()) {
         AsyncImage(model = item.meta.background ?: item.meta.poster, contentDescription = item.meta.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(NmBg, NmBg.copy(alpha = .9f), NmBg.copy(alpha = .4f)))))
-        LazyColumn(Modifier.fillMaxSize().padding(48.dp), state = detailsListState, contentPadding = PaddingValues(bottom = 50.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        LazyColumn(
+            Modifier.fillMaxSize().tvVerticalNavigation(detailsListState).padding(48.dp),
+            state = detailsListState, contentPadding = PaddingValues(bottom = 50.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             item {
                 Column(Modifier.widthIn(max = 720.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(item.meta.name, color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Black)
@@ -2154,8 +2199,15 @@ private fun DetailsScreen(
             }
             if (recommendations.isNotEmpty()) {
                 item {
-                    Text("More Like This", color = Color.White,
-                        fontSize = 26.sp, fontWeight = FontWeight.Black)
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("More Like This", color = Color.White,
+                            fontSize = 26.sp, fontWeight = FontWeight.Black)
+                        Spacer(Modifier.weight(1f))
+                        Button(onClick = onExpandRecommendations) { Text("EXPAND  ↗") }
+                    }
                 }
                 item {
                     LazyRow(
