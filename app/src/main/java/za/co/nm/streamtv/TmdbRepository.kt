@@ -89,7 +89,9 @@ class TmdbRepository(context: Context) {
                 ?.get("season_number")?.takeUnless { it.isJsonNull }?.asInt
         }?.filter { it > 0 }?.distinct()?.sorted().orEmpty()
         val imdbTitleId = imdbId(item.meta.id)
-            ?: identifiedId?.let { fetchImdbId(it, item.meta.type, headers) }
+            ?: identifiedId?.let { id ->
+                runCatching { fetchImdbId(id, item.meta.type, headers) }.getOrNull()
+            }
             ?: item.meta.imdbId
         val initialEpisodes = if (richDetails && item.meta.type == "series" &&
             item.meta.videos.isEmpty() && identifiedId != null
@@ -116,10 +118,14 @@ class TmdbRepository(context: Context) {
         val trailers = if (item.meta.trailers.isNotEmpty()) {
             item.meta.trailers
         } else {
-            tmdbId?.let { fetchTrailers(it, item.meta.type, headers) }.orEmpty()
+            tmdbId?.let { id ->
+                runCatching { fetchTrailers(id, item.meta.type, headers) }.getOrDefault(emptyList())
+            }.orEmpty()
         }
         val contentRating = item.meta.contentRating
-            ?: tmdbId?.let { fetchContentRating(it, item.meta.type, headers) }
+            ?: tmdbId?.let { id ->
+                runCatching { fetchContentRating(id, item.meta.type, headers) }.getOrNull()
+            }
 
         val merged = item.meta.copy(
             poster = posterPath?.let { "$IMG/w500$it" } ?: item.meta.poster,
