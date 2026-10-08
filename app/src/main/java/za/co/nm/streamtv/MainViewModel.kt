@@ -43,6 +43,7 @@ data class MainUiState(
     val searchLoading: Boolean = false,
     val selectedMedia: AppMedia? = null,
     val detailsLoading: Boolean = false,
+    val selectedRecommendations: List<AppMedia> = emptyList(),
     val streamOptions: List<StreamOption> = emptyList(),
     val subtitleOptions: List<SubtitleOption> = emptyList(),
     val streamsLoading: Boolean = false,
@@ -379,11 +380,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.value = _uiState.value.copy(
                     selectedMedia = null,
                     detailsLoading = false,
+                    selectedRecommendations = emptyList(),
                     message = "Anime content is blocked by NM Stream TV"
                 )
                 return@launch
             }
-            _uiState.value = _uiState.value.copy(selectedMedia = item, detailsLoading = true, message = null)
+            _uiState.value = _uiState.value.copy(
+                selectedMedia = item,
+                detailsLoading = true,
+                selectedRecommendations = emptyList(),
+                message = null
+            )
             val resolvedItem = if (item.meta.id.startsWith("tmdb:")) {
                 val matches = runCatching {
                     addons.search(_uiState.value.addons, item.meta.name)
@@ -406,10 +413,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.value = _uiState.value.copy(
                     selectedMedia = null,
                     detailsLoading = false,
+                    selectedRecommendations = emptyList(),
                     message = "Anime content is blocked by NM Stream TV"
                 )
             } else {
                 _uiState.value = _uiState.value.copy(selectedMedia = loaded, detailsLoading = false)
+                if (tmdb.configured() && loaded.meta.tmdbId != null) {
+                    val suggestions = runCatching { tmdb.similarTo(loaded, 16) }
+                        .getOrDefault(emptyList())
+                    if (_uiState.value.selectedMedia?.meta?.id == loaded.meta.id) {
+                        _uiState.value = _uiState.value.copy(selectedRecommendations = suggestions)
+                    }
+                }
             }
         }
     }
