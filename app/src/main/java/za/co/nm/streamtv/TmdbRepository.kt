@@ -46,19 +46,24 @@ class TmdbRepository(context: Context) {
         else -> "Not configured"
     }
 
-    suspend fun enrich(item: AppMedia): AppMedia {
+    suspend fun enrich(item: AppMedia, richDetails: Boolean = false): AppMedia {
         val token = activeToken()
         if (token.isBlank() || item.meta.type == "rd") return item
+        // Detailed cast/runtime requests are reserved for the open details
+        // page, not dozens of home-page tiles during discovery.
+        if (!richDetails && item.meta.tmdbId != null) return item
         val headers = mapOf("Authorization" to "Bearer $token")
         val candidate = when {
             item.meta.tmdbId != null -> fetchFullDetails(item.meta.tmdbId, item.meta.type, headers)
+                ?: searchByTitle(item.meta.name, item.meta.type, headers)
             imdbId(item.meta.id) != null -> findByImdb(imdbId(item.meta.id)!!, item.meta.type, headers)
             else -> searchByTitle(item.meta.name, item.meta.type, headers)
         } ?: return item
 
         val identifiedId = candidate.get("id")?.takeUnless { it.isJsonNull }?.asInt
         val details = if (candidate.has("credits")) candidate
-            else identifiedId?.let { fetchFullDetails(it, item.meta.type, headers) }
+            else if (richDetails) identifiedId?.let { fetchFullDetails(it, item.meta.type, headers) }
+            else null
         val rich = details ?: candidate
         val credits = rich.getAsJsonObject("credits")
         val cast = credits?.getAsJsonArray("cast")?.mapNotNull { actor ->
