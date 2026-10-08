@@ -328,6 +328,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         rememberedEpisodeId = rememberedSelection?.episodeId,
                         toggleMyList = { viewModel.toggleMyList(detailItem) },
                         rememberSeason = { season ->
+                            viewModel.loadSeasonEpisodes(detailItem, season)
                             val previous = seriesSelections[selectionKey]
                             seriesSelections = seriesSelections + (selectionKey to SeriesSelection(
                                 season = season,
@@ -2083,8 +2084,9 @@ private fun DetailsScreen(
     chooseManual: (AppMedia, String, String) -> Unit,
     playTrailer: (StreamOption) -> Unit
 ) {
-    val seasons = remember(item.meta.id, item.meta.videos) {
-        item.meta.videos.map { it.season ?: 1 }.distinct().sorted()
+    val seasons = remember(item.meta.id, item.meta.videos, item.meta.seasonNumbers) {
+        (item.meta.seasonNumbers + item.meta.videos.map { it.season ?: 1 })
+            .filter { it > 0 }.distinct().sorted()
     }
     val selectedSeason = rememberedSeason?.takeIf { it in seasons } ?: seasons.firstOrNull() ?: 1
     val seasonEpisodes = remember(item.meta.videos, selectedSeason) {
@@ -2155,7 +2157,7 @@ private fun DetailsScreen(
                     }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        if (item.meta.type != "series" || item.meta.videos.isEmpty()) {
+                        if (item.meta.type != "series" || seasons.isEmpty()) {
                             HoldActionButton(
                                 label = "▶  Play",
                                 onClick = { play(item, item.meta.id, item.meta.name) },
@@ -2182,7 +2184,7 @@ private fun DetailsScreen(
 
                 }
             }
-            if (item.meta.videos.isNotEmpty()) {
+            if (item.meta.type == "series" && seasons.isNotEmpty()) {
                 item { Text("Seasons", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold) }
                 item {
                     LazyRow(
@@ -2206,6 +2208,15 @@ private fun DetailsScreen(
                         fontSize = 23.sp,
                         fontWeight = FontWeight.Bold
                     )
+                }
+                if (seasonEpisodes.isEmpty()) {
+                    item {
+                        Text(
+                            "Loading episodes for Season $selectedSeason… " +
+                                "If they don't appear, the metadata provider may not list this season yet.",
+                            color = NmMuted, fontSize = 14.sp
+                        )
+                    }
                 }
                 items(seasonEpisodes) { ep ->
                     var focused by remember { mutableStateOf(false) }
@@ -2412,7 +2423,7 @@ private fun SourcesScreen(
     subtitleCount: Int,
     select: (StreamOption) -> Unit
 ) {
-    val visibleSources = sources.filterNot { it.isKnownUncached }
+    val visibleSources = sources.filterNot { it.isKnownUncached || it.isPromotional }
     val recommended = visibleSources.firstOrNull {
         it.playableUrl != null || it.youtubeUrl != null || !it.stream.externalUrl.isNullOrBlank()
     }
@@ -2442,7 +2453,14 @@ private fun SourcesScreen(
         if (loading) {
             item { Text("Checking installed sources…", color = NmMuted) }
         } else if (visibleSources.isEmpty()) {
-            item { Text("No cached/ready streams at 1080p or below are available yet.", color = NmMuted) }
+            item {
+                Text("No playable streams were returned for this title or episode.",
+                    color = NmMuted)
+                Text("Check Settings → NM Account → Sync now, then Add-ons to confirm " +
+                    "Torrentio, MediaFusion and your other providers are installed and configured. " +
+                    "Promotional links are not treated as streams.",
+                    color = NmMuted, fontSize = 13.sp)
+            }
         } else {
             if (httpSources.isNotEmpty()) {
                 item { SourceSectionHeading("HTTP", "Direct HTTP and debrid-ready streams") }
