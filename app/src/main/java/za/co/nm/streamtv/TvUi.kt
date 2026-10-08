@@ -820,7 +820,7 @@ private fun HomeScreen(
             )
         }
 
-        item {
+        if (hero != null) item {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 40.dp),
                 horizontalArrangement = Arrangement.End
