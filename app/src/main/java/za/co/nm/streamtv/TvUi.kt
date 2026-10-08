@@ -1729,7 +1729,7 @@ private fun AddonsScreen(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    "These add-ons remain saved and will retry automatically. Settings → NM Account → Sync now retries immediately.",
+                    "These add-ons remain saved. Settings → NM Account → Sync now retries them, or restart the app to refresh.",
                     color = NmMuted
                 )
             }
