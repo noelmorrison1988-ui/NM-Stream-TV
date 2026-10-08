@@ -12,8 +12,8 @@ android {
         applicationId = "za.co.nm.streamtv.tvboxlite"
         minSdk = 23
         targetSdk = 36
-        versionCode = 11
-        versionName = "1.0.0-tvbox.11"
+        versionCode = 12
+        versionName = "1.0.0-tvbox.12"
     }
 
     buildFeatures {
