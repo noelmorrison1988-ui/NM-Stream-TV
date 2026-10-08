@@ -396,7 +396,13 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             } else {
                                 eligible.filter { it.addonName != previousProvider && it.playableUrl != null }
                             }
-                            val best = alternateHttp.firstOrNull() ?: eligible.firstOrNull()
+                            val topTier = eligible.minOfOrNull { it.litePriorityTier() }
+                            // When possible switch providers within the best
+                            // quality tier, never to 1080 before other 720.
+                            val sameTierAlternate = alternateHttp.firstOrNull {
+                                it.litePriorityTier() == topTier
+                            }
+                            val best = sameTierAlternate ?: eligible.firstOrNull()
 
                             when {
                                 best?.playableUrl != null -> {
@@ -499,9 +505,12 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             nextUrl != null && nextUrl != current.source.playableUrl &&
                                 nextUrl !in current.excludedUrls && !candidate.isKnownUncached
                         }
-                        .sortedWith(compareBy<StreamOption> { candidate ->
-                            if (candidate.addonName == current.source.addonName) 1 else 0
-                        })
+                        .sortedWith(
+                            compareBy<StreamOption> { it.litePriorityTier() }
+                                .thenBy { candidate ->
+                                    if (candidate.addonName == current.source.addonName) 1 else 0
+                                }
+                        )
                         .firstOrNull()
                     PlayerScreen(
                         item = current.item,
@@ -2022,8 +2031,9 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
                 color = if (state.nmAccountLinked) NmGreen else NmMuted
             )
             Text(
-                "Cloud sync is manual after pairing. Changes on this TV stay local until you press Sync now. " +
-                    "Phone-account changes are pulled when you press Sync now.",
+                "Cloud settings sync automatically about once a minute while idle. " +
+                    "During playback, sync is deferred to avoid network disruptions. " +
+                    "Sync now remains available as a manual fallback.",
                 color = NmMuted
             )
             if (state.nmAccountLinked) {
@@ -2046,10 +2056,10 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
         } }
         item { CardBox {
             Text("Playback & language", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            Text("Changes are saved locally. Use Settings → Sync now to send them to linked devices.", color = NmMuted)
+            Text("Settings sync automatically while idle, or press Sync now to update immediately.", color = NmMuted)
 
             Text("TV Box Lite source policy", color = Color.White, fontWeight = FontWeight.Bold)
-            Text("No fixed provider preference. 720p first, then 1080p fallback. Streams above 1080p are excluded.", color = NmMuted, fontSize = 12.sp)
+            Text("Priority: 720p debrid-cloud or PenguPlay → other 720p → 1080p. Lower/unknown quality only if preferred sources are unavailable. Above 1080p is excluded.", color = NmMuted, fontSize = 12.sp)
             Text(
                 "Streaming power protection: enabled automatically during playback. " +
                     "Prevents app-managed CPU/Wi-Fi sleep when possible; it cannot reserve " +
@@ -2088,7 +2098,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Button(onClick = { showConnectionLog = true }) { Text("Connection Log") }
             Text("${state.connectionLog.size} events this session", color = NmMuted, fontSize = 12.sp)
         } }
-        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.20 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.21 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
@@ -2488,7 +2498,7 @@ private fun SourcesScreen(
         item {
             Text(title, color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Black)
             Text("$subtitleCount subtitle tracks found", color = NmMuted)
-            Text("TV Box Lite: 720p preferred · 1080p fallback · cached/ready only · auto failover", color = NmGreen, fontSize = 13.sp)
+            Text("720p debrid/Pengu → other 720p → 1080p · cached/ready only · auto failover", color = NmGreen, fontSize = 13.sp)
         }
 
         if (!loading && recommended != null) {
