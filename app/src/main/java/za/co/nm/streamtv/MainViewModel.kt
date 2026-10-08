@@ -33,6 +33,14 @@ data class MainUiState(
     val searchResults: List<AppMedia> = emptyList(),
     val searchLoading: Boolean = false,
     val selectedMedia: AppMedia? = null,
+    val selectedRecommendations: List<AppMedia> = emptyList(),
+    val themedRows: Map<String,List<AppMedia>> = emptyMap(),
+    val themedRowsLoading: Set<String> = emptySet(),
+    val themedRowsLoaded: Set<String> = emptySet(),
+    val expandedRowItems: List<AppMedia> = emptyList(),
+    val expandedRowHasNext: Boolean = false,
+    val expandedRowLoading: Boolean = false,
+    val connectionLog: List<ConnectionLogEntry> = emptyList(),
     val detailsLoading: Boolean = false,
     val streamOptions: List<StreamOption> = emptyList(),
     val subtitleOptions: List<SubtitleOption> = emptyList(),
@@ -279,6 +287,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun loadThemedRow(key: String) {
+        if (!tmdb.configured() || key !in HomeCollections.byKey) return
+        val current = _uiState.value
+        if (key in current.themedRowsLoaded || key in current.themedRowsLoading) return
+        _uiState.value = current.copy(themedRowsLoading = current.themedRowsLoading + key)
+        viewModelScope.launch {
+            val items = runCatching { tmdb.browseThemed(key, 1, 18).items }
+                .getOrDefault(emptyList())
+            val now = _uiState.value
+            _uiState.value = now.copy(
+                themedRows = now.themedRows + (key to items),
+                themedRowsLoaded = now.themedRowsLoaded + key,
+                themedRowsLoading = now.themedRowsLoading - key
+            )
+        }
+    }
+
+    fun loadExpandedCategory(key: String, page: Int, seed: AppMedia? = null) {
+        _uiState.value = _uiState.value.copy(expandedRowLoading = true, expandedRowItems = emptyList())
+        viewModelScope.launch {
+            val result = runCatching {
+                if (key == "similar" && seed != null) tmdb.similarPage(seed, page, 36)
+                else tmdb.browseThemed(key, page, 36)
+            }.getOrDefault(TmdbBrowsePage())
+            _uiState.value = _uiState.value.copy(
+                expandedRowLoading = false,
+                expandedRowItems = result.items,
+                expandedRowHasNext = result.hasNext
+            )
+        }
+    }
+
     fun toggleMyList(item: AppMedia) {
         if (item.meta.type != "movie" && item.meta.type != "series") return
         val added = myListStore.toggle(item)
@@ -295,39 +335,101 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.value = _uiState.value.copy(
                     selectedMedia = null,
                     detailsLoading = false,
+                    selectedRecommendations = emptyList(),
                     message = "Anime content is blocked by NM Stream TV"
                 )
                 return@launch
             }
-            _uiState.value = _uiState.value.copy(selectedMedia = item, detailsLoading = true, message = null)
-            val resolvedItem = if (item.meta.id.startsWith("tmdb:")) {
-                val matches = runCatching {
-                    addons.search(_uiState.value.addons, item.meta.name)
-                }.getOrDefault(emptyList())
-                    .filter { it.meta.type == item.meta.type }
-
-                val wanted = mediaTitleKey(item.meta.name)
-                matches.firstOrNull { mediaTitleKey(it.meta.name) == wanted }
-                    ?: matches.firstOrNull()
-                    ?: item
-            } else item
-
-            val sourceMeta = runCatching {
-                addons.loadMeta(resolvedItem, _uiState.value.addons)
-            }.getOrDefault(resolvedItem)
+            _uiState.value = _uiState.value.copy(
+                selectedMedia = item,
+                detailsLoading = true,
+                selectedRecommendations = emptyList(),
+                message = null
+            )
+            // TMDB discovery IDs are not valid requests for IMDb-only
+            // stream providers. Keep the real title and ask TMDB for IMDb and
+            // episode identifiers instead of picking the first fuzzy add-on
+            // search result (which can be an unrelated result).
+            val sourceMeta = if (item.meta.id.startsWith("tmdb:")) {
+                item
+            } else {
+                runCatching {
+                    addons.loadMeta(item, _uiState.value.addons)
+                }.getOrDefault(item)
+            }
             val loaded = if (tmdb.configured()) {
-                runCatching { tmdb.enrich(sourceMeta) }.getOrDefault(sourceMeta)
+                runCatching { tmdb.enrich(sourceMeta, richDetails = true) }.getOrDefault(sourceMeta)
             } else sourceMeta
             if (!MediaPolicy.allows(loaded)) {
                 _uiState.value = _uiState.value.copy(
                     selectedMedia = null,
                     detailsLoading = false,
+                    selectedRecommendations = emptyList(),
                     message = "Anime content is blocked by NM Stream TV"
                 )
             } else {
                 _uiState.value = _uiState.value.copy(selectedMedia = loaded, detailsLoading = false)
+                if (tmdb.configured() && loaded.meta.tmdbId != null) {
+                    val suggestions = runCatching { tmdb.similarTo(loaded, 16) }
+                        .getOrDefault(emptyList())
+                    if (_uiState.value.selectedMedia?.meta?.id == loaded.meta.id) {
+                        _uiState.value = _uiState.value.copy(selectedRecommendations = suggestions)
+                    }
+                }
             }
         }
+    }
+
+    /** Request episodes for a different season without replacing the title. */
+    fun loadSeasonEpisodes(item: AppMedia, season: Int) {
+        if (season <= 0 || item.meta.type != "series") return
+        if (item.meta.videos.any { it.season == season }) return
+        viewModelScope.launch {
+            val episodes = runCatching { tmdb.seasonEpisodes(item, season) }
+                .getOrDefault(emptyList())
+            if (episodes.isEmpty()) return@launch
+            val current = _uiState.value.selectedMedia ?: return@launch
+            if (current.meta.id != item.meta.id) return@launch
+            val combined = (current.meta.videos + episodes).distinctBy { it.id }
+                .sortedWith(compareBy<VideoItem> { it.season ?: 0 }.thenBy { it.episode ?: 0 })
+            _uiState.value = _uiState.value.copy(
+                selectedMedia = current.copy(meta = current.meta.copy(videos = combined))
+            )
+        }
+    }
+
+    private fun candidateStreamIds(item: AppMedia, videoId: String): List<String> {
+        val meta = item.meta
+        val tmdbId = meta.tmdbId
+        val imdbId = meta.imdbId
+            ?: Regex("tt\\d{5,10}").find(meta.id)?.value
+
+        if (meta.type == "series") {
+            val matchedEpisode = meta.videos.firstOrNull { it.id == videoId }
+            val season = matchedEpisode?.season
+            val episode = matchedEpisode?.episode
+            if (season != null && episode != null) {
+                return listOfNotNull(
+                    imdbId?.let { "$it:$season:$episode" },
+                    tmdbId?.let { "tmdb:$it:$season:$episode" },
+                    videoId
+                ).distinct()
+            }
+            // Preserve episode numbers embedded in the original video ID.
+            val parts = videoId.split(":")
+            val seasonNum = parts.getOrNull(parts.size - 2)?.toIntOrNull()
+            val episodeNum = parts.lastOrNull()?.toIntOrNull()
+            if (seasonNum != null && episodeNum != null) {
+                return listOfNotNull(
+                    imdbId?.let { "$it:$seasonNum:$episodeNum" },
+                    tmdbId?.let { "tmdb:$it:$seasonNum:$episodeNum" },
+                    videoId
+                ).distinct()
+            }
+        }
+        return listOfNotNull(
+            imdbId, tmdbId?.let { "tmdb:$it" }, videoId
+        ).distinct()
     }
 
     fun loadSources(item: AppMedia, videoId: String = item.meta.id) {
@@ -354,7 +456,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 } else {
                     runCatching {
-                        addons.loadStreams(_uiState.value.addons, item.meta.type, videoId)
+                        addons.loadStreamsForIds(
+                            _uiState.value.addons, item.meta.type,
+                            candidateStreamIds(item, videoId)
+                        )
                     }.getOrDefault(emptyList())
                 }
             }
@@ -368,29 +473,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             val prefs = nmAccount.playbackPreferences()
-            val sortedStreams = streamsDeferred.await()
+            val loadedStreams = streamsDeferred.await()
+
+            val rdHashesToVerify = loadedStreams
+                .filter { option ->
+                    option.isRealDebrid && !option.stream.infoHash.isNullOrBlank()
+                }
+                .mapNotNull { it.stream.infoHash?.lowercase() }
+                .distinct()
+
+            val instantlyAvailableRdHashes = if (rdHashesToVerify.isNotEmpty()) {
+                runCatching {
+                    realDebrid.instantlyAvailableHashes(rdHashesToVerify)
+                }.getOrNull()
+            } else {
+                null
+            }
+
+            val sortedStreams = loadedStreams
+                .filterNot { it.isKnownUncached || it.isPromotional }
+                .filter { option ->
+                    val hash = option.stream.infoHash?.lowercase()
+                    hash == null ||
+                        !option.isRealDebrid ||
+                        instantlyAvailableRdHashes == null ||
+                        hash in instantlyAvailableRdHashes
+                }
                 .filter { option ->
                     val quality = option.detectedQuality
                     quality == null || quality <= 1080
                 }
                 .sortedWith(
                     compareBy<StreamOption> { option ->
-                        if (option.addonName.contains("pengu", ignoreCase = true)) 0 else 1
+                        option.litePriorityTier()
+                    }.thenBy { option ->
+                        val hash = option.stream.infoHash?.lowercase()
+                        when {
+                            hash != null && instantlyAvailableRdHashes != null &&
+                                hash in instantlyAvailableRdHashes -> 0
+                            option.isExplicitlyCached -> 1
+                            option.isDebrid -> 2
+                            else -> 3
+                        }
                     }.thenBy { option ->
                         when {
                             option.playableUrl != null -> 0
                             option.isP2p -> 1
                             else -> 2
-                        }
-                    }.thenBy { option ->
-                        when (option.detectedQuality) {
-                            1080 -> 0
-                            720 -> 1
-                            576 -> 2
-                            480 -> 3
-                            360 -> 4
-                            null -> 5
-                            else -> 6
                         }
                     }.thenByDescending { it.stream.behaviorHints?.videoSize ?: 0L }
                 )
