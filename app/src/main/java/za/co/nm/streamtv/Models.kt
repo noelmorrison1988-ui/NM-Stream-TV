@@ -311,6 +311,24 @@ data class StreamOption(
         else -> "Unavailable"
     }
 
+    /**
+     * TV Box Lite's explicit tier order. A named 720p Real-Debrid/cloud HTTP
+     * stream or PenguPlay source wins before any other 720p source. Only
+     * after ALL 720p options do we consider 1080p, then lower/unknown.
+     * Real-Debrid hash availability is still verified by MainViewModel.
+     */
+    fun litePriorityTier(): Int {
+        val pengu = addonName.contains("pengu", ignoreCase = true)
+        val readyCloud = isDebrid && playableUrl != null
+        return when (detectedQuality) {
+            720 -> if (readyCloud || pengu) 0 else 1
+            1080 -> 2
+            576, 480, 360 -> 3
+            null -> 4
+            else -> 5
+        }
+    }
+
     fun preferenceScore(
         preferredQuality: Int = 720,
         preferHttpDebrid: Boolean = true,
