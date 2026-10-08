@@ -2508,7 +2508,8 @@ private fun PlayerScreen(
     var lowBufferSamples by remember(player) { mutableIntStateOf(0) }
 
     fun switchWithStandby(positionMs: Long, reason: String) {
-        val pos = maxOf(positionMs.coerceAtLeast(0L), lastReliablePositionMs)
+        val pos = if (positionMs <= 1_000L && lastReliablePositionMs > 10_000L)
+            lastReliablePositionMs else positionMs.coerceAtLeast(0L)
         val standby = standbyPlayer
         val valid = standby != null && nextSource != null && standbyPrepareRequested &&
             standby.playbackState == Player.STATE_READY &&
@@ -2842,7 +2843,7 @@ private fun PlayerScreen(
             }.coerceIn(0L, (duration - 1L).coerceAtLeast(0L))
 
             player.seekTo(target)
-            lastReliablePositionMs = maxOf(lastReliablePositionMs, target)
+            lastReliablePositionMs = target
             player.playWhenReady = true
             resumeApplied = true
         }
@@ -2997,7 +2998,7 @@ private fun PlayerScreen(
             if (resumeApplied && !sourceSwitchRequested &&
                 duration > 180_000L && player.playbackState == Player.STATE_READY
             ) {
-                lastReliablePositionMs = maxOf(lastReliablePositionMs, position)
+                lastReliablePositionMs = position
                 if (!started) {
                     onStarted(position, duration)
                     started = true
@@ -3016,7 +3017,7 @@ private fun PlayerScreen(
             if (resumeApplied && player.playbackState == Player.STATE_READY &&
                 player.duration > 180_000L && !sourceSwitchRequested
             ) {
-                lastReliablePositionMs = maxOf(lastReliablePositionMs, player.currentPosition)
+                lastReliablePositionMs = player.currentPosition.coerceAtLeast(0L)
             }
             onPlaybackHealth(
                 player.totalBufferedDuration,
@@ -3061,7 +3062,9 @@ private fun PlayerScreen(
             // A failing source must not overwrite the episode's saved
             // position with zero, or the timestamp of a placeholder video.
             if (duration > 180_000L && resumeApplied && !sourceSwitchRequested) {
-                onStopped(maxOf(position, lastReliablePositionMs), duration)
+                val safePosition = if (position <= 1_000L && lastReliablePositionMs > 10_000L)
+                    lastReliablePositionMs else position
+                onStopped(safePosition, duration)
             }
             player.release()
         }
