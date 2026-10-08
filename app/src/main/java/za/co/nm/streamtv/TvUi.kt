@@ -2651,7 +2651,7 @@ private fun PlayerScreen(
                                         5 -> fillVideo = !fillVideo
                                         6 -> if (!sourceSwitchRequested) {
                                             sourceSwitchRequested = true
-                                            onSourceSwitch(
+                                            switchWithStandby(
                                                 player.currentPosition.coerceAtLeast(0L),
                                                 "Skipped source manually"
                                             )
@@ -2698,6 +2698,46 @@ private fun PlayerScreen(
             val bufferStart = bufferingSinceMs
             val stalledForMs = if (bufferStart > 0L) now - bufferStart else 0L
             val playerError = player.playerError
+            val bufferAhead = player.totalBufferedDuration.coerceAtLeast(0L)
+            val remaining = player.duration.takeIf { it > 0L }
+                ?.minus(player.currentPosition) ?: Long.MAX_VALUE
+            val playbackInProgress = started && player.currentPosition > 5_000L &&
+                remaining > 20_000L
+
+            // Low-buffer warning is also a useful proxy for a data source
+            // that has slowed or stopped delivering bytes.
+            if (standbyPlayer != null && !standbyPrepareRequested &&
+                playbackInProgress && bufferAhead < 25_000L
+            ) {
+                standbyPrepareRequested = true
+                standbyPlayer.seekTo(player.currentPosition.coerceAtLeast(0L))
+                standbyPlayer.prepare()
+            }
+            if (standbyPrepareRequested && standbyPlayer != null &&
+                standbyPlayer.playbackState == Player.STATE_READY &&
+                player.currentPosition > standbyPlayer.bufferedPosition - 2_500L
+            ) {
+                // Reposition only when the playhead is catching the warm
+                // buffer, avoiding constant reloads on the backup connection.
+                standbyPlayer.seekTo(player.currentPosition.coerceAtLeast(0L))
+            }
+
+            if (player.playbackState == Player.STATE_READY && player.isPlaying &&
+                playbackInProgress && bufferAhead in 1L..4_000L
+            ) {
+                lowBufferSamples += 1
+            } else {
+                lowBufferSamples = 0
+            }
+            if (lowBufferSamples >= 4 && standbyPlayer != null &&
+                standbyPlayer.playbackState == Player.STATE_READY &&
+                standbyPlayer.bufferedPosition > player.currentPosition + 1_500L
+            ) {
+                sourceSwitchRequested = true
+                recoveryMessage = "Buffer low · switching to prebuffered source…"
+                switchWithStandby(player.currentPosition, "Predicted buffer underrun")
+                continue
+            }
 
             // Some add-ons return a playable 2:00 error/blocked-content video
             // instead of an HTTP error. Recognise that duration regardless of
@@ -2721,7 +2761,7 @@ private fun PlayerScreen(
                 recoveryMessage = "Provider placeholder detected · trying next source…"
                 // Do not store the error video's time as the episode progress.
                 // The existing failover excludes this URL for the full chain.
-                onSourceSwitch(
+                switchWithStandby(
                     initialResumeMs.coerceAtLeast(0L),
                     if (twoMinutePlaceholder) "Two-minute provider placeholder"
                     else "Short hosted-provider placeholder"
@@ -2751,7 +2791,7 @@ private fun PlayerScreen(
                 } else {
                     "Stream error · switching source…"
                 }
-                onSourceSwitch(resumeAt, reason)
+                switchWithStandby(resumeAt, reason)
                 continue
             }
 
@@ -2759,7 +2799,7 @@ private fun PlayerScreen(
                 if (bufferStart > 0L && stalledForMs >= 25_000L) {
                     sourceSwitchRequested = true
                     recoveryMessage = "Source did not start · switching source…"
-                    onSourceSwitch(
+                    switchWithStandby(
                         player.currentPosition.coerceAtLeast(0L),
                         "Source did not start within 25 seconds"
                     )
@@ -2777,7 +2817,7 @@ private fun PlayerScreen(
                     sourceSwitchRequested = true
                     val resumeAt = player.currentPosition.coerceAtLeast(0L)
                     recoveryMessage = "Repeated freezes · switching source…"
-                    onSourceSwitch(resumeAt, "More than 3 freezes in 5 minutes")
+                    switchWithStandby(resumeAt, "More than 3 freezes in 5 minutes")
                     continue
                 }
             }
@@ -2786,7 +2826,7 @@ private fun PlayerScreen(
                 sourceSwitchRequested = true
                 val resumeAt = player.currentPosition.coerceAtLeast(0L)
                 recoveryMessage = "Buffer stalled too long · switching source…"
-                onSourceSwitch(resumeAt, "Buffering exceeded 8 seconds")
+                switchWithStandby(resumeAt, "Buffering exceeded 8 seconds")
             }
         }
     }
@@ -3062,7 +3102,7 @@ private fun PlayerScreen(
                         onClick = {
                             if (!sourceSwitchRequested) {
                                 sourceSwitchRequested = true
-                                onSourceSwitch(
+                                switchWithStandby(
                                     player.currentPosition.coerceAtLeast(0L),
                                     "Skipped source manually"
                                 )
