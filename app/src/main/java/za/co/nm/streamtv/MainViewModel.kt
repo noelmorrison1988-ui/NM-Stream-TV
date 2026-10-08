@@ -12,6 +12,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 data class MainUiState(
     val loading: Boolean = true,
@@ -101,7 +104,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = current.copy(connectionLog = (current.connectionLog + event).takeLast(200))
     }
 
-    fun setPlaybackMonitoringActive(active: Boolean) = connectionMonitor.setPlaybackActive(active)
+    // Automatic cloud activity is deferred during media playback. Pairing
+    // still polls until authorised, as requested.
+    @Volatile private var playbackActive = false
+    private val nmSyncMutex = Mutex()
+    private var autoNmSyncJob: Job? = null
+
+    fun setPlaybackMonitoringActive(active: Boolean) {
+        playbackActive = active
+        connectionMonitor.setPlaybackActive(active)
+    }
     fun reportPlaybackBuffer(bufferedMs: Long, buffering: Boolean) =
         connectionMonitor.updatePlayerBuffer(bufferedMs, buffering)
 
@@ -112,6 +124,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         refreshEverything()
         viewModelScope.launch(Dispatchers.Default) { connectionMonitor.run() }
+        startAutoNmSyncLoop()
+    }
+
+    private fun startAutoNmSyncLoop() {
+        autoNmSyncJob?.cancel()
+        autoNmSyncJob = viewModelScope.launch {
+            delay(15_000L)
+            while (isActive) {
+                if (nmAccount.isLinked() && !playbackActive && !_uiState.value.nmPairing) {
+                    nmSyncMutex.withLock {
+                        if (nmAccount.isLinked() && !playbackActive && !_uiState.value.nmPairing) {
+                            runCatching {
+                                pushPendingManualChanges()
+                                applyNmAccountSync(force = false)
+                            }.onSuccess {
+                                _uiState.value = _uiState.value.copy(nmSyncStatus = "Auto synced")
+                            }.onFailure { error ->
+                                _uiState.value = when (error) {
+                                    is NmDeviceBlockedException -> _uiState.value.copy(
+                                        nmSyncStatus = "Blocked", nmDeviceBlocked = true
+                                    )
+                                    is NmDeviceUnpairedException -> _uiState.value.copy(
+                                        nmAccountLinked = false, nmAccountName = null,
+                                        nmSyncStatus = "Not linked"
+                                    )
+                                    else -> _uiState.value.copy(
+                                        nmSyncStatus = "Auto sync failed · use Sync now"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                delay(60_000L)
+            }
+        }
     }
 
     fun refreshEverything() {
@@ -213,7 +261,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 nmAccountLinked = nmAccount.isLinked(),
                 nmAccountName = nmAccount.accountName(),
                 nmSyncStatus = if (nmAccount.isLinked()) {
-                    _uiState.value.nmSyncStatus.takeUnless { it == "Not linked" } ?: "Manual sync"
+                    _uiState.value.nmSyncStatus.takeUnless { it == "Not linked" } ?: "Auto sync enabled"
                 } else "Not linked",
                 preferredQuality = nmPrefs.preferredQuality,
                 preferHttpDebrid = nmPrefs.preferHttpDebrid,
@@ -599,15 +647,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 .sortedWith(
                     compareBy<StreamOption> { option ->
-                        when (option.detectedQuality) {
-                            720 -> 0
-                            1080 -> 1
-                            576 -> 2
-                            480 -> 3
-                            360 -> 4
-                            null -> 5
-                            else -> 6
-                        }
+                        option.litePriorityTier()
                     }.thenBy { option ->
                         val hash = option.stream.infoHash?.lowercase()
                         when {
@@ -882,10 +922,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             _uiState.value = _uiState.value.copy(nmSyncStatus = "Syncing…")
-            // Push only locally edited categories, then pull all cloud settings.
+            // Manual failover is always available, even if automatic sync
+            // recently failed or normally waits until playback has stopped.
             runCatching {
-                pushPendingManualChanges()
-                applyNmAccountSync(force = true)
+                nmSyncMutex.withLock {
+                    pushPendingManualChanges()
+                    applyNmAccountSync(force = true)
+                }
             }
                 .onSuccess {
                     _uiState.value = _uiState.value.copy(
