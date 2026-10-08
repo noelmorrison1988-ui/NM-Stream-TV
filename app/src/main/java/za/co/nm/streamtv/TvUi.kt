@@ -1755,7 +1755,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Text("These preferences sync to every linked NM Stream TV device.", color = NmMuted)
 
             Text("TV Box Lite source policy", color = Color.White, fontWeight = FontWeight.Bold)
-            Text("Pengu is the default provider. Streams above 1080p are excluded in TV Box Lite.", color = NmMuted, fontSize = 12.sp)
+            Text("No fixed provider preference. 720p first, then 1080p fallback. Streams above 1080p are excluded.", color = NmMuted, fontSize = 12.sp)
 
             Text("Preferred audio language", color = Color.White, fontWeight = FontWeight.Bold)
             Box(Modifier.fillMaxWidth()) { InputBox(audioLang, "en") { audioLang = it } }
@@ -1782,7 +1782,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.7 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.11 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
