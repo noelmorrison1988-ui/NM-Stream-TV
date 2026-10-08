@@ -138,27 +138,51 @@ class AddonRepository(context: Context) {
         return item
     }
 
-    suspend fun loadStreams(addons: List<InstalledAddon>, type: String, videoId: String): List<StreamOption> =
-        supervisorScope {
-            addons
-                .filter { supportsResource(it.manifest, "stream", type, videoId) }
-                .map { addon ->
-                    async {
-                        runCatching {
-                            val url = resourceUrl(addon, "stream/${SimpleHttp.encode(type)}/${SimpleHttp.encode(videoId)}.json")
-                            val body = SimpleHttp.requireSuccess(SimpleHttp.get(url), "Loading streams")
-                            gson.fromJson(body, StreamResponse::class.java).streams.map { stream ->
-                                StreamOption(addon.manifest.name, stream)
-                            }
-                        }.getOrDefault(emptyList())
+    suspend fun loadStreams(
+        addons: List<InstalledAddon>,
+        type: String,
+        videoId: String
+    ): List<StreamOption> = loadStreamsForIds(addons, type, listOf(videoId))
+
+    /**
+     * A discovery title may be identified by TMDB while the stream providers
+     * require IMDb (tt...) IDs. Try the candidate ID formats supported by
+     * each provider. Never use a promotional/donation page as a stream.
+     */
+    suspend fun loadStreamsForIds(
+        addons: List<InstalledAddon>,
+        type: String,
+        videoIds: List<String>
+    ): List<StreamOption> = supervisorScope {
+        val candidates = videoIds.filter { it.isNotBlank() }.distinct().take(5)
+        addons.map { addon ->
+            async {
+                var valid = emptyList<StreamOption>()
+                for (candidate in candidates) {
+                    if (!supportsResource(addon.manifest, "stream", type, candidate)) continue
+                    val options = runCatching {
+                        val url = resourceUrl(
+                            addon, "stream/${SimpleHttp.encode(type)}/${SimpleHttp.encode(candidate)}.json"
+                        )
+                        val body = SimpleHttp.requireSuccess(SimpleHttp.get(url), "Loading streams")
+                        gson.fromJson(body, StreamResponse::class.java).streams
+                            .map { stream -> StreamOption(addon.manifest.name, stream) }
+                            .filterNot { it.isPromotional }
+                    }.getOrDefault(emptyList())
+                    if (options.isNotEmpty()) {
+                        valid = options
+                        break
                     }
                 }
-                .awaitAll()
-                .flatten()
-                .distinctBy { option ->
-                    option.playableUrl ?: option.stream.externalUrl ?: option.stream.infoHash ?: option.displayTitle()
-                }
-        }
+                valid
+            }
+        }.awaitAll().flatten()
+            // A shared URL may legitimately occur in two add-ons, but a
+            // duplicate stream within one add-on is unnecessary.
+            .distinctBy { option ->
+                "${option.addonName}|${option.playableUrl ?: option.stream.externalUrl ?: option.stream.infoHash ?: option.displayTitle()}"
+            }
+    }
 
     suspend fun loadSubtitles(addons: List<InstalledAddon>, type: String, videoId: String): List<SubtitleOption> =
         supervisorScope {
