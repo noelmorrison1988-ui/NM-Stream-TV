@@ -87,6 +87,9 @@ object SimpleHttp {
             .removeSurrounding("\"")
             .removeSurrounding("'")
             .substringBefore('#')
+            // Torrentio/Comet configurators may copy raw "|" separators in paths.
+            // java.net.URI rejects these unless percent-encoded.
+            .replace("|", "%7C")
 
         if (raw.startsWith("stremio://", true)) {
             raw = "https://" + raw.substringAfter("://")
