@@ -355,9 +355,14 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             when {
                                 best?.playableUrl != null -> {
                                     val notice = current.switchFromLabel?.let { from ->
-                                        "Source switched automatically · " +
-                                            (current.switchReason ?: "recovery") +
-                                            " · $from → ${best.addonName} · ${best.qualityLabel()}"
+                                        val action = if (current.switchReason == "Skipped source manually") {
+                                            "SOURCE CHANGED MANUALLY"
+                                        } else {
+                                            "SOURCE SWITCHED AUTOMATICALLY"
+                                        }
+                                        "$action · ${current.switchReason ?: "Recovery"}" +
+                                            "\nFROM: $from" +
+                                            "\nTO: ${best.switchIdentityLabel()}"
                                     }
                                     screen = Screen.Player(
                                         current.item,
@@ -504,7 +509,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                                 excludedUrls = excluded,
                                 resumeMsOverride = positionMs,
                                 resumeSubtitles = activeSubtitles,
-                                switchFromLabel = "${current.source.addonName} · ${current.source.qualityLabel()}",
+                                switchFromLabel = current.source.switchIdentityLabel(),
                                 switchReason = reason
                             )
                         }
@@ -2116,7 +2121,7 @@ private fun SourceResultRow(source: StreamOption, isDefault: Boolean, select: (S
                 if (isDefault) Text("DEFAULT", color = NmGreen, fontSize = 11.sp, fontWeight = FontWeight.Black)
             }
             Text(source.addonName, color = NmRed)
-            Text(source.statusText(), color = NmMuted)
+            Text(source.statusText() + " · Link #${source.safeLinkId()}", color = NmMuted)
         }
         when {
             source.playableUrl != null || source.youtubeUrl != null -> Text("PLAY", color = NmGreen, fontWeight = FontWeight.Black)
@@ -2294,7 +2299,7 @@ private fun PlayerScreen(
     LaunchedEffect(player, sourceNotice) {
         showSourceNotice = !sourceNotice.isNullOrBlank()
         if (showSourceNotice) {
-            delay(4_500L)
+            delay(7_000L)
             showSourceNotice = false
         }
     }
@@ -2790,8 +2795,16 @@ private fun PlayerScreen(
                     .background(Color(0xEE111319))
                     .border(2.dp, NmGold, RoundedCornerShape(10.dp))
                     .padding(horizontal = 18.dp, vertical = 10.dp)
+                .widthIn(max = 760.dp)
             ) {
-                Text(message, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    message,
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    lineHeight = 19.sp,
+                    maxLines = 5
+                )
             }
         }
         if (showAdvisory) {
