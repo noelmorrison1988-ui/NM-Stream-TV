@@ -1928,6 +1928,11 @@ private fun AddonsScreen(
 private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
     var showConnectionLog by remember { mutableStateOf(false) }
     if (showConnectionLog) {
+        val logState = rememberLazyListState()
+        val logFocus = remember { FocusRequester() }
+        val scope = rememberCoroutineScope()
+        val entries = state.connectionLog.asReversed()
+        LaunchedEffect(Unit) { logFocus.requestFocus() }
         Dialog(onDismissRequest = { showConnectionLog = false }) {
             Column(
                 Modifier.fillMaxWidth()
@@ -1939,19 +1944,38 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             ) {
                 Text("Connection Log", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold)
                 Text(
-                    "This session only · device connection and observed app download-rate dips. " +
-                        "Not an internet speed test; buffering may naturally pause downloads.",
-                    color = NmMuted,
-                    fontSize = 12.sp
+                    "Session only · newest first. Use remote ↑/↓ to scroll the log " +
+                        "or use the navigation buttons. Back closes the log.",
+                    color = NmMuted, fontSize = 12.sp
                 )
                 LazyColumn(
-                    Modifier.fillMaxWidth().heightIn(max = 400.dp),
+                    Modifier.fillMaxWidth().height(380.dp)
+                        .focusRequester(logFocus)
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) {
+                                false
+                            } else {
+                                val offset = when (event.key) {
+                                    Key.DirectionDown -> 5
+                                    Key.DirectionUp -> -5
+                                    else -> 0
+                                }
+                                if (offset == 0) false else {
+                                    val index = (logState.firstVisibleItemIndex + offset)
+                                        .coerceIn(0, (entries.size - 1).coerceAtLeast(0))
+                                    scope.launch { logState.animateScrollToItem(index) }
+                                    true
+                                }
+                            }
+                        }
+                        .focusable(),
+                    state = logState,
                     verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
-                    if (state.connectionLog.isEmpty()) {
+                    if (entries.isEmpty()) {
                         item { Text("No events yet.", color = NmMuted) }
                     } else {
-                        items(state.connectionLog.asReversed()) { entry ->
+                        items(entries) { entry ->
                             Text(
                                 "${entry.time}  ·  ${entry.detail}",
                                 color = if (
@@ -1964,7 +1988,22 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
                         }
                     }
                 }
-                Button(onClick = { showConnectionLog = false }) { Text("Close log") }
+                Text("${entries.size} events · ${logState.firstVisibleItemIndex + 1} from newest",
+                    color = NmMuted, fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        scope.launch { logState.animateScrollToItem(
+                            (logState.firstVisibleItemIndex - 6).coerceAtLeast(0)
+                        ) }
+                    }) { Text("↑ Newer") }
+                    Button(onClick = {
+                        scope.launch { logState.animateScrollToItem(
+                            (logState.firstVisibleItemIndex + 6)
+                                .coerceAtMost((entries.size - 1).coerceAtLeast(0))
+                        ) }
+                    }) { Text("↓ Older") }
+                    Button(onClick = { showConnectionLog = false }) { Text("Close") }
+                }
             }
         }
     }
