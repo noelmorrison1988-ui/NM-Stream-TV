@@ -273,6 +273,7 @@ class NmAccountRepository(context: Context) {
     }
 
     fun unlink() {
+        clearAllPending()
         listOf(
             DEVICE_TOKEN_KEY,
             DEVICE_ID_KEY,
