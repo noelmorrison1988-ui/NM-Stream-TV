@@ -112,7 +112,9 @@ private sealed interface Screen {
         val resumeMsOverride: Long? = null,
         val resumeSubtitles: List<SubtitleOption>? = null,
         val excludedUrls: Set<String> = emptySet(),
-        val switchNotice: String? = null
+        val switchNotice: String? = null,
+        // Ownership of a prepared standby player moves to the new screen.
+        val prewarmedPlayer: ExoPlayer? = null
     ) : Screen
     data class Trailer(val item: AppMedia, val title: String, val source: StreamOption) : Screen
     data class YouTubeTrailer(val item: AppMedia, val title: String, val youtubeId: String) : Screen
@@ -440,6 +442,19 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                 )
                 is Screen.Player -> {
                     val activeSubtitles = current.resumeSubtitles ?: state.subtitleOptions
+                    val currentKey = viewModel.sourceRequestKey(current.item, current.videoId)
+                    val matchingSources = if (state.sourceRequestKey == currentKey &&
+                        !state.streamsLoading) state.streamOptions else emptyList()
+                    val nextSource = matchingSources
+                        .filter { candidate ->
+                            val nextUrl = candidate.playableUrl
+                            nextUrl != null && nextUrl != current.source.playableUrl &&
+                                nextUrl !in current.excludedUrls && !candidate.isKnownUncached
+                        }
+                        .sortedWith(compareBy<StreamOption> { candidate ->
+                            if (candidate.addonName == current.source.addonName) 1 else 0
+                        })
+                        .firstOrNull()
                     PlayerScreen(
                         item = current.item,
                         videoId = current.videoId,
@@ -456,6 +471,8 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         },
                         sourceNotice = current.switchNotice,
                         sourceProvider = current.source.addonName,
+                        nextSource = nextSource,
+                        prewarmedPlayer = current.prewarmedPlayer,
                         preferredAudioLanguage = state.preferredAudioLanguage,
                         preferredSubtitleLanguage = state.preferredSubtitleLanguage,
                         onStarted = { p, d ->
@@ -491,7 +508,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                                 d
                             )
                         },
-                        onSourceSwitch = { positionMs, reason ->
+                        onSourceSwitch = { positionMs, reason, standby, standbySource ->
                             viewModel.forgetLastPlaybackSession(current.item, current.videoId)
                             val requestKey = viewModel.sourceRequestKey(current.item, current.videoId)
                             val failedUrl = current.source.playableUrl
@@ -500,18 +517,41 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             } else {
                                 current.excludedUrls + failedUrl
                             }
-                            viewModel.loadSources(current.item, current.videoId)
-                            screen = Screen.AutoPlay(
-                                item = current.item,
-                                videoId = current.videoId,
-                                title = current.title,
-                                requestKey = requestKey,
-                                excludedUrls = excluded,
-                                resumeMsOverride = positionMs,
-                                resumeSubtitles = activeSubtitles,
-                                switchFromLabel = current.source.switchIdentityLabel(),
-                                switchReason = reason
-                            )
+                            if (standby != null && standbySource != null) {
+                                val notice = "SOURCE SWITCHED · $reason" +
+                                    "\nFROM: ${current.source.switchIdentityLabel()}" +
+                                    "\nTO: ${standbySource.switchIdentityLabel()}"
+                                screen = Screen.Player(
+                                    item = current.item,
+                                    videoId = current.videoId,
+                                    title = current.title,
+                                    source = standbySource,
+                                    returnToSources = false,
+                                    resumeMsOverride = positionMs,
+                                    resumeSubtitles = activeSubtitles,
+                                    excludedUrls = excluded,
+                                    switchNotice = notice,
+                                    prewarmedPlayer = standby
+                                )
+                            } else {
+                                // Reuse already available source results. Requery only
+                                // when we have no matching results to choose from.
+                                if (state.sourceRequestKey != requestKey ||
+                                    state.streamOptions.isEmpty()) {
+                                    viewModel.loadSources(current.item, current.videoId)
+                                }
+                                screen = Screen.AutoPlay(
+                                    item = current.item,
+                                    videoId = current.videoId,
+                                    title = current.title,
+                                    requestKey = requestKey,
+                                    excludedUrls = excluded,
+                                    resumeMsOverride = positionMs,
+                                    resumeSubtitles = activeSubtitles,
+                                    switchFromLabel = current.source.switchIdentityLabel(),
+                                    switchReason = reason
+                                )
+                            }
                         }
                     )
                 }
@@ -2156,19 +2196,26 @@ private fun PlayerScreen(
     resumePercent: Double?,
     sourceNotice: String?,
     sourceProvider: String? = null,
+    nextSource: StreamOption? = null,
+    prewarmedPlayer: ExoPlayer? = null,
     preferredAudioLanguage: String,
     preferredSubtitleLanguage: String,
     onStarted: (Long, Long) -> Unit,
     onProgress: (Long, Long) -> Unit,
     onStopped: (Long, Long) -> Unit,
-    onSourceSwitch: (Long, String) -> Unit = { _, _ -> }
+    onSourceSwitch: (Long, String, ExoPlayer?, StreamOption?) -> Unit =
+        { _, _, _, _ -> }
 ) {
     val context = LocalContext.current
 
     val initialResumeMs = remember(url, videoId) { resumeMs }
     val initialResumePercent = remember(url, videoId) { resumePercent }
 
-    val player = remember(url, videoId, headers, subtitles) {
+    val player = remember(url, videoId, headers, subtitles, prewarmedPlayer) {
+        if (prewarmedPlayer != null) {
+            prewarmedPlayer.playWhenReady = true
+            prewarmedPlayer
+        } else {
         val dataSource = DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(headers)
             .setAllowCrossProtocolRedirects(true)
@@ -2219,11 +2266,12 @@ private fun PlayerScreen(
                 prepare()
                 playWhenReady = true
             }
+        }
     }
 
     var started by remember(player) { mutableStateOf(false) }
     var resumeApplied by remember(player) {
-        mutableStateOf(initialResumeMs <= 0 && initialResumePercent == null)
+        mutableStateOf(prewarmedPlayer != null || (initialResumeMs <= 0 && initialResumePercent == null))
     }
     var trackRevision by remember(player) { mutableIntStateOf(0) }
     var showAudioMenu by remember { mutableStateOf(false) }
