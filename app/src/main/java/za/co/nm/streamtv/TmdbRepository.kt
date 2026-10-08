@@ -84,6 +84,23 @@ class TmdbRepository(context: Context) {
             genre.takeIf { it.isJsonObject }?.asJsonObject
                 ?.get("name")?.takeUnless { it.isJsonNull }?.asString
         }.orEmpty()
+        val seasonNumbers = rich.getAsJsonArray("seasons")?.mapNotNull { el ->
+            el.takeIf { it.isJsonObject }?.asJsonObject
+                ?.get("season_number")?.takeUnless { it.isJsonNull }?.asInt
+        }?.filter { it > 0 }?.distinct()?.sorted().orEmpty()
+        val imdbTitleId = imdbId(item.meta.id)
+            ?: identifiedId?.let { fetchImdbId(it, item.meta.type, headers) }
+            ?: item.meta.imdbId
+        val initialEpisodes = if (richDetails && item.meta.type == "series" &&
+            item.meta.videos.isEmpty() && identifiedId != null
+        ) {
+            val firstSeason = seasonNumbers.firstOrNull()
+            if (firstSeason != null) {
+                runCatching {
+                    fetchSeasonEpisodes(identifiedId, imdbTitleId, firstSeason, headers)
+                }.getOrDefault(emptyList())
+            } else emptyList()
+        } else emptyList()
         val posterPath = rich.get("poster_path")?.takeUnless { it.isJsonNull }?.asString
         val backdropPath = rich.get("backdrop_path")?.takeUnless { it.isJsonNull }?.asString
         val overview = rich.get("overview")?.takeUnless { it.isJsonNull }?.asString
@@ -120,9 +137,76 @@ class TmdbRepository(context: Context) {
             runtimeMinutes = runtime?.takeIf { it > 0 } ?: item.meta.runtimeMinutes,
             fullReleaseDate = fullReleaseDate ?: item.meta.fullReleaseDate,
             ratingCount = ratingCount ?: item.meta.ratingCount,
-            genres = genres.ifEmpty { item.meta.genres }
+            genres = genres.ifEmpty { item.meta.genres },
+            imdbId = imdbTitleId,
+            seasonNumbers = seasonNumbers.ifEmpty { item.meta.seasonNumbers },
+            videos = item.meta.videos.ifEmpty { initialEpisodes }
         )
         return item.copy(meta = merged)
+    }
+
+    /** Fetch a selected TV season only when the viewer asks for it. */
+    suspend fun seasonEpisodes(item: AppMedia, season: Int): List<VideoItem> {
+        if (item.meta.type != "series" || season < 0) return emptyList()
+        val id = item.meta.tmdbId ?: return emptyList()
+        val token = activeToken()
+        if (token.isBlank()) return emptyList()
+        return fetchSeasonEpisodes(
+            tmdbId = id,
+            imdbTitleId = item.meta.imdbId ?: imdbId(item.meta.id),
+            season = season,
+            headers = mapOf("Authorization" to "Bearer $token")
+        )
+    }
+
+    private suspend fun fetchImdbId(
+        tmdbId: Int,
+        type: String,
+        headers: Map<String, String>
+    ): String? {
+        val endpoint = if (type == "series") "tv" else "movie"
+        val result = SimpleHttp.get("$API/$endpoint/$tmdbId/external_ids", headers)
+        if (result.code !in 200..299) return null
+        val root = JsonParser.parseString(result.body).asJsonObject
+        return root.get("imdb_id")?.takeUnless { it.isJsonNull }?.asString
+            ?.takeIf { it.matches(Regex("tt\\d{5,10}")) }
+    }
+
+    private suspend fun fetchSeasonEpisodes(
+        tmdbId: Int,
+        imdbTitleId: String?,
+        season: Int,
+        headers: Map<String, String>
+    ): List<VideoItem> {
+        val response = SimpleHttp.get(
+            "$API/tv/$tmdbId/season/$season?language=en-US", headers
+        )
+        if (response.code !in 200..299) return emptyList()
+        val root = JsonParser.parseString(response.body).asJsonObject
+        return root.getAsJsonArray("episodes")?.mapNotNull { el ->
+            val obj = el.takeIf { it.isJsonObject }?.asJsonObject
+                ?: return@mapNotNull null
+            val episode = obj.get("episode_number")
+                ?.takeUnless { it.isJsonNull }?.asInt ?: return@mapNotNull null
+            if (episode <= 0) return@mapNotNull null
+            val title = obj.get("name")?.takeUnless { it.isJsonNull }?.asString
+            val poster = obj.get("still_path")?.takeUnless { it.isJsonNull }?.asString
+            // Stremio's common episode convention is tt1234567:season:episode.
+            val episodeId = if (!imdbTitleId.isNullOrBlank()) {
+                "$imdbTitleId:$season:$episode"
+            } else {
+                "tmdb:$tmdbId:$season:$episode"
+            }
+            VideoItem(
+                id = episodeId,
+                title = title?.takeIf { it.isNotBlank() } ?: "Episode $episode",
+                season = season,
+                episode = episode,
+                released = obj.get("air_date")?.takeUnless { it.isJsonNull }?.asString,
+                thumbnail = poster?.let { "$IMG/w500$it" },
+                overview = obj.get("overview")?.takeUnless { it.isJsonNull }?.asString
+            )
+        }.orEmpty()
     }
 
     suspend fun enrichBatch(items: List<AppMedia>, limit: Int = 24): List<AppMedia> = supervisorScope {
