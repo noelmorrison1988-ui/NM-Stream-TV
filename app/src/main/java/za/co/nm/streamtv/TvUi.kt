@@ -1941,7 +1941,11 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
         val logFocus = remember { FocusRequester() }
         val scope = rememberCoroutineScope()
         val entries = state.connectionLog.asReversed()
-        LaunchedEffect(Unit) { logFocus.requestFocus() }
+        // Wait for the Android TV dialog window and focused list to attach.
+        LaunchedEffect(Unit) {
+            delay(120)
+            logFocus.requestFocus()
+        }
         Dialog(onDismissRequest = { showConnectionLog = false }) {
             Column(
                 Modifier.fillMaxWidth()
