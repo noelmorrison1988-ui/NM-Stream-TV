@@ -32,6 +32,9 @@ data class MainUiState(
     val newSeries: List<AppMedia> = emptyList(),
     val trendingSeries: List<AppMedia> = emptyList(),
     val nowAiringSeries: List<AppMedia> = emptyList(),
+    val themedRows: Map<String, List<AppMedia>> = emptyMap(),
+    val themedRowsLoading: Set<String> = emptySet(),
+    val themedRowsLoaded: Set<String> = emptySet(),
     val expandedRowKey: String? = null,
     val expandedRowPage: Int = 1,
     val expandedRowItems: List<AppMedia> = emptyList(),
@@ -113,7 +116,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshEverything() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(loading = true, message = null)
+            _uiState.value = _uiState.value.copy(
+                loading = true, message = null,
+                themedRows = emptyMap(),
+                themedRowsLoaded = emptySet(),
+                themedRowsLoading = emptySet()
+            )
             val installed = runCatching { addons.loadInstalled() }.getOrElse {
                 _uiState.value = _uiState.value.copy(message = it.message)
                 emptyList()
@@ -215,6 +223,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun loadThemedRow(key: String) {
+        if (!tmdb.configured() || key !in HomeCollections.byKey) return
+        val current = _uiState.value
+        if (key in current.themedRowsLoaded || key in current.themedRowsLoading) return
+        _uiState.value = current.copy(themedRowsLoading = current.themedRowsLoading + key)
+        viewModelScope.launch {
+            val result = runCatching { tmdb.browseThemed(key, page = 1, limit = 18) }
+                .getOrDefault(TmdbBrowsePage())
+            val latest = _uiState.value
+            _uiState.value = latest.copy(
+                themedRows = latest.themedRows + (key to result.items),
+                themedRowsLoaded = latest.themedRowsLoaded + key,
+                themedRowsLoading = latest.themedRowsLoading - key
+            )
+        }
+    }
+
     fun loadExpandedRow(key: String, page: Int) {
         viewModelScope.launch {
             val safePage = page.coerceAtLeast(1)
@@ -236,6 +261,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     expandedContinueItems = pageItems,
                     expandedRowLoading = false,
                     expandedRowHasNext = start + pageItems.size < source.size
+                )
+                return@launch
+            }
+
+            if (key == "similar") {
+                val seed = _uiState.value.selectedMedia
+                val result = if (seed != null) runCatching {
+                    tmdb.similarPage(seed, safePage, pageSize)
+                }.getOrDefault(TmdbBrowsePage()) else TmdbBrowsePage()
+                _uiState.value = _uiState.value.copy(
+                    expandedRowItems = result.items,
+                    expandedRowLoading = false,
+                    expandedRowHasNext = result.hasNext
+                )
+                return@launch
+            }
+
+            if (key in HomeCollections.byKey) {
+                val result = runCatching { tmdb.browseThemed(key, safePage, pageSize) }
+                    .getOrDefault(TmdbBrowsePage())
+                _uiState.value = _uiState.value.copy(
+                    expandedRowItems = result.items,
+                    expandedRowLoading = false,
+                    expandedRowHasNext = result.hasNext
                 )
                 return@launch
             }
