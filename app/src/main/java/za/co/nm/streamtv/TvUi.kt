@@ -84,6 +84,7 @@ private sealed interface Screen {
     data object MyList : Screen
     data object Addons : Screen
     data object Settings : Screen
+    data class ExpandedCategory(val key: String, val title: String, val page: Int = 1, val seed: AppMedia? = null) : Screen
     data class Details(val item: AppMedia) : Screen
     data class Sources(val item: AppMedia, val videoId: String, val title: String) : Screen
     data class AutoPlay(val item: AppMedia, val videoId: String, val title: String, val requestKey: String) : Screen
@@ -125,6 +126,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
             is Screen.Trailer -> Screen.Details(current.item)
             is Screen.YouTubeTrailer -> Screen.Details(current.item)
             is Screen.Sources -> Screen.Details(current.item)
+            is Screen.ExpandedCategory -> if (current.seed != null) Screen.Details(current.seed) else Screen.Home
             else -> Screen.Home
         }
     }
@@ -148,6 +150,11 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                 when (val current = screen) {
                 Screen.Home -> Shell("Home", { screen = it }) {
                     HomeScreen(state,
+                        onLoadCategory = viewModel::loadThemedRow,
+                        onExpand = { key, title ->
+                            viewModel.loadExpandedCategory(key, 1)
+                            screen = Screen.ExpandedCategory(key, title)
+                        },
                         onOpen = {
                             viewModel.loadDetails(it)
                             screen = Screen.Details(it)
@@ -177,6 +184,32 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         screen = Screen.Details(it)
                     }
                 }
+                is Screen.ExpandedCategory -> {
+                    ExpandedMobileCategory(
+                        title = current.title,
+                        page = current.page,
+                        loading = state.expandedRowLoading,
+                        items = state.expandedRowItems,
+                        hasNext = state.expandedRowHasNext,
+                        open = { item ->
+                            viewModel.loadDetails(item)
+                            screen = Screen.Details(item)
+                        },
+                        back = {
+                            screen = current.seed?.let { Screen.Details(it) } ?: Screen.Home
+                        },
+                        next = {
+                            val next = current.page + 1
+                            viewModel.loadExpandedCategory(current.key, next, current.seed)
+                            screen = current.copy(page = next)
+                        },
+                        previous = {
+                            val prev = (current.page - 1).coerceAtLeast(1)
+                            viewModel.loadExpandedCategory(current.key, prev, current.seed)
+                            screen = current.copy(page = prev)
+                        }
+                    )
+                }
                 Screen.Addons -> Shell("Add-ons", { screen = it }) {
                     AddonsScreen(
                         state = state,
@@ -195,12 +228,22 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     DetailsScreen(
                         item = detailItem,
                         loading = state.detailsLoading,
+                        recommendations = state.selectedRecommendations,
+                        onRecommend = { suggested ->
+                            viewModel.loadDetails(suggested)
+                            screen = Screen.Details(suggested)
+                        },
+                        onExpandMore = {
+                            viewModel.loadExpandedCategory("similar", 1, detailItem)
+                            screen = Screen.ExpandedCategory("similar", "More Like This", 1, detailItem)
+                        },
                         trailer = trailer,
                         inMyList = state.myList.any { mediaMatches(it, detailItem) },
                         rememberedSeason = rememberedSelection?.season,
                         rememberedEpisodeId = rememberedSelection?.episodeId,
                         toggleMyList = { viewModel.toggleMyList(detailItem) },
                         rememberSeason = { season ->
+                            viewModel.loadSeasonEpisodes(detailItem, season)
                             val previous = seriesSelections[selectionKey]
                             seriesSelections = seriesSelections + (selectionKey to SeriesSelection(
                                 season = season,
@@ -677,6 +720,8 @@ private fun NavChip(label: String, selected: Boolean, onClick: () -> Unit) {
 @Composable
 private fun HomeScreen(
     state: MainUiState,
+    onLoadCategory: (String) -> Unit,
+    onExpand: (String, String) -> Unit,
     onOpen: (AppMedia) -> Unit,
     onContinue: (PlaybackProgress) -> Unit,
     onContinueManual: (PlaybackProgress) -> Unit
@@ -686,7 +731,12 @@ private fun HomeScreen(
         return
     }
     val hero = state.movies.firstOrNull()
+        ?: state.trendingMovies.firstOrNull()
+        ?: state.newMovies.firstOrNull()
         ?: state.series.firstOrNull()
+        ?: state.trendingSeries.firstOrNull()
+        ?: state.newSeries.firstOrNull()
+        ?: state.myList.firstOrNull()
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         item { if (hero != null) Hero(hero, onOpen) else EmptyHero(state.addons.isEmpty()) }
 
@@ -701,9 +751,91 @@ private fun HomeScreen(
             item { MediaRow("Watch History", historyMedia, onOpen) }
         }
 
+        HomeCollections.rows.forEach { spec ->
+            item(key = "theme:${spec.key}") {
+                LaunchedEffect(spec.key, state.tmdbConfigured, spec.key in state.themedRowsLoaded) {
+                    if (state.tmdbConfigured) onLoadCategory(spec.key)
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(spec.title, color = Color.White, fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Button(onClick = { onExpand(spec.key, spec.title) }) { Text("See all ›") }
+                    }
+                    val results = state.themedRows[spec.key].orEmpty()
+                    if (results.isNotEmpty()) {
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            contentPadding = PaddingValues(horizontal = 20.dp)
+                        ) {
+                            items(results) { movie -> PosterCard(movie, onOpen) }
+                        }
+                    } else {
+                        Text(
+                            if (!state.tmdbConfigured) "TMDB catalogue unavailable"
+                            else if (spec.key in state.themedRowsLoading) "Loading titles…"
+                            else "No results yet",
+                            color = NmMuted,
+                            modifier = Modifier.padding(horizontal = 20.dp)
+                        )
+                    }
+                }
+            }
+        }
+
         if (state.movies.isNotEmpty()) item { MediaRow("Movies", state.movies, onOpen) }
         if (state.series.isNotEmpty()) item { MediaRow("Series", state.series, onOpen) }
         if (state.debridItems.isNotEmpty()) item { MediaRow("My Real-Debrid Library", state.debridItems, onOpen) }
+    }
+}
+
+@Composable
+private fun ExpandedMobileCategory(
+    title: String,
+    page: Int,
+    loading: Boolean,
+    items: List<AppMedia>,
+    hasNext: Boolean,
+    open: (AppMedia) -> Unit,
+    back: () -> Unit,
+    next: () -> Unit,
+    previous: () -> Unit
+) {
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = back) { Text("← Back") }
+                Spacer(Modifier.width(12.dp))
+                Text(title, color = Color.White, fontSize = 25.sp,
+                    fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+            }
+        }
+        if (loading) item { Text("Loading…", color = NmMuted) }
+        if (!loading && items.isEmpty()) item {
+            Text("No matching titles found.", color = NmMuted)
+        }
+        items(items.chunked(2)) { group ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                group.forEach { movie ->
+                    Box(Modifier.weight(1f)) { PosterCard(movie, open) }
+                }
+                if (group.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = previous, enabled = page > 1) { Text("‹ Previous") }
+                Text("Page $page", color = NmMuted)
+                Button(onClick = next, enabled = hasNext) { Text("Next ›") }
+            }
+        }
     }
 }
 
