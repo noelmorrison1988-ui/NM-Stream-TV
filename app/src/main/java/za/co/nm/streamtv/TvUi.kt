@@ -95,7 +95,11 @@ private sealed interface Screen {
         val videoId: String,
         val title: String,
         val source: StreamOption,
-        val returnToSources: Boolean = true
+        val returnToSources: Boolean = true,
+        val resumeMsOverride: Long? = null,
+        val excludedUrls: Set<String> = emptySet(),
+        val sourceNotice: String? = null,
+        val prewarmedPlayer: ExoPlayer? = null
     ) : Screen
     data class Trailer(val item: AppMedia, val title: String, val source: StreamOption) : Screen
     data class YouTubeTrailer(val item: AppMedia, val title: String, val youtubeId: String) : Screen
@@ -297,9 +301,10 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             !state.streamsLoading
                         ) {
                             val best = state.streamOptions.firstOrNull { option ->
-                                option.playableUrl != null ||
+                                !option.isKnownUncached && !option.isPromotional &&
+                                    (option.playableUrl != null ||
                                     option.youtubeUrl != null ||
-                                    !option.stream.externalUrl.isNullOrBlank()
+                                    !option.stream.externalUrl.isNullOrBlank())
                             }
 
                             when {
@@ -367,21 +372,68 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     onProgress = { _, _ -> },
                     onStopped = { _, _ -> }
                 )
-                is Screen.Player -> PlayerScreen(
-                    item = current.item,
-                    videoId = current.videoId,
-                    title = current.title,
-                    url = current.source.playableUrl.orEmpty(),
-                    headers = current.source.requestHeaders,
-                    subtitles = state.subtitleOptions,
-                    resumeMs = viewModel.resumePosition(current.item, current.videoId),
-                    resumePercent = viewModel.resumeCloudPercent(current.item, current.videoId),
-                    preferredAudioLanguage = state.preferredAudioLanguage,
-                    preferredSubtitleLanguage = state.preferredSubtitleLanguage,
-                    onStarted = { p, d -> viewModel.onPlaybackStarted(current.item, current.videoId, p, d) },
-                    onProgress = { p, d -> viewModel.onPlaybackProgress(current.item, current.videoId, current.title, p, d) },
-                    onStopped = { p, d -> viewModel.onPlaybackStopped(current.item, current.videoId, current.title, p, d) }
-                )
+                is Screen.Player -> {
+                    DisposableEffect(current.videoId, current.source.playableUrl) {
+                        viewModel.setPlaybackMonitoringActive(true)
+                        onDispose { viewModel.setPlaybackMonitoringActive(false) }
+                    }
+                    val nextSource = state.streamOptions
+                        .filter { candidate ->
+                            candidate.playableUrl != null &&
+                                candidate.playableUrl != current.source.playableUrl &&
+                                candidate.playableUrl !in current.excludedUrls &&
+                                !candidate.isKnownUncached && !candidate.isPromotional
+                        }
+                        .sortedWith(compareBy<StreamOption> { it.litePriorityTier() }
+                            .thenBy { if (it.addonName == current.source.addonName) 1 else 0 })
+                        .firstOrNull()
+                    PlayerScreen(
+                        item = current.item,
+                        videoId = current.videoId,
+                        title = current.title,
+                        url = current.source.playableUrl.orEmpty(),
+                        headers = current.source.requestHeaders,
+                        subtitles = state.subtitleOptions,
+                        resumeMs = current.resumeMsOverride
+                            ?: viewModel.resumePosition(current.item, current.videoId),
+                        resumePercent = if (current.resumeMsOverride != null) null
+                            else viewModel.resumeCloudPercent(current.item, current.videoId),
+                        preferredAudioLanguage = state.preferredAudioLanguage,
+                        preferredSubtitleLanguage = state.preferredSubtitleLanguage,
+                        nextSource = nextSource,
+                        prewarmedPlayer = current.prewarmedPlayer,
+                        sourceNotice = current.sourceNotice,
+                        onPlaybackHealth = viewModel::reportPlaybackBuffer,
+                        onSwitch = { position, reason, prepared ->
+                            val currentUrl = current.source.playableUrl
+                            val excluded = if (currentUrl.isNullOrBlank()) current.excludedUrls
+                                else current.excludedUrls + currentUrl
+                            if (nextSource != null) {
+                                screen = current.copy(
+                                    source = nextSource,
+                                    resumeMsOverride = position,
+                                    excludedUrls = excluded,
+                                    sourceNotice = "SOURCE SWITCHED · $reason" +
+                                        "\nFROM: ${current.source.switchIdentityLabel()}" +
+                                        "\nTO: ${nextSource.switchIdentityLabel()}",
+                                    prewarmedPlayer = prepared
+                                )
+                            } else {
+                                viewModel.loadSources(current.item, current.videoId)
+                                screen = Screen.Sources(current.item, current.videoId, current.title)
+                            }
+                        },
+                        onStarted = { p, d ->
+                            viewModel.onPlaybackStarted(current.item, current.videoId, p, d)
+                        },
+                        onProgress = { p, d ->
+                            viewModel.onPlaybackProgress(current.item, current.videoId, current.title, p, d)
+                        },
+                        onStopped = { p, d ->
+                            viewModel.onPlaybackStopped(current.item, current.videoId, current.title, p, d)
+                        }
+                    )
+                }
             }
                 state.message?.let {
                     Box(Modifier.align(Alignment.BottomCenter).padding(24.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xEE22252B)).padding(horizontal = 18.dp, vertical = 10.dp)) {
@@ -1789,12 +1841,13 @@ private fun SourcesScreen(
     subtitleCount: Int,
     select: (StreamOption) -> Unit
 ) {
-    val recommended = sources.firstOrNull {
+    val visibleSources = sources.filterNot { it.isKnownUncached || it.isPromotional }
+    val recommended = visibleSources.firstOrNull {
         it.playableUrl != null || it.youtubeUrl != null || !it.stream.externalUrl.isNullOrBlank()
     }
-    val httpSources = sources.filter { it.playableUrl != null }
-    val p2pSources = sources.filter { it.isP2p }
-    val otherSources = sources.filter { it.playableUrl == null && !it.isP2p }
+    val httpSources = visibleSources.filter { it.playableUrl != null }
+    val p2pSources = visibleSources.filter { it.isP2p }
+    val otherSources = visibleSources.filter { it.playableUrl == null && !it.isP2p }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 46.dp),
@@ -1804,7 +1857,7 @@ private fun SourcesScreen(
         item {
             Text(title, color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Black)
             Text("$subtitleCount subtitle tracks found", color = NmMuted)
-            Text("Mobile Lite default: Pengu · maximum 1080p", color = NmGreen, fontSize = 13.sp)
+            Text("720p debrid/Pengu → other 720p → 1080p", color = NmGreen, fontSize = 13.sp)
         }
 
         if (!loading && recommended != null) {
@@ -1817,7 +1870,7 @@ private fun SourcesScreen(
 
         if (loading) {
             item { Text("Checking installed sources…", color = NmMuted) }
-        } else if (sources.isEmpty()) {
+        } else if (visibleSources.isEmpty()) {
             item { Text("No streams at 1080p or below were returned.", color = NmMuted) }
         } else {
             if (httpSources.isNotEmpty()) {
