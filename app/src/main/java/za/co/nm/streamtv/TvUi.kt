@@ -2097,6 +2097,16 @@ private fun DetailsScreen(
     val detailsListState = rememberLazyListState()
     val detailsScope = rememberCoroutineScope()
 
+    // Ensure the first available season is requested when details open,
+    // even if the original add-on supplied zero episode metadata.
+    LaunchedEffect(item.meta.id, selectedSeason) {
+        if (item.meta.type == "series" && selectedSeason in seasons &&
+            seasonEpisodes.isEmpty()
+        ) {
+            rememberSeason(selectedSeason)
+        }
+    }
+
     LaunchedEffect(item.meta.id, selectedSeason, rememberedEpisodeId) {
         val episodeIndex = seasonEpisodes.indexOfFirst { it.id == rememberedEpisodeId }
         if (episodeIndex >= 0) {
@@ -2212,8 +2222,8 @@ private fun DetailsScreen(
                 if (seasonEpisodes.isEmpty()) {
                     item {
                         Text(
-                            "Loading episodes for Season $selectedSeason… " +
-                                "If they don't appear, the metadata provider may not list this season yet.",
+                            "Episodes for Season $selectedSeason aren't available yet. " +
+                                "The app is checking the metadata provider.",
                             color = NmMuted, fontSize = 14.sp
                         )
                     }
