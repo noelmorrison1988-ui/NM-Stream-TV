@@ -112,7 +112,9 @@ private sealed interface Screen {
         val resumeMsOverride: Long? = null,
         val resumeSubtitles: List<SubtitleOption>? = null,
         val excludedUrls: Set<String> = emptySet(),
-        val switchNotice: String? = null
+        val switchNotice: String? = null,
+        // Ownership of a prepared standby player moves to the new screen.
+        val prewarmedPlayer: ExoPlayer? = null
     ) : Screen
     data class Trailer(val item: AppMedia, val title: String, val source: StreamOption) : Screen
     data class YouTubeTrailer(val item: AppMedia, val title: String, val youtubeId: String) : Screen
@@ -440,6 +442,19 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                 )
                 is Screen.Player -> {
                     val activeSubtitles = current.resumeSubtitles ?: state.subtitleOptions
+                    val currentKey = viewModel.sourceRequestKey(current.item, current.videoId)
+                    val matchingSources = if (state.sourceRequestKey == currentKey &&
+                        !state.streamsLoading) state.streamOptions else emptyList()
+                    val nextSource = matchingSources
+                        .filter { candidate ->
+                            val nextUrl = candidate.playableUrl
+                            nextUrl != null && nextUrl != current.source.playableUrl &&
+                                nextUrl !in current.excludedUrls && !candidate.isKnownUncached
+                        }
+                        .sortedWith(compareBy<StreamOption> { candidate ->
+                            if (candidate.addonName == current.source.addonName) 1 else 0
+                        })
+                        .firstOrNull()
                     PlayerScreen(
                         item = current.item,
                         videoId = current.videoId,
@@ -456,6 +471,8 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                         },
                         sourceNotice = current.switchNotice,
                         sourceProvider = current.source.addonName,
+                        nextSource = nextSource,
+                        prewarmedPlayer = current.prewarmedPlayer,
                         preferredAudioLanguage = state.preferredAudioLanguage,
                         preferredSubtitleLanguage = state.preferredSubtitleLanguage,
                         onStarted = { p, d ->
@@ -491,7 +508,7 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                                 d
                             )
                         },
-                        onSourceSwitch = { positionMs, reason ->
+                        onSourceSwitch = { positionMs, reason, standby, standbySource ->
                             viewModel.forgetLastPlaybackSession(current.item, current.videoId)
                             val requestKey = viewModel.sourceRequestKey(current.item, current.videoId)
                             val failedUrl = current.source.playableUrl
@@ -500,18 +517,41 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                             } else {
                                 current.excludedUrls + failedUrl
                             }
-                            viewModel.loadSources(current.item, current.videoId)
-                            screen = Screen.AutoPlay(
-                                item = current.item,
-                                videoId = current.videoId,
-                                title = current.title,
-                                requestKey = requestKey,
-                                excludedUrls = excluded,
-                                resumeMsOverride = positionMs,
-                                resumeSubtitles = activeSubtitles,
-                                switchFromLabel = current.source.switchIdentityLabel(),
-                                switchReason = reason
-                            )
+                            if (standby != null && standbySource != null) {
+                                val notice = "SOURCE SWITCHED · $reason" +
+                                    "\nFROM: ${current.source.switchIdentityLabel()}" +
+                                    "\nTO: ${standbySource.switchIdentityLabel()}"
+                                screen = Screen.Player(
+                                    item = current.item,
+                                    videoId = current.videoId,
+                                    title = current.title,
+                                    source = standbySource,
+                                    returnToSources = false,
+                                    resumeMsOverride = positionMs,
+                                    resumeSubtitles = activeSubtitles,
+                                    excludedUrls = excluded,
+                                    switchNotice = notice,
+                                    prewarmedPlayer = standby
+                                )
+                            } else {
+                                // Reuse already available source results. Requery only
+                                // when we have no matching results to choose from.
+                                if (state.sourceRequestKey != requestKey ||
+                                    state.streamOptions.isEmpty()) {
+                                    viewModel.loadSources(current.item, current.videoId)
+                                }
+                                screen = Screen.AutoPlay(
+                                    item = current.item,
+                                    videoId = current.videoId,
+                                    title = current.title,
+                                    requestKey = requestKey,
+                                    excludedUrls = excluded,
+                                    resumeMsOverride = positionMs,
+                                    resumeSubtitles = activeSubtitles,
+                                    switchFromLabel = current.source.switchIdentityLabel(),
+                                    switchReason = reason
+                                )
+                            }
                         }
                     )
                 }
@@ -1787,7 +1827,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             if (state.rdUser != null) Button(onClick = vm::disconnectRealDebrid) { Text("Disconnect Real-Debrid everywhere") } else Button(onClick = vm::beginRealDebridSignIn) { Text(if (state.rdConnecting) "Waiting…" else "Connect Real-Debrid") }
             state.rdDeviceCode?.let { DeviceCode("Real-Debrid", it.userCode, it.verificationUrl) }
         } }
-        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.13 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.14 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
@@ -2156,19 +2196,26 @@ private fun PlayerScreen(
     resumePercent: Double?,
     sourceNotice: String?,
     sourceProvider: String? = null,
+    nextSource: StreamOption? = null,
+    prewarmedPlayer: ExoPlayer? = null,
     preferredAudioLanguage: String,
     preferredSubtitleLanguage: String,
     onStarted: (Long, Long) -> Unit,
     onProgress: (Long, Long) -> Unit,
     onStopped: (Long, Long) -> Unit,
-    onSourceSwitch: (Long, String) -> Unit = { _, _ -> }
+    onSourceSwitch: (Long, String, ExoPlayer?, StreamOption?) -> Unit =
+        { _, _, _, _ -> }
 ) {
     val context = LocalContext.current
 
     val initialResumeMs = remember(url, videoId) { resumeMs }
     val initialResumePercent = remember(url, videoId) { resumePercent }
 
-    val player = remember(url, videoId, headers, subtitles) {
+    val player = remember(url, videoId, headers, subtitles, prewarmedPlayer) {
+        if (prewarmedPlayer != null) {
+            prewarmedPlayer.playWhenReady = true
+            prewarmedPlayer
+        } else {
         val dataSource = DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(headers)
             .setAllowCrossProtocolRedirects(true)
@@ -2219,11 +2266,12 @@ private fun PlayerScreen(
                 prepare()
                 playWhenReady = true
             }
+        }
     }
 
     var started by remember(player) { mutableStateOf(false) }
     var resumeApplied by remember(player) {
-        mutableStateOf(initialResumeMs <= 0 && initialResumePercent == null)
+        mutableStateOf(prewarmedPlayer != null || (initialResumeMs <= 0 && initialResumePercent == null))
     }
     var trackRevision by remember(player) { mutableIntStateOf(0) }
     var showAudioMenu by remember { mutableStateOf(false) }
@@ -2256,6 +2304,72 @@ private fun PlayerScreen(
         }.distinct()
     }
     var showAdvisory by remember(videoId) { mutableStateOf(advisoryItems.isNotEmpty()) }
+
+    // One paused alternate player. Preparing it in advance lets a genuine
+    // buffered source take over without a new stream search and player setup.
+    val standbyPlayer = remember(player, nextSource?.playableUrl) {
+        nextSource?.playableUrl?.let { backupUrl ->
+            val dataSource = DefaultHttpDataSource.Factory()
+                .setDefaultRequestProperties(nextSource.requestHeaders)
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(12_000)
+                .setReadTimeoutMs(20_000)
+            val loadControl = DefaultLoadControl.Builder()
+                .setBufferDurationsMs(3_000, 12_000, 1_000, 2_000)
+                .setBackBuffer(0, false)
+                .build()
+            ExoPlayer.Builder(context)
+                .setLoadControl(loadControl)
+                .setMediaSourceFactory(
+                    DefaultMediaSourceFactory(context).setDataSourceFactory(dataSource)
+                )
+                .build().apply {
+                    val subs = subtitles.mapIndexed { index, option ->
+                        MediaItem.SubtitleConfiguration.Builder(Uri.parse(option.subtitle.url))
+                            .setId(option.subtitle.id.ifBlank { "backup-sub-$index" })
+                            .setLanguage(option.subtitle.lang)
+                            .setLabel(option.subtitle.lang.uppercase() + " · " + option.addonName)
+                            .setMimeType(subtitleMime(option.subtitle.url))
+                            .build()
+                    }
+                    trackSelectionParameters = trackSelectionParameters.buildUpon()
+                        .setPreferredAudioLanguage(preferredAudioLanguage)
+                        .setPreferredTextLanguage(preferredSubtitleLanguage)
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                        .build()
+                    setMediaItem(
+                        MediaItem.Builder().setUri(backupUrl)
+                            .setSubtitleConfigurations(subs).build()
+                    )
+                    playWhenReady = false
+                }
+        }
+    }
+    var standbyPrepareRequested by remember(player, standbyPlayer) { mutableStateOf(false) }
+    var standbyTransferred by remember(player, standbyPlayer) { mutableStateOf(false) }
+    var lowBufferSamples by remember(player) { mutableIntStateOf(0) }
+
+    fun switchWithStandby(positionMs: Long, reason: String) {
+        val pos = positionMs.coerceAtLeast(0L)
+        val standby = standbyPlayer
+        val valid = standby != null && nextSource != null && standbyPrepareRequested &&
+            standby.playbackState == Player.STATE_READY &&
+            standby.duration !in 118_000L..122_000L &&
+            pos >= standby.currentPosition - 3_000L &&
+            standby.bufferedPosition >= pos + 1_500L
+        if (valid && standby != null) {
+            standbyTransferred = true
+            standby.seekTo(pos)
+            standby.playWhenReady = true
+            onSourceSwitch(pos, reason, standby, nextSource)
+        } else {
+            onSourceSwitch(pos, reason, null, null)
+        }
+    }
+
+    DisposableEffect(standbyPlayer) {
+        onDispose { if (!standbyTransferred) standbyPlayer?.release() }
+    }
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -2537,7 +2651,7 @@ private fun PlayerScreen(
                                         5 -> fillVideo = !fillVideo
                                         6 -> if (!sourceSwitchRequested) {
                                             sourceSwitchRequested = true
-                                            onSourceSwitch(
+                                            switchWithStandby(
                                                 player.currentPosition.coerceAtLeast(0L),
                                                 "Skipped source manually"
                                             )
@@ -2584,6 +2698,46 @@ private fun PlayerScreen(
             val bufferStart = bufferingSinceMs
             val stalledForMs = if (bufferStart > 0L) now - bufferStart else 0L
             val playerError = player.playerError
+            val bufferAhead = player.totalBufferedDuration.coerceAtLeast(0L)
+            val remaining = player.duration.takeIf { it > 0L }
+                ?.minus(player.currentPosition) ?: Long.MAX_VALUE
+            val playbackInProgress = started && player.currentPosition > 5_000L &&
+                remaining > 20_000L
+
+            // Low-buffer warning is also a useful proxy for a data source
+            // that has slowed or stopped delivering bytes.
+            if (standbyPlayer != null && !standbyPrepareRequested &&
+                playbackInProgress && bufferAhead < 25_000L
+            ) {
+                standbyPrepareRequested = true
+                standbyPlayer.seekTo(player.currentPosition.coerceAtLeast(0L))
+                standbyPlayer.prepare()
+            }
+            if (standbyPrepareRequested && standbyPlayer != null &&
+                standbyPlayer.playbackState == Player.STATE_READY &&
+                player.currentPosition > standbyPlayer.bufferedPosition - 2_500L
+            ) {
+                // Reposition only when the playhead is catching the warm
+                // buffer, avoiding constant reloads on the backup connection.
+                standbyPlayer.seekTo(player.currentPosition.coerceAtLeast(0L))
+            }
+
+            if (player.playbackState == Player.STATE_READY && player.isPlaying &&
+                playbackInProgress && bufferAhead in 1L..4_000L
+            ) {
+                lowBufferSamples += 1
+            } else {
+                lowBufferSamples = 0
+            }
+            if (lowBufferSamples >= 4 && standbyPlayer != null &&
+                standbyPlayer.playbackState == Player.STATE_READY &&
+                standbyPlayer.bufferedPosition > player.currentPosition + 1_500L
+            ) {
+                sourceSwitchRequested = true
+                recoveryMessage = "Buffer low · switching to prebuffered source…"
+                switchWithStandby(player.currentPosition, "Predicted buffer underrun")
+                continue
+            }
 
             // Some add-ons return a playable 2:00 error/blocked-content video
             // instead of an HTTP error. Recognise that duration regardless of
@@ -2607,7 +2761,7 @@ private fun PlayerScreen(
                 recoveryMessage = "Provider placeholder detected · trying next source…"
                 // Do not store the error video's time as the episode progress.
                 // The existing failover excludes this URL for the full chain.
-                onSourceSwitch(
+                switchWithStandby(
                     initialResumeMs.coerceAtLeast(0L),
                     if (twoMinutePlaceholder) "Two-minute provider placeholder"
                     else "Short hosted-provider placeholder"
@@ -2637,7 +2791,7 @@ private fun PlayerScreen(
                 } else {
                     "Stream error · switching source…"
                 }
-                onSourceSwitch(resumeAt, reason)
+                switchWithStandby(resumeAt, reason)
                 continue
             }
 
@@ -2645,7 +2799,7 @@ private fun PlayerScreen(
                 if (bufferStart > 0L && stalledForMs >= 25_000L) {
                     sourceSwitchRequested = true
                     recoveryMessage = "Source did not start · switching source…"
-                    onSourceSwitch(
+                    switchWithStandby(
                         player.currentPosition.coerceAtLeast(0L),
                         "Source did not start within 25 seconds"
                     )
@@ -2663,7 +2817,7 @@ private fun PlayerScreen(
                     sourceSwitchRequested = true
                     val resumeAt = player.currentPosition.coerceAtLeast(0L)
                     recoveryMessage = "Repeated freezes · switching source…"
-                    onSourceSwitch(resumeAt, "More than 3 freezes in 5 minutes")
+                    switchWithStandby(resumeAt, "More than 3 freezes in 5 minutes")
                     continue
                 }
             }
@@ -2672,7 +2826,7 @@ private fun PlayerScreen(
                 sourceSwitchRequested = true
                 val resumeAt = player.currentPosition.coerceAtLeast(0L)
                 recoveryMessage = "Buffer stalled too long · switching source…"
-                onSourceSwitch(resumeAt, "Buffering exceeded 8 seconds")
+                switchWithStandby(resumeAt, "Buffering exceeded 8 seconds")
             }
         }
     }
@@ -2948,7 +3102,7 @@ private fun PlayerScreen(
                         onClick = {
                             if (!sourceSwitchRequested) {
                                 sourceSwitchRequested = true
-                                onSourceSwitch(
+                                switchWithStandby(
                                     player.currentPosition.coerceAtLeast(0L),
                                     "Skipped source manually"
                                 )
