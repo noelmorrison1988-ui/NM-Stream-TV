@@ -1956,14 +1956,24 @@ private fun PlayerScreen(
     preferredSubtitleLanguage: String,
     onStarted: (Long, Long) -> Unit,
     onProgress: (Long, Long) -> Unit,
-    onStopped: (Long, Long) -> Unit
+    onStopped: (Long, Long) -> Unit,
+    nextSource: StreamOption? = null,
+    prewarmedPlayer: ExoPlayer? = null,
+    sourceNotice: String? = null,
+    onPlaybackHealth: (Long, Boolean) -> Unit = { _, _ -> },
+    onSwitch: (Long, String, ExoPlayer?) -> Unit = { _, _, _ -> }
 ) {
     val context = LocalContext.current
 
     val initialResumeMs = remember(url, videoId) { resumeMs }
     val initialResumePercent = remember(url, videoId) { resumePercent }
 
-    val player = remember(url, videoId, headers, subtitles) {
+    val player = remember(url, videoId, headers, subtitles, prewarmedPlayer) {
+        if (prewarmedPlayer != null) {
+            prewarmedPlayer.setWakeMode(C.WAKE_MODE_NETWORK)
+            prewarmedPlayer.playWhenReady = true
+            prewarmedPlayer
+        } else {
         val dataSource = DefaultHttpDataSource.Factory()
             .setDefaultRequestProperties(headers)
             .setAllowCrossProtocolRedirects(true)
@@ -1986,6 +1996,7 @@ private fun PlayerScreen(
             )
             .build()
             .apply {
+                setWakeMode(C.WAKE_MODE_NETWORK)
                 val subs = subtitles.mapIndexed { index, option ->
                     MediaItem.SubtitleConfiguration.Builder(Uri.parse(option.subtitle.url))
                         .setId(option.subtitle.id.ifBlank { "sub-" + index })
@@ -2012,11 +2023,61 @@ private fun PlayerScreen(
                 prepare()
                 playWhenReady = true
             }
+        }
     }
 
     var started by remember(player) { mutableStateOf(false) }
     var resumeApplied by remember(player) {
         mutableStateOf(initialResumeMs <= 0 && initialResumePercent == null)
+    }
+    var lastReliablePosition by remember(player) {
+        mutableLongStateOf(initialResumeMs.coerceAtLeast(0L))
+    }
+    var switchRequested by remember(player) { mutableStateOf(false) }
+    var lowBufferSamples by remember(player) { mutableIntStateOf(0) }
+    var bufferingSince by remember(player) { mutableLongStateOf(0L) }
+    var freezeTimes by remember(player) { mutableStateOf<List<Long>>(emptyList()) }
+    val standby = remember(player, nextSource?.playableUrl) {
+        nextSource?.playableUrl?.let { alternateUrl ->
+            val factory = DefaultHttpDataSource.Factory()
+                .setDefaultRequestProperties(nextSource.requestHeaders)
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(12_000)
+                .setReadTimeoutMs(20_000)
+            ExoPlayer.Builder(context)
+                .setLoadControl(DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(3_000, 12_000, 1_000, 2_000).build())
+                .setMediaSourceFactory(
+                    DefaultMediaSourceFactory(context).setDataSourceFactory(factory))
+                .build().apply {
+                    setWakeMode(C.WAKE_MODE_NETWORK)
+                    setMediaItem(MediaItem.fromUri(alternateUrl))
+                    playWhenReady = false
+                }
+        }
+    }
+    var standbyPreparing by remember(standby) { mutableStateOf(false) }
+    var standbyTransferred by remember(standby) { mutableStateOf(false) }
+
+    fun changeSource(position: Long, reason: String) {
+        if (switchRequested) return
+        switchRequested = true
+        val timeMs = if (position <= 1_000 && lastReliablePosition > 10_000)
+            lastReliablePosition else position.coerceAtLeast(0L)
+        val ready = standby != null && standbyPreparing &&
+            standby.playbackState == Player.STATE_READY &&
+            standby.duration !in 118_000L..122_000L &&
+            standby.bufferedPosition >= timeMs + 1_500L
+        if (ready && standby != null) {
+            standbyTransferred = true
+            standby.seekTo(timeMs)
+            standby.playWhenReady = true
+        }
+        onSwitch(timeMs, reason, if (ready) standby else null)
+    }
+
+    DisposableEffect(standby) {
+        onDispose { if (!standbyTransferred) standby?.release() }
     }
     var trackRevision by remember(player) { mutableIntStateOf(0) }
     var showAudioMenu by remember { mutableStateOf(false) }
@@ -2104,6 +2165,7 @@ private fun PlayerScreen(
             }.coerceIn(0L, (duration - 1L).coerceAtLeast(0L))
 
             player.seekTo(target)
+            lastReliablePosition = target
             player.playWhenReady = true
             resumeApplied = true
         }
@@ -2114,11 +2176,14 @@ private fun PlayerScreen(
             delay(5_000)
             val duration = player.duration.takeIf { it > 0 } ?: 0L
             val position = player.currentPosition.coerceAtLeast(0L)
-            if (!started && duration > 0) {
-                onStarted(position, duration)
-                started = true
+            if (duration > 180_000L && resumeApplied && !switchRequested) {
+                lastReliablePosition = position
+                if (!started) {
+                    onStarted(position, duration)
+                    started = true
+                }
+                onProgress(position, duration)
             }
-            if (duration > 0) onProgress(position, duration)
         }
     }
 
@@ -2128,6 +2193,60 @@ private fun PlayerScreen(
             playerPositionMs = player.currentPosition.coerceAtLeast(0L)
             playerDurationMs = player.duration.takeIf { it > 0 } ?: 0L
             isPlaying = player.isPlaying
+            onPlaybackHealth(
+                player.totalBufferedDuration,
+                player.playbackState == Player.STATE_BUFFERING
+            )
+        }
+    }
+
+    // Keep one low-memory standby connection, then predict a stall from the
+    // shrinking buffer. This does not run any separate internet speed test.
+    LaunchedEffect(player, standby) {
+        while (true) {
+            delay(500L)
+            if (switchRequested) continue
+            val now = System.currentTimeMillis()
+            val duration = player.duration
+            if (duration in 118_000L..122_000L &&
+                item.meta.type in listOf("movie", "series") &&
+                player.playbackState == Player.STATE_READY
+            ) {
+                changeSource(lastReliablePosition, "Two-minute provider placeholder")
+                continue
+            }
+            val position = player.currentPosition.coerceAtLeast(0L)
+            val buffer = player.totalBufferedDuration.coerceAtLeast(0L)
+            val active = resumeApplied && duration > 180_000L &&
+                position > 5_000L && duration - position > 20_000L
+            if (active && standby != null && !standbyPreparing && buffer < 25_000L) {
+                standbyPreparing = true
+                standby.seekTo(position)
+                standby.prepare()
+            }
+            if (active && player.playbackState == Player.STATE_READY &&
+                player.isPlaying && buffer in 1L..4_000L
+            ) lowBufferSamples++ else lowBufferSamples = 0
+            if (active && lowBufferSamples >= 4 &&
+                standby?.playbackState == Player.STATE_READY &&
+                standby.bufferedPosition > position + 1_500L
+            ) {
+                changeSource(position, "Low-buffer prediction")
+                continue
+            }
+            if (active && player.playbackState == Player.STATE_BUFFERING) {
+                if (bufferingSince == 0L) {
+                    bufferingSince = now
+                    freezeTimes = (freezeTimes + now).filter { it >= now - 300_000L }
+                }
+                if (now - bufferingSince >= 8_000L || freezeTimes.size > 3) {
+                    changeSource(lastReliablePosition, "Repeated buffering")
+                    continue
+                }
+            } else bufferingSince = 0L
+            if (active && player.playerError != null) {
+                changeSource(lastReliablePosition, "Playback error")
+            }
         }
     }
 
@@ -2156,7 +2275,10 @@ private fun PlayerScreen(
         onDispose {
             val duration = player.duration.takeIf { it > 0 } ?: 0L
             val position = player.currentPosition.coerceAtLeast(0L)
-            if (duration > 0) onStopped(position, duration)
+            if (duration > 180_000L && resumeApplied && !switchRequested) {
+                onStopped(if (position <= 1_000L && lastReliablePosition > 10_000L)
+                    lastReliablePosition else position, duration)
+            }
             player.release()
         }
     }
@@ -2209,6 +2331,23 @@ private fun PlayerScreen(
             },
             modifier = Modifier.fillMaxSize()
         )
+
+        if (!sourceNotice.isNullOrBlank()) {
+            var noticeVisible by remember(sourceNotice) { mutableStateOf(true) }
+            LaunchedEffect(sourceNotice) {
+                delay(7_000L)
+                noticeVisible = false
+            }
+            if (noticeVisible) {
+                Text(sourceNotice,
+                    modifier = Modifier.align(Alignment.TopCenter)
+                        .padding(14.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.Black.copy(alpha = .84f))
+                        .padding(12.dp),
+                    color = NmGold, fontSize = 12.sp, lineHeight = 18.sp)
+            }
+        }
 
         if (showAdvisory) {
             Column(
@@ -2323,6 +2462,15 @@ private fun PlayerScreen(
                             controlsRevision = System.currentTimeMillis()
                         }
                     )
+                    if (nextSource != null) {
+                        PlayerControl(
+                            label = "NEXT SOURCE",
+                            onClick = {
+                                changeSource(player.currentPosition, "Manual skip")
+                                controlsRevision = System.currentTimeMillis()
+                            }
+                        )
+                    }
                     Spacer(Modifier.weight(1f))
                     Text(
                         "NM STREAM",
