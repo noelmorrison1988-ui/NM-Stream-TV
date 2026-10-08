@@ -279,6 +279,11 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     DetailsScreen(
                         item = detailItem,
                         loading = state.detailsLoading,
+                        recommendations = state.selectedRecommendations,
+                        onOpenRecommendation = { suggested ->
+                            viewModel.loadDetails(suggested)
+                            screen = Screen.Details(suggested)
+                        },
                         trailer = trailer,
                         inMyList = state.myList.any { mediaMatches(it, detailItem) },
                         rememberedSeason = rememberedSelection?.season,
@@ -1884,7 +1889,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Button(onClick = { showConnectionLog = true }) { Text("Connection Log") }
             Text("${state.connectionLog.size} events this session", color = NmMuted, fontSize = 12.sp)
         } }
-        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.15 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.16 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
@@ -1905,6 +1910,8 @@ private fun DeviceCode(service: String, code: String, url: String? = null) {
 private fun DetailsScreen(
     item: AppMedia,
     loading: Boolean,
+    recommendations: List<AppMedia>,
+    onOpenRecommendation: (AppMedia) -> Unit,
     trailer: StreamOption?,
     inMyList: Boolean,
     rememberedSeason: Int?,
@@ -1943,7 +1950,46 @@ private fun DetailsScreen(
                 Column(Modifier.widthIn(max = 720.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(item.meta.name, color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Black)
                     if (loading) Text("Loading enhanced metadata…", color = NmRed)
-                    item.meta.description?.let { Text(it, color = Color.White.copy(alpha = .9f), fontSize = 17.sp, maxLines = 7, overflow = TextOverflow.Ellipsis) }
+                    val facts = buildList {
+                        item.meta.fullReleaseDate?.takeIf { it.isNotBlank() }
+                            ?.let { add("Released $it") }
+                            ?: item.meta.releaseInfo?.let { add(it) }
+                        item.meta.runtimeMinutes?.takeIf { it > 0 }?.let { minutes ->
+                            add(if (item.meta.type == "series") "Episode · $minutes min"
+                                else "${minutes / 60}h ${minutes % 60}m")
+                        }
+                        item.meta.imdbRating?.let { add("★ $it / 10") }
+                        item.meta.contentRating?.let { add(it) }
+                    }
+                    if (facts.isNotEmpty()) Text(
+                        facts.joinToString("  ·  "),
+                        color = NmGold, fontSize = 15.sp, fontWeight = FontWeight.Bold
+                    )
+                    if (item.meta.ratingCount != null) Text(
+                        "${item.meta.ratingCount} TMDB votes",
+                        color = NmMuted, fontSize = 12.sp
+                    )
+                    if (item.meta.genres.isNotEmpty()) Text(
+                        item.meta.genres.joinToString("  ·  "),
+                        color = NmPlatinum, fontSize = 14.sp
+                    )
+                    item.meta.description?.takeIf { it.isNotBlank() }?.let { plot ->
+                        Text("PLOT", color = NmGold, fontWeight = FontWeight.Black, fontSize = 13.sp)
+                        Text(plot, color = Color.White.copy(alpha = .95f), fontSize = 17.sp, lineHeight = 25.sp)
+                    }
+                    item.meta.director?.let { credit ->
+                        Text(
+                            (if (item.meta.type == "series") "Created by: " else "Director: ") + credit,
+                            color = NmPlatinum, fontSize = 14.sp
+                        )
+                    }
+                    if (item.meta.cast.isNotEmpty()) {
+                        Text("CAST", color = NmGold, fontWeight = FontWeight.Black, fontSize = 13.sp)
+                        Text(
+                            item.meta.cast.joinToString("  ·  "),
+                            color = NmPlatinum, fontSize = 14.sp, lineHeight = 21.sp
+                        )
+                    }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         if (item.meta.type != "series" || item.meta.videos.isEmpty()) {
@@ -2039,6 +2085,56 @@ private fun DetailsScreen(
                             Text(ep.displayName(), color = Color.White, fontWeight = FontWeight.Bold)
                             ep.overview?.let {
                                 Text(it, color = NmMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            }
+            if (recommendations.isNotEmpty()) {
+                item {
+                    Text("More Like This", color = Color.White,
+                        fontSize = 26.sp, fontWeight = FontWeight.Black)
+                }
+                item {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        contentPadding = PaddingValues(vertical = 8.dp)
+                    ) {
+                        items(recommendations) { suggested ->
+                            var focused by remember { mutableStateOf(false) }
+                            Column(
+                                Modifier.width(165.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (focused) NmPanelFocus else NmPanel)
+                                    .border(if (focused) 3.dp else 1.dp,
+                                        if (focused) NmGold else Color.White.copy(alpha = .12f),
+                                        RoundedCornerShape(10.dp))
+                                    .onFocusChanged { focused = it.isFocused }
+                                    .tvActivation(
+                                        onClick = { onOpenRecommendation(suggested) },
+                                        onLongClick = { onOpenRecommendation(suggested) }
+                                    )
+                                    .focusable()
+                                    .padding(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                AsyncImage(
+                                    model = suggested.meta.poster ?: suggested.meta.background,
+                                    contentDescription = suggested.meta.name,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f)
+                                        .clip(RoundedCornerShape(6.dp))
+                                )
+                                Text(suggested.meta.name, color = Color.White,
+                                    fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    listOfNotNull(suggested.meta.releaseInfo,
+                                        suggested.meta.imdbRating?.let { "★ $it" })
+                                        .joinToString(" · "),
+                                    color = NmMuted, fontSize = 11.sp,
+                                    maxLines = 1
+                                )
                             }
                         }
                     }
@@ -2329,7 +2425,11 @@ private fun PlayerScreen(
 
     var started by remember(player) { mutableStateOf(false) }
     var resumeApplied by remember(player) {
-        mutableStateOf(prewarmedPlayer != null || (initialResumeMs <= 0 && initialResumePercent == null))
+        mutableStateOf(initialResumeMs <= 0 && initialResumePercent == null)
+    }
+    // Keep the last real episode position even if a failed player resets to zero.
+    var lastReliablePositionMs by remember(player) {
+        mutableLongStateOf(initialResumeMs.coerceAtLeast(0L))
     }
     var trackRevision by remember(player) { mutableIntStateOf(0) }
     var showAudioMenu by remember { mutableStateOf(false) }
@@ -2408,7 +2508,8 @@ private fun PlayerScreen(
     var lowBufferSamples by remember(player) { mutableIntStateOf(0) }
 
     fun switchWithStandby(positionMs: Long, reason: String) {
-        val pos = positionMs.coerceAtLeast(0L)
+        val pos = if (positionMs <= 1_000L && lastReliablePositionMs > 10_000L)
+            lastReliablePositionMs else positionMs.coerceAtLeast(0L)
         val standby = standbyPlayer
         val valid = standby != null && nextSource != null && standbyPrepareRequested &&
             standby.playbackState == Player.STATE_READY &&
@@ -2742,6 +2843,7 @@ private fun PlayerScreen(
             }.coerceIn(0L, (duration - 1L).coerceAtLeast(0L))
 
             player.seekTo(target)
+            lastReliablePositionMs = target
             player.playWhenReady = true
             resumeApplied = true
         }
@@ -2820,7 +2922,7 @@ private fun PlayerScreen(
                 // Do not store the error video's time as the episode progress.
                 // The existing failover excludes this URL for the full chain.
                 switchWithStandby(
-                    initialResumeMs.coerceAtLeast(0L),
+                    lastReliablePositionMs,
                     if (twoMinutePlaceholder) "Two-minute provider placeholder"
                     else "Short hosted-provider placeholder"
                 )
@@ -2893,11 +2995,16 @@ private fun PlayerScreen(
             delay(5_000)
             val duration = player.duration.takeIf { it > 0 } ?: 0L
             val position = player.currentPosition.coerceAtLeast(0L)
-            if (!started && duration > 0) {
-                onStarted(position, duration)
-                started = true
+            if (resumeApplied && !sourceSwitchRequested &&
+                duration > 180_000L && player.playbackState == Player.STATE_READY
+            ) {
+                lastReliablePositionMs = position
+                if (!started) {
+                    onStarted(position, duration)
+                    started = true
+                }
+                onProgress(position, duration)
             }
-            if (duration > 0) onProgress(position, duration)
         }
     }
 
@@ -2907,6 +3014,11 @@ private fun PlayerScreen(
             playerPositionMs = player.currentPosition.coerceAtLeast(0L)
             playerDurationMs = player.duration.takeIf { it > 0 } ?: 0L
             isPlaying = player.isPlaying
+            if (resumeApplied && player.playbackState == Player.STATE_READY &&
+                player.duration > 180_000L && !sourceSwitchRequested
+            ) {
+                lastReliablePositionMs = player.currentPosition.coerceAtLeast(0L)
+            }
             onPlaybackHealth(
                 player.totalBufferedDuration,
                 player.playbackState == Player.STATE_BUFFERING
@@ -2947,7 +3059,13 @@ private fun PlayerScreen(
         onDispose {
             val duration = player.duration.takeIf { it > 0 } ?: 0L
             val position = player.currentPosition.coerceAtLeast(0L)
-            if (duration > 0) onStopped(position, duration)
+            // A failing source must not overwrite the episode's saved
+            // position with zero, or the timestamp of a placeholder video.
+            if (duration > 180_000L && resumeApplied && !sourceSwitchRequested) {
+                val safePosition = if (position <= 1_000L && lastReliablePositionMs > 10_000L)
+                    lastReliablePositionMs else position
+                onStopped(safePosition, duration)
+            }
             player.release()
         }
     }

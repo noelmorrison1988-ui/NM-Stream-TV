@@ -46,22 +46,50 @@ class TmdbRepository(context: Context) {
         else -> "Not configured"
     }
 
-    suspend fun enrich(item: AppMedia): AppMedia {
+    suspend fun enrich(item: AppMedia, richDetails: Boolean = false): AppMedia {
         val token = activeToken()
         if (token.isBlank() || item.meta.type == "rd") return item
+        // Detailed cast/runtime requests are reserved for the open details
+        // page, not dozens of home-page tiles during discovery.
+        if (!richDetails && item.meta.tmdbId != null) return item
         val headers = mapOf("Authorization" to "Bearer $token")
         val candidate = when {
+            item.meta.tmdbId != null -> fetchFullDetails(item.meta.tmdbId, item.meta.type, headers)
+                ?: searchByTitle(item.meta.name, item.meta.type, headers)
             imdbId(item.meta.id) != null -> findByImdb(imdbId(item.meta.id)!!, item.meta.type, headers)
             else -> searchByTitle(item.meta.name, item.meta.type, headers)
         } ?: return item
 
-        val posterPath = candidate.get("poster_path")?.takeUnless { it.isJsonNull }?.asString
-        val backdropPath = candidate.get("backdrop_path")?.takeUnless { it.isJsonNull }?.asString
-        val overview = candidate.get("overview")?.takeUnless { it.isJsonNull }?.asString
-        val release = candidate.get("release_date")?.takeUnless { it.isJsonNull }?.asString
-            ?: candidate.get("first_air_date")?.takeUnless { it.isJsonNull }?.asString
-        val rating = candidate.get("vote_average")?.takeUnless { it.isJsonNull }?.asDouble
-        val tmdbId = candidate.get("id")?.takeUnless { it.isJsonNull }?.asInt
+        val identifiedId = candidate.get("id")?.takeUnless { it.isJsonNull }?.asInt
+        val details = if (candidate.has("credits")) candidate
+            else if (richDetails) identifiedId?.let { fetchFullDetails(it, item.meta.type, headers) }
+            else null
+        val rich = details ?: candidate
+        val credits = rich.getAsJsonObject("credits")
+        val cast = credits?.getAsJsonArray("cast")?.mapNotNull { actor ->
+            actor.takeIf { it.isJsonObject }?.asJsonObject
+                ?.get("name")?.takeUnless { it.isJsonNull }?.asString
+        }?.distinct()?.take(12).orEmpty()
+        val crewDirector = credits?.getAsJsonArray("crew")?.firstOrNull { member ->
+            member.isJsonObject && member.asJsonObject.get("job")?.asString == "Director"
+        }?.asJsonObject?.get("name")?.asString
+        val creator = rich.getAsJsonArray("created_by")?.firstOrNull()
+            ?.asJsonObject?.get("name")?.asString
+        val fullReleaseDate = rich.get("release_date")?.takeUnless { it.isJsonNull }?.asString
+            ?: rich.get("first_air_date")?.takeUnless { it.isJsonNull }?.asString
+        val runtime = rich.get("runtime")?.takeUnless { it.isJsonNull }?.asInt
+            ?: rich.getAsJsonArray("episode_run_time")?.firstOrNull()?.asInt
+        val ratingCount = rich.get("vote_count")?.takeUnless { it.isJsonNull }?.asInt
+        val genres = rich.getAsJsonArray("genres")?.mapNotNull { genre ->
+            genre.takeIf { it.isJsonObject }?.asJsonObject
+                ?.get("name")?.takeUnless { it.isJsonNull }?.asString
+        }.orEmpty()
+        val posterPath = rich.get("poster_path")?.takeUnless { it.isJsonNull }?.asString
+        val backdropPath = rich.get("backdrop_path")?.takeUnless { it.isJsonNull }?.asString
+        val overview = rich.get("overview")?.takeUnless { it.isJsonNull }?.asString
+        val release = fullReleaseDate
+        val rating = rich.get("vote_average")?.takeUnless { it.isJsonNull }?.asDouble
+        val tmdbId = identifiedId
         val originalLanguage = candidate.get("original_language")?.takeUnless { it.isJsonNull }?.asString
         val genreIds = candidate.getAsJsonArray("genre_ids")
             ?.mapNotNull { runCatching { it.asInt }.getOrNull() }
@@ -79,14 +107,20 @@ class TmdbRepository(context: Context) {
         val merged = item.meta.copy(
             poster = posterPath?.let { "$IMG/w500$it" } ?: item.meta.poster,
             background = backdropPath?.let { "$IMG/w1280$it" } ?: item.meta.background,
-            description = item.meta.description?.takeIf { it.isNotBlank() } ?: overview,
+            description = overview?.takeIf { it.isNotBlank() } ?: item.meta.description,
             releaseInfo = item.meta.releaseInfo?.takeIf { it.isNotBlank() } ?: release?.take(4),
             imdbRating = item.meta.imdbRating?.takeIf { it.isNotBlank() }
                 ?: rating?.takeIf { it > 0.0 }?.let { String.format("%.1f", it) },
             tmdbId = tmdbId ?: item.meta.tmdbId,
             contentRating = contentRating,
             isAnime = animeDetected,
-            trailers = trailers
+            trailers = trailers,
+            cast = cast.ifEmpty { item.meta.cast },
+            director = crewDirector ?: creator ?: item.meta.director,
+            runtimeMinutes = runtime?.takeIf { it > 0 } ?: item.meta.runtimeMinutes,
+            fullReleaseDate = fullReleaseDate ?: item.meta.fullReleaseDate,
+            ratingCount = ratingCount ?: item.meta.ratingCount,
+            genres = genres.ifEmpty { item.meta.genres }
         )
         return item.copy(meta = merged)
     }
@@ -242,6 +276,42 @@ class TmdbRepository(context: Context) {
             ?.take(limit)
             .orEmpty()
     }
+    suspend fun similarTo(item: AppMedia, limit: Int = 16): List<AppMedia> {
+        val id = item.meta.tmdbId ?: return emptyList()
+        if (!configured()) return emptyList()
+        val headers = mapOf("Authorization" to "Bearer ${activeToken()}")
+        val path = if (item.meta.type == "series") "tv" else "movie"
+        val candidates = listOf("recommendations", "similar").flatMap { source ->
+            val response = runCatching {
+                SimpleHttp.get("$API/$path/$id/$source?language=en-US&page=1", headers)
+            }.getOrNull() ?: return@flatMap emptyList()
+            if (response.code !in 200..299) return@flatMap emptyList()
+            runCatching {
+                JsonParser.parseString(response.body).asJsonObject
+                    .getAsJsonArray("results")?.mapNotNull { element ->
+                        element.takeIf { it.isJsonObject }?.asJsonObject
+                            ?.let { tmdbCandidateToAppMedia(it, item.meta.type) }
+                    }.orEmpty()
+            }.getOrDefault(emptyList())
+        }
+        return candidates.filter { it.meta.tmdbId != id && MediaPolicy.allows(it) }
+            .distinctBy { it.meta.tmdbId }.take(limit)
+    }
+
+    private suspend fun fetchFullDetails(
+        id: Int,
+        type: String,
+        headers: Map<String, String>
+    ): JsonObject? {
+        val path = if (type == "series") "tv" else "movie"
+        val response = SimpleHttp.get(
+            "$API/$path/$id?language=en-US&append_to_response=credits",
+            headers
+        )
+        if (response.code !in 200..299) return null
+        return runCatching { JsonParser.parseString(response.body).asJsonObject }.getOrNull()
+    }
+
     private suspend fun recommendationsForSeed(
         item: AppMedia,
         headers: Map<String, String>
