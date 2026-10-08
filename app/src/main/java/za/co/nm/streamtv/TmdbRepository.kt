@@ -254,6 +254,14 @@ class TmdbRepository(context: Context) {
             .orEmpty()
         return TmdbBrowsePage(items = items, hasNext = safePage < totalPages)
     }
+    suspend fun browseThemed(key: String, page: Int = 1, limit: Int = 20): TmdbBrowsePage =
+        HomeCategoryBrowser(activeToken(), ::tmdbCandidateToAppMedia)
+            .themed(key, page, limit)
+
+    suspend fun similarPage(item: AppMedia, page: Int, limit: Int = 20): TmdbBrowsePage =
+        HomeCategoryBrowser(activeToken(), ::tmdbCandidateToAppMedia)
+            .similar(item, page, limit)
+
     private suspend fun fetchCollection(
         path: String,
         type: String,
