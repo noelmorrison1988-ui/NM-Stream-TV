@@ -933,7 +933,11 @@ private fun HomeScreen(
         // is fetched only when this row enters the viewport, not on startup.
         HomeCollections.rows.forEach { spec ->
             item(key = "theme:${spec.key}") {
-                LaunchedEffect(spec.key, state.tmdbConfigured) {
+                LaunchedEffect(
+                    spec.key, state.tmdbConfigured,
+                    spec.key in state.themedRowsLoaded,
+                    spec.key in state.themedRowsLoading
+                ) {
                     if (state.tmdbConfigured) onLoadThemedRow(spec.key)
                 }
                 val rowItems = state.themedRows[spec.key].orEmpty()
@@ -2044,7 +2048,7 @@ private fun SettingsScreen(state: MainUiState, vm: MainViewModel) {
             Button(onClick = { showConnectionLog = true }) { Text("Connection Log") }
             Text("${state.connectionLog.size} events this session", color = NmMuted, fontSize = 12.sp)
         } }
-        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.18 · Morrison Entertainment", color = NmMuted) }
+        item { Text("NM Stream TV TV Box Lite v1.0.0-tvbox.19 · Morrison Entertainment", color = NmMuted) }
     }
 }
 
