@@ -2305,6 +2305,72 @@ private fun PlayerScreen(
     }
     var showAdvisory by remember(videoId) { mutableStateOf(advisoryItems.isNotEmpty()) }
 
+    // One paused alternate player. Preparing it in advance lets a genuine
+    // buffered source take over without a new stream search and player setup.
+    val standbyPlayer = remember(player, nextSource?.playableUrl) {
+        nextSource?.playableUrl?.let { backupUrl ->
+            val dataSource = DefaultHttpDataSource.Factory()
+                .setDefaultRequestProperties(nextSource.requestHeaders)
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(12_000)
+                .setReadTimeoutMs(20_000)
+            val loadControl = DefaultLoadControl.Builder()
+                .setBufferDurationsMs(3_000, 12_000, 1_000, 2_000)
+                .setBackBuffer(0, false)
+                .build()
+            ExoPlayer.Builder(context)
+                .setLoadControl(loadControl)
+                .setMediaSourceFactory(
+                    DefaultMediaSourceFactory(context).setDataSourceFactory(dataSource)
+                )
+                .build().apply {
+                    val subs = subtitles.mapIndexed { index, option ->
+                        MediaItem.SubtitleConfiguration.Builder(Uri.parse(option.subtitle.url))
+                            .setId(option.subtitle.id.ifBlank { "backup-sub-$index" })
+                            .setLanguage(option.subtitle.lang)
+                            .setLabel(option.subtitle.lang.uppercase() + " · " + option.addonName)
+                            .setMimeType(subtitleMime(option.subtitle.url))
+                            .build()
+                    }
+                    trackSelectionParameters = trackSelectionParameters.buildUpon()
+                        .setPreferredAudioLanguage(preferredAudioLanguage)
+                        .setPreferredTextLanguage(preferredSubtitleLanguage)
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                        .build()
+                    setMediaItem(
+                        MediaItem.Builder().setUri(backupUrl)
+                            .setSubtitleConfigurations(subs).build()
+                    )
+                    playWhenReady = false
+                }
+        }
+    }
+    var standbyPrepareRequested by remember(player, standbyPlayer) { mutableStateOf(false) }
+    var standbyTransferred by remember(player, standbyPlayer) { mutableStateOf(false) }
+    var lowBufferSamples by remember(player) { mutableIntStateOf(0) }
+
+    fun switchWithStandby(positionMs: Long, reason: String) {
+        val pos = positionMs.coerceAtLeast(0L)
+        val standby = standbyPlayer
+        val valid = standby != null && nextSource != null && standbyPrepareRequested &&
+            standby.playbackState == Player.STATE_READY &&
+            standby.duration !in 118_000L..122_000L &&
+            pos >= standby.currentPosition - 3_000L &&
+            standby.bufferedPosition >= pos + 1_500L
+        if (valid && standby != null) {
+            standbyTransferred = true
+            standby.seekTo(pos)
+            standby.playWhenReady = true
+            onSourceSwitch(pos, reason, standby, nextSource)
+        } else {
+            onSourceSwitch(pos, reason, null, null)
+        }
+    }
+
+    DisposableEffect(standbyPlayer) {
+        onDispose { if (!standbyTransferred) standbyPlayer?.release() }
+    }
+
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onTracksChanged(tracks: Tracks) {
