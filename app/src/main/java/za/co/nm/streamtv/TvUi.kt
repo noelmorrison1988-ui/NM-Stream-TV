@@ -1468,6 +1468,9 @@ private fun DeviceCode(service: String, code: String, url: String? = null) {
 private fun DetailsScreen(
     item: AppMedia,
     loading: Boolean,
+    recommendations: List<AppMedia>,
+    onRecommend: (AppMedia) -> Unit,
+    onExpandMore: () -> Unit,
     trailer: StreamOption?,
     inMyList: Boolean,
     rememberedSeason: Int?,
@@ -1479,8 +1482,9 @@ private fun DetailsScreen(
     chooseManual: (AppMedia, String, String) -> Unit,
     playTrailer: (StreamOption) -> Unit
 ) {
-    val seasons = remember(item.meta.id, item.meta.videos) {
-        item.meta.videos.map { it.season ?: 1 }.distinct().sorted()
+    val seasons = remember(item.meta.id, item.meta.videos, item.meta.seasonNumbers) {
+        (item.meta.seasonNumbers + item.meta.videos.map { it.season ?: 1 })
+            .filter { it > 0 }.distinct().sorted()
     }
     val selectedSeason = rememberedSeason?.takeIf { it in seasons } ?: seasons.firstOrNull() ?: 1
     val seasonEpisodes = remember(item.meta.videos, selectedSeason) {
@@ -1489,6 +1493,12 @@ private fun DetailsScreen(
             .sortedBy { it.episode ?: Int.MAX_VALUE }
     }
     val detailsListState = rememberLazyListState()
+
+    LaunchedEffect(item.meta.id, selectedSeason) {
+        if (item.meta.type == "series" && selectedSeason in seasons &&
+            seasonEpisodes.isEmpty()
+        ) rememberSeason(selectedSeason)
+    }
 
     LaunchedEffect(item.meta.id, selectedSeason, rememberedEpisodeId) {
         val episodeIndex = seasonEpisodes.indexOfFirst { it.id == rememberedEpisodeId }
@@ -1506,10 +1516,32 @@ private fun DetailsScreen(
                 Column(Modifier.widthIn(max = 720.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(item.meta.name, color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Black)
                     if (loading) Text("Loading enhanced metadata…", color = NmRed)
-                    item.meta.description?.let { Text(it, color = Color.White.copy(alpha = .9f), fontSize = 17.sp, maxLines = 7, overflow = TextOverflow.Ellipsis) }
+                    val facts = listOfNotNull(
+                        item.meta.fullReleaseDate?.let { "Released $it" },
+                        item.meta.runtimeMinutes?.let { "$it min" },
+                        item.meta.imdbRating?.let { "★ $it / 10" },
+                        item.meta.contentRating
+                    )
+                    if (facts.isNotEmpty()) Text(facts.joinToString("  ·  "),
+                        color = NmGold, fontSize = 14.sp)
+                    if (item.meta.genres.isNotEmpty()) Text(item.meta.genres.joinToString(" · "),
+                        color = NmPlatinum)
+                    item.meta.description?.takeIf { it.isNotBlank() }?.let { plot ->
+                        Text("PLOT", color = NmGold, fontWeight = FontWeight.Black)
+                        Text(plot, color = Color.White.copy(alpha = .92f),
+                            fontSize = 17.sp, lineHeight = 24.sp)
+                    }
+                    item.meta.director?.let {
+                        Text((if (item.meta.type == "series") "Created by: " else "Director: ") + it,
+                            color = NmPlatinum)
+                    }
+                    if (item.meta.cast.isNotEmpty()) {
+                        Text("CAST", color = NmGold, fontWeight = FontWeight.Black)
+                        Text(item.meta.cast.joinToString(" · "), color = NmPlatinum)
+                    }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        if (item.meta.type != "series" || item.meta.videos.isEmpty()) {
+                        if (item.meta.type != "series" || seasons.isEmpty()) {
                             HoldActionButton(
                                 label = "▶  Play",
                                 onClick = { play(item, item.meta.id, item.meta.name) },
@@ -1536,7 +1568,7 @@ private fun DetailsScreen(
 
                 }
             }
-            if (item.meta.videos.isNotEmpty()) {
+            if (item.meta.type == "series" && seasons.isNotEmpty()) {
                 item { Text("Seasons", color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold) }
                 item {
                     LazyRow(
@@ -1557,6 +1589,9 @@ private fun DetailsScreen(
                         fontSize = 23.sp,
                         fontWeight = FontWeight.Bold
                     )
+                }
+                if (seasonEpisodes.isEmpty()) item {
+                    Text("Loading episodes for Season $selectedSeason…", color = NmMuted)
                 }
                 items(seasonEpisodes) { ep ->
                     var focused by remember { mutableStateOf(false) }
@@ -1596,6 +1631,21 @@ private fun DetailsScreen(
                                 Text(it, color = NmMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                         }
+                    }
+                }
+            }
+            if (recommendations.isNotEmpty()) {
+                item {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("More Like This", color = Color.White,
+                            fontSize = 23.sp, fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f))
+                        Button(onClick = onExpandMore) { Text("See all ›") }
+                    }
+                }
+                item {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(recommendations) { movie -> PosterCard(movie, onRecommend) }
                     }
                 }
             }
