@@ -3119,6 +3119,8 @@ private fun PlayerScreen(
     }
 
     LaunchedEffect(player) {
+        // Automatic stream failover disabled. NEXT SOURCE remains manual.
+        if (false) {
         while (true) {
             delay(500)
             if (sourceSwitchRequested) continue
@@ -3257,6 +3259,7 @@ private fun PlayerScreen(
                 recoveryMessage = "Buffer stalled too long · switching source…"
                 switchWithStandby(resumeAt, "Buffering exceeded 8 seconds")
             }
+        }
         }
     }
     LaunchedEffect(player) {
