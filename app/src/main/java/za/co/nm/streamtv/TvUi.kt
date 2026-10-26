@@ -2060,6 +2060,7 @@ private fun PlayerScreen(
     var standbyTransferred by remember(standby) { mutableStateOf(false) }
 
     fun changeSource(position: Long, reason: String) {
+        if (reason != "Manual skip") return // No automatic source changes.
         if (switchRequested) return
         switchRequested = true
         val timeMs = if (position <= 1_000 && lastReliablePosition > 10_000)
