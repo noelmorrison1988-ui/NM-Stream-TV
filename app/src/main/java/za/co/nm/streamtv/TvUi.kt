@@ -338,19 +338,8 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
                     onStarted = { p, d -> viewModel.onPlaybackStarted(current.item, current.videoId, p, d) },
                     onProgress = { p, d -> viewModel.onPlaybackProgress(current.item, current.videoId, current.title, p, d) },
                     onStopped = { p, d -> viewModel.onPlaybackStopped(current.item, current.videoId, current.title, p, d) },
-                    onPlaybackProblem = { positionMs, reason ->
-                        val next = current.fallbackSources.firstOrNull()
-                        if (next != null) {
-                            screen = current.copy(
-                                source = next,
-                                fallbackSources = current.fallbackSources.drop(1),
-                                resumeOverrideMs = if (positionMs > 0L) positionMs else current.resumeOverrideMs,
-                                notice = "Source switched automatically · $reason"
-                            )
-                        } else {
-                            viewModel.loadSources(current.item, current.videoId)
-                            screen = Screen.Sources(current.item, current.videoId, current.title)
-                        }
+                    onPlaybackProblem = { _, _ ->
+                        // Remain on the current stream; source changes are user initiated.
                     }
                 )
             }
