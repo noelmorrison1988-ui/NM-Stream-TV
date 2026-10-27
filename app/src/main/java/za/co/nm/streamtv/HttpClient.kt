@@ -87,6 +87,9 @@ object SimpleHttp {
             .removeSurrounding("\"")
             .removeSurrounding("'")
             .substringBefore('#')
+            .trim()
+            .replace(Regex("[\\u0000-\\u001F\\u007F]"), "")
+            .replace(" ", "%20")
 
         if (raw.startsWith("stremio://", true)) {
             raw = "https://" + raw.substringAfter("://")
