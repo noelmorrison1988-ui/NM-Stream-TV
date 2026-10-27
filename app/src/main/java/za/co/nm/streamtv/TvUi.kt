@@ -131,6 +131,25 @@ fun NMStreamApp(state: MainUiState, viewModel: MainViewModel) {
         Box(Modifier.fillMaxSize().background(NmBg)) {
             if (state.nmDeviceBlocked) {
                 DeviceBlockedScreen()
+            } else if (!state.nmAccountLinked) {
+                // Do not expose browsing, streams or playback before approval.
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(24.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Device approval required", color = Color.White)
+                    Text("Pair this device at https://apistream.morrison.academy", color = Color.White)
+                    state.nmPairCode?.let { code ->
+                        Text(code, color = Color.White, fontSize = 30.sp)
+                    }
+                    Button(
+                        onClick = viewModel::beginNmAccountPairing,
+                        enabled = !state.nmPairing
+                    ) {
+                        Text(if (state.nmPairing) "Waiting for approval..." else "Pair this device")
+                    }
+                }
             } else {
                 when (val current = screen) {
                 Screen.Home -> Shell("Home", { screen = it }) {
